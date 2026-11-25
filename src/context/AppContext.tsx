@@ -46,7 +46,7 @@ import {
   saveOfflineSnapshot,
   updateOutboxMutation,
 } from '../services/offlineDb.ts';
-import { pendingBatch, mutationOwner } from '../shared/offlinePolicy.ts';
+import { pendingBatch, mutationOwner, validateSyncResults } from '../shared/offlinePolicy.ts';
 import { useOnlineStatus } from '../hooks/usePWAInstall.ts';
 
 export interface QuickUserInfo {
@@ -368,14 +368,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         body: JSON.stringify({ mutations: queue }),
       });
 
+      const results = validateSyncResults(queue, res);
       let appliedCount = 0;
-      for (const item of res.results) {
+      let conflictCount = 0;
+      for (const item of results) {
         const mut = queue.find((q) => q.clientMutationId === item.clientMutationId);
         if (!mut) continue;
         if (item.status === 'applied' || item.status === 'duplicate') {
           await removeOutboxMutation(mut.id);
           appliedCount++;
         } else {
+          conflictCount++;
           await updateOutboxMutation({
             ...mut,
             status: 'conflict',
@@ -389,6 +392,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (appliedCount > 0) {
         notify(`Synchronized ${appliedCount} offline record(s).`, 'success');
       }
+      if (conflictCount > 0) notify(`${conflictCount} offline record(s) need reconciliation. Records retained in the offline queue.`, 'error');
       await refreshBootstrap();
     } catch (err) {
       void appendDiagnosticLog({
