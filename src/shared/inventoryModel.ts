@@ -28,6 +28,11 @@ export function getAvailableStock(
   return Number(Math.max(0, onHand - reserved).toFixed(2));
 }
 
+export function isBelowMinimumThreshold(item: Pick<InventoryItem, 'quantityOnHand' | 'reservedQuantity' | 'minimumThreshold'>): boolean {
+  const minimum = item.minimumThreshold ?? 0;
+  return minimum > 0 && getAvailableStock(item) < minimum;
+}
+
 export function getInventoryStockStatus(
   item: Pick<InventoryItem, 'quantityOnHand' | 'reorderLevel'>,
 ): StockStatus {
@@ -211,6 +216,7 @@ export function normalizeInventoryItem(
     reservedQuantity: Math.max(0, Number(raw.reservedQuantity) || 0),
     reorderLevel,
     reorderThreshold: reorderLevel,
+    minimumThreshold: Math.max(0, Number(raw.minimumThreshold) || 0),
     reorderQuantity:
       raw.reorderQuantity !== undefined
         ? Math.max(0, Number(raw.reorderQuantity) || 0)
@@ -272,12 +278,14 @@ export function validateInventoryItemInput(
   if (typeof input.unit !== 'string' || !input.unit.trim()) {
     return { valid: false, error: 'Stock unit (e.g., sheet, pc, sq ft) is required.' };
   }
-  for (const key of ['quantityOnHand','currentStock','reservedQuantity','reorderLevel','reorderThreshold','reorderQuantity','unitCost','leadTimeDays'] as const) {
+  for (const key of ['quantityOnHand','currentStock','reservedQuantity','reorderLevel','reorderThreshold','minimumThreshold','reorderQuantity','unitCost','leadTimeDays'] as const) {
     const value = input[key];
     if (value !== undefined && (typeof value !== 'number' || !Number.isFinite(value) || value < 0)) {
       return { valid:false, error: key + ' must be a finite non-negative number.' };
     }
   }
+  const reorder = input.reorderLevel ?? input.reorderThreshold ?? 0;
+  if ((input.minimumThreshold ?? 0) > reorder) return {valid:false,error:'Minimum threshold cannot exceed reorder level.'};
   const stock = input.quantityOnHand ?? input.currentStock;
   if (stock !== undefined && (input.reservedQuantity ?? 0) > stock) {
     return { valid:false, error:'Reserved stock cannot exceed stock on hand.' };

@@ -224,6 +224,7 @@ export const InventoryModule: React.FC = () => {
         itemType: values.itemType,
         unit: values.unit,
         reorderLevel: values.reorderLevel,
+        minimumThreshold: values.minimumThreshold,
         reorderQuantity: values.reorderQuantity,
         unitCost: values.unitCost,
         supplier: values.supplier,
@@ -692,6 +693,7 @@ export const InventoryModule: React.FC = () => {
                   <div className="text-[11px] text-[var(--pos-text-muted)]">Reorder Level</div>
                   <div className="text-lg font-bold font-mono-num text-[var(--pos-text)] mt-0.5">
                     {detailItem.reorderLevel} {detailItem.unit}
+                    <div className="text-xs font-normal">Critical minimum: {detailItem.minimumThreshold || 'Disabled'}</div>
                   </div>
                 </div>
                 <div

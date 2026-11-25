@@ -92,6 +92,7 @@ function mapInventoryItemRow(i: Record<string, unknown>): InventoryItem {
     reservedQuantity: Number(i.reserved_quantity) || 0,
     reorderLevel,
     reorderThreshold: reorderLevel,
+    minimumThreshold: Number(i.minimum_threshold) || 0,
     reorderQuantity: Number(i.reorder_quantity) || Math.max(reorderLevel * 2, 0),
     unitCost: Number(i.unit_cost) || 0,
     supplier,
@@ -1298,9 +1299,9 @@ apiRouter.post(
       db.prepare(`
         INSERT INTO inventory_items (
           id, sku, barcode, name, category_id, category, item_type, unit, quantity_on_hand, reserved_quantity,
-          reorder_level, reorder_quantity, unit_cost, supplier, supplier_contact, supplier_sku,
+          reorder_level, minimum_threshold, reorder_quantity, unit_cost, supplier, supplier_contact, supplier_sku,
           lead_time_days, storage_location, last_restocked_at, is_demo, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
       `).run(
         id,
         (i.sku || '').trim() || `MAT-${Date.now().toString().slice(-4)}`,
@@ -1313,6 +1314,7 @@ apiRouter.post(
         initialQty,
         Math.max(0, Number(i.reservedQuantity) || 0),
         reorderLevel,
+        i.minimumThreshold ?? 0,
         reorderQuantity,
         unitCost,
         supplierName,
@@ -1533,7 +1535,7 @@ apiRouter.patch(
       return res.status(404).json({ error: 'Inventory item not found.' });
     }
     const patch = req.body as Partial<InventoryItem>;
-    const validation = validateInventoryItemInput({...mapInventoryItemRow(existing),...patch});
+    const validation = validateInventoryItemInput({...mapInventoryItemRow(existing),...patch,reorderLevel:patch.reorderLevel ?? patch.reorderThreshold ?? Number(existing.reorder_level)});
     if (validation.valid === false) return res.status(400).json({error:validation.error});
     if (patch.reservedQuantity !== undefined && Number(patch.reservedQuantity)>Number(existing.quantity_on_hand)) return res.status(400).json({error:'Reserved stock cannot exceed stock on hand.'});
     const now = new Date().toISOString();
@@ -1569,7 +1571,7 @@ apiRouter.patch(
     db.prepare(`
       UPDATE inventory_items
       SET sku = ?, barcode = ?, name = ?, category_id = ?, category = ?, item_type = ?, unit = ?,
-          reserved_quantity = ?, reorder_level = ?, reorder_quantity = ?, unit_cost = ?,
+          reserved_quantity = ?, reorder_level = ?, minimum_threshold = ?, reorder_quantity = ?, unit_cost = ?,
           supplier = ?, supplier_contact = ?, supplier_sku = ?, lead_time_days = ?,
           storage_location = ?, updated_at = ?
       WHERE id = ?
@@ -1591,6 +1593,7 @@ apiRouter.patch(
       patchReorder !== undefined
         ? Math.max(0, Number(patchReorder) || 0)
         : Number(existing.reorder_level) || 0,
+      patch.minimumThreshold ?? Number(existing.minimum_threshold ?? 0),
       patch.reorderQuantity !== undefined
         ? Math.max(0, Number(patch.reorderQuantity) || 0)
         : Number(existing.reorder_quantity) || 0,
