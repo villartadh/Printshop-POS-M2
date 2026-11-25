@@ -1,0 +1,48 @@
+name: Software acceptance
+on:
+  push:
+    branches: [develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  acceptance:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run lint
+      - run: npm run build
+      - run: npm run acceptance
+      - if: runner.os == 'Linux'
+        run: npx playwright install --with-deps chromium
+      - if: runner.os == 'Windows'
+        run: npx playwright install chromium
+      - run: npm run acceptance:browser
+      - if: runner.os == 'Linux'
+        run: npm run acceptance:https
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: software-evidence-${{ runner.os }}
+          path: .ldc/
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14
