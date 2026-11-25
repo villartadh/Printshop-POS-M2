@@ -22,6 +22,7 @@ export const AppShell: React.FC = () => {
   const { settings } = useAppState();
   const {
     activeModule,
+    session,
     setActiveModule,
     platformPreview,
     fullScreenCashier,
@@ -147,6 +148,13 @@ export const AppShell: React.FC = () => {
             layoutTier === 'mobile' ? activeModule === 'pos' ? 'pos-mobile-content pos-mobile-checkout' : 'pos-mobile-content' : ''
           }`}
         >
+          {!loadingData && !dataError && (session?.user.role === 'admin' || session?.user.role === 'manager') && !String(settings.branding.businessName ?? '').trim() && (
+            <section aria-label="Business setup" className="mb-3 rounded-lg border border-amber-400 bg-[var(--pos-surface)] p-3 text-sm">
+              <p className="font-semibold">Complete your business profile</p>
+              <p className="mt-1 text-[var(--pos-text-muted)]">Enter your actual shop details before issuing customer documents. Configure services, payment methods and receipts using the existing modules.</p>
+              <button type="button" onClick={() => setActiveModule('settings')} className="mt-2 rounded-md bg-[var(--pos-primary)] px-3 py-2 text-white">Configure business profile</button>
+            </section>
+          )}
           {renderModule()}
         </main>
       </div>
