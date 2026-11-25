@@ -307,6 +307,34 @@ async function main(){
     assert.equal(bootstrap.transactions.length,300);
     assert.equal(bootstrap.expenses.length,200);
   });
+  await check('complete item history pagination beyond bootstrap limits',async()=>{
+    const item=await write('/inventory',{name:'Synthetic Long History',unit:'sheet',quantityOnHand:0});
+    const db=new DatabaseSync(path.join(sandbox,'data','printshop-pos.db'));
+    try{
+      const insert=db.prepare("INSERT INTO stock_movements(id,inventory_item_id,item_name,movement_type,quantity_delta,balance_after,performed_by,created_at,purchase_unit_cost) VALUES (?,?,?,'purchase',1,?,'Acceptance',?,?)");
+      db.exec('BEGIN');
+      for(let i=0;i<205;i++)insert.run('long-history-'+String(i).padStart(4,'0'),item.id,item.name,i+1,'2020-01-01T00:00:00.000Z',i%2===0?i:null);
+      db.exec('COMMIT');
+    }finally{db.close();}
+    const url='/api/inventory/'+item.id+'/history';
+    verifyResponse(await request(url),401);
+    for(const q of ['limit=0','limit=101','offset=-1','snapshot=x'])verifyResponse(await request(url+'?'+q,{auth:true}),400);
+    const first=verifyResponse(await request(url+'?limit=100',{auth:true}),200);
+    assert.equal(first.total,205);assert.equal(first.movements.length,100);
+    assert.equal(first.summary.count,103);assert.equal(first.summary.minimum,0);assert.equal(first.summary.maximum,204);
+    assert.equal(first.purchasePoints.length,103);
+    await write('/inventory/'+item.id+'/adjust',{clientMutationId:randomUUID(),movementType:'purchase',quantityDelta:1,purchaseUnitCost:3},200);
+    const ids=first.movements.map(m=>m.id);
+    for(const offset of [100,200]){
+      const page=verifyResponse(await request(url+'?limit=100&offset='+offset+'&snapshot='+first.snapshot,{auth:true}),200);
+      assert.equal(page.total,205);ids.push(...page.movements.map(m=>m.id));
+    }
+    assert.equal(new Set(ids).size,205);assert.equal(ids.length,205);
+    const refreshed=verifyResponse(await request(url,{auth:true}),200);
+    assert.equal(refreshed.total,206);
+    assert.equal(refreshed.summary.count,104);
+    assert.equal(refreshed.purchasePoints.at(-1).purchaseUnitCost,3);
+  });
   await check('logout revokes session',async()=>{verifyResponse(await request('/api/auth/logout',{method:'POST',auth:true}),200);verifyResponse(await request('/api/bootstrap',{auth:true}),401);});
   await stop();report.status='PASS';
  }catch(e){report.error=String(e.message);console.error(report.status,report.error);process.exitCode=1;}

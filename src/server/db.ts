@@ -313,6 +313,7 @@ export function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_jobs_transaction ON print_jobs(transaction_id);
     CREATE INDEX IF NOT EXISTS idx_jobs_created ON print_jobs(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_stock_created ON stock_movements(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_stock_item_created ON stock_movements(inventory_item_id, created_at DESC, id DESC);
     CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_shifts_cashier_status ON cashier_shifts(cashier_id, status);
   `);

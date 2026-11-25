@@ -27,6 +27,7 @@ import {
 } from '../../components/inventory/InventoryItemDialog.tsx';
 import { InventoryTable } from '../../components/inventory/InventoryTable.tsx';
 import { ReorderRequestModal } from '../../components/inventory/ReorderRequestModal.tsx';
+import { InventoryHistory } from '../../components/inventory/InventoryHistory.tsx';
 
 type InventoryTab = 'items' | 'low_stock' | 'movements';
 type InventorySortKey = Extract<
@@ -43,6 +44,7 @@ const STOCK_STATUS_RANK: Record<StockStatus, number> = {
 export const InventoryModule: React.FC = () => {
   const {
     session,
+    isOnline,
     settings,
     inventoryState,
     loadInventory,
@@ -767,70 +769,7 @@ export const InventoryModule: React.FC = () => {
                 </div>
               </div>
 
-              <div>
-                <div className="text-xs font-semibold text-[var(--pos-text)] mb-2">
-                  Recent Stock Movements ({detailMovements.length})
-                </div>
-                <DataTable
-                  rows={detailMovements.slice(0, 12)}
-                  rowKey={(m) => m.id}
-                  emptyTitle="No movement history for this item"
-                  emptyDescription="Restocks, print job deductions, and manual counts will appear here."
-                  columns={[
-                    {
-                      key: 'type',
-                      label: 'Movement',
-                      render: (m) => (
-                        <div>
-                          <div className="text-xs font-medium text-[var(--pos-text)]">
-                            {STOCK_MOVEMENT_LABELS[m.movementType] || m.movementType}
-                          </div>
-                          <div className="text-[11px] text-[var(--pos-text-muted)]">
-                            {m.performedBy}
-                            {m.reference ? ` · ${m.reference}` : ''}
-                            {m.note ? ` · ${m.note}` : ''}
-                          </div>
-                        </div>
-                      ),
-                    },
-                    {
-                      key: 'date',
-                      label: 'Date',
-                      render: (m) => (
-                        <span className="font-mono-num text-xs text-[var(--pos-text-muted)]">
-                          {new Date(m.occurredAt || m.createdAt).toLocaleString()}
-                        </span>
-                      ),
-                    },
-                    {
-                      key: 'delta',
-                      label: 'Delta',
-                      align: 'right',
-                      render: (m) => (
-                        <span
-                          className={`font-mono-num font-semibold text-xs ${
-                            m.quantityDelta >= 0
-                              ? 'text-[var(--pos-success)]'
-                              : 'text-[var(--pos-error)]'
-                          }`}
-                        >
-                          {m.quantityDelta >= 0 ? `+${m.quantityDelta}` : m.quantityDelta}
-                        </span>
-                      ),
-                    },
-                    {
-                      key: 'balance',
-                      label: 'Balance',
-                      align: 'right',
-                      render: (m) => (
-                        <span className="font-mono-num text-xs font-semibold text-[var(--pos-text)]">
-                          {m.balanceAfter} {detailItem.unit}
-                        </span>
-                      ),
-                    },
-                  ]}
-                />
-              </div>
+              <InventoryHistory key={detailItem.id} item={detailItem} currency={taxCurr} online={isOnline}/>
             </div>
           );
         })()}

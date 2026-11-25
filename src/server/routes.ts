@@ -1235,6 +1235,28 @@ apiRouter.patch('/print-jobs/:id', requireAuth, (req: AuthenticatedRequest, res)
 
 // ---------- INVENTORY ----------
 
+apiRouter.get('/inventory/:id/history', requireAuth, (req,res)=>{
+  const id=String(req.params.id);
+  const integer=(v:unknown,defaultValue:number,max:number)=>v===undefined?defaultValue:typeof v==='string'&&/^\d+$/.test(v)&&Number.isSafeInteger(Number(v))&&Number(v)<=max?Number(v):NaN;
+  const offset=integer(req.query.offset,0,Number.MAX_SAFE_INTEGER);
+  const limit=integer(req.query.limit,50,100);
+  const requestedSnapshot=integer(req.query.snapshot,0,Number.MAX_SAFE_INTEGER);
+  if(!Number.isFinite(offset)||!Number.isFinite(limit)||limit<1||!Number.isFinite(requestedSnapshot))return res.status(400).json({error:'Invalid history pagination.'});
+  const data=db.transaction(()=>{
+    if(!db.prepare('SELECT id FROM inventory_items WHERE id=?').get(id))return null;
+    const maximum=(db.prepare('SELECT COALESCE(MAX(rowid),0) AS n FROM stock_movements WHERE inventory_item_id=?').get(id) as {n:number}).n;
+    const snapshot=req.query.snapshot===undefined?maximum:Math.min(requestedSnapshot,maximum);
+    const total=(db.prepare('SELECT COUNT(*) AS n FROM stock_movements WHERE inventory_item_id=? AND rowid<=?').get(id,snapshot) as {n:number}).n;
+    const movements=(db.prepare('SELECT * FROM stock_movements WHERE inventory_item_id=? AND rowid<=? ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?').all(id,snapshot,limit,offset) as Record<string,unknown>[]).map(mapStockMovementRow);
+    const summary=db.prepare("SELECT COUNT(*) AS count, MIN(purchase_unit_cost) AS minimum, MAX(purchase_unit_cost) AS maximum FROM stock_movements WHERE inventory_item_id=? AND rowid<=? AND movement_type='purchase' AND purchase_unit_cost IS NOT NULL").get(id,snapshot);
+    const purchasePoints=(db.prepare("SELECT * FROM stock_movements WHERE inventory_item_id=? AND rowid<=? AND movement_type='purchase' AND purchase_unit_cost IS NOT NULL ORDER BY created_at DESC,id DESC LIMIT 200").all(id,snapshot) as Record<string,unknown>[]).reverse().map(mapStockMovementRow);
+    return {snapshot,total,offset,limit,movements,summary,purchasePoints};
+  })();
+  if(!data)return res.status(404).json({error:'Inventory item not found.'});
+  res.setHeader('Cache-Control','no-store');
+  res.json(data);
+});
+
 apiRouter.get('/inventory', requireAuth, (_req, res) => {
   const supplyCategories: SupplyCategory[] = (
     db.prepare('SELECT * FROM supply_categories ORDER BY sort_order ASC, name ASC').all() as Array<
