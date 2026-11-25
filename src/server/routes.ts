@@ -42,6 +42,7 @@ import { validateTransaction } from '../shared/transactionValidation.ts';
 import { DEFAULT_SETTINGS } from '../shared/defaults.ts';
 import { validateSettings } from '../shared/settingsValidation.ts';
 import {
+  buildInventoryAlerts,
   computeSignedStockDelta,
   inferReferenceType,
   validateInventoryItemInput,
@@ -1243,6 +1244,33 @@ apiRouter.patch('/print-jobs/:id', requireAuth, (req: AuthenticatedRequest, res)
 });
 
 // ---------- INVENTORY ----------
+
+function currentInventoryAlerts(userId:string){
+  const rows=db.prepare('SELECT i.*,e.epoch,r.epoch AS read_epoch FROM inventory_items i JOIN inventory_alert_epochs e ON e.item_id=i.id LEFT JOIN inventory_alert_reads r ON r.item_id=i.id AND r.user_id=? WHERE i.archived_at IS NULL').all(userId) as Record<string,unknown>[];
+  const byId=new Map(rows.map(row=>[String(row.id),row]));
+  return buildInventoryAlerts(rows.map(mapInventoryItemRow)).map(a=>{
+    const row=byId.get(a.item.id)!;
+    return {signature:a.signature,itemId:a.item.id,epoch:String(row.epoch),read:row.epoch===row.read_epoch};
+  });
+}
+apiRouter.get('/inventory/alerts',requireAuth,(req:AuthenticatedRequest,res)=>{
+  res.setHeader('Cache-Control','no-store');
+  res.json({alerts:currentInventoryAlerts(req.authUser!.id)});
+});
+apiRouter.post('/inventory/alerts/read',requireAuth,(req:AuthenticatedRequest,res)=>{
+  const entries=req.body?.alerts;
+  if(!Array.isArray(entries)||entries.length<1||entries.length>1000||entries.some(a=>!a||typeof a.itemId!=='string'||typeof a.epoch!=='string'||!(/^[a-f0-9]{32}$/).test(a.epoch)))return res.status(400).json({error:'Invalid alert acknowledgment.'});
+  const result=db.transaction(()=>{
+    const active=currentInventoryAlerts(req.authUser!.id);
+    const lookup=new Map(active.map(a=>[a.itemId,a.epoch]));
+    if(entries.some(a=>lookup.get(a.itemId)!==a.epoch))return null;
+    const stmt=db.prepare('INSERT INTO inventory_alert_reads(user_id,item_id,epoch) VALUES(?,?,?) ON CONFLICT(user_id,item_id) DO UPDATE SET epoch=excluded.epoch');
+    for(const a of entries)stmt.run(req.authUser!.id,a.itemId,a.epoch);
+    return currentInventoryAlerts(req.authUser!.id);
+  })();
+  if(!result)return res.status(409).json({error:'Stock alerts changed. Refresh before acknowledging.'});
+  res.json({alerts:result});
+});
 
 apiRouter.get('/inventory/archived',requireAuth,requireRole(['admin','manager']),(_req,res)=>{
   res.setHeader('Cache-Control','no-store');

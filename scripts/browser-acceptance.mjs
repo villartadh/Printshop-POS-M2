@@ -125,6 +125,7 @@ try {
     await dialog.getByText('1 active alerts · 0 unread',{exact:true}).waitFor();
     await page.screenshot({path:path.join(evidence,'inventory-notifications.png'),animations:'disabled'});
     await dialog.getByRole('button',{name:'Close',exact:true}).click();
+    await page.evaluate(()=>localStorage.clear());
     await page.reload(); await signIn();
     await click('Inventory notifications');
     await dialog.getByText('1 active alerts · 0 unread',{exact:true}).waitFor();

@@ -319,6 +319,31 @@ export function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_shifts_cashier_status ON cashier_shifts(cashier_id, status);
   `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS inventory_alert_epochs (
+      item_id TEXT PRIMARY KEY REFERENCES inventory_items(id) ON DELETE CASCADE,
+      epoch TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS inventory_alert_reads (
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      item_id TEXT NOT NULL REFERENCES inventory_items(id) ON DELETE CASCADE,
+      epoch TEXT NOT NULL,
+      PRIMARY KEY(user_id,item_id)
+    );
+    INSERT OR IGNORE INTO inventory_alert_epochs(item_id,epoch)
+      SELECT id,lower(hex(randomblob(16))) FROM inventory_items;
+    CREATE TRIGGER IF NOT EXISTS inventory_alert_insert AFTER INSERT ON inventory_items
+    BEGIN
+      INSERT OR REPLACE INTO inventory_alert_epochs VALUES(NEW.id,lower(hex(randomblob(16))));
+    END;
+    CREATE TRIGGER IF NOT EXISTS inventory_alert_transition AFTER UPDATE ON inventory_items
+    WHEN (CASE WHEN OLD.archived_at IS NOT NULL THEN 'none' WHEN ROUND(MAX(0,OLD.quantity_on_hand-MAX(0,OLD.reserved_quantity)),2)<=0 THEN 'out' WHEN ROUND(MAX(0,OLD.quantity_on_hand-MAX(0,OLD.reserved_quantity)),2)>OLD.reorder_level THEN 'none' WHEN OLD.minimum_threshold>0 AND ROUND(MAX(0,OLD.quantity_on_hand-MAX(0,OLD.reserved_quantity)),2)<OLD.minimum_threshold THEN 'critical' ELSE 'reorder' END) <> (CASE WHEN NEW.archived_at IS NOT NULL THEN 'none' WHEN ROUND(MAX(0,NEW.quantity_on_hand-MAX(0,NEW.reserved_quantity)),2)<=0 THEN 'out' WHEN ROUND(MAX(0,NEW.quantity_on_hand-MAX(0,NEW.reserved_quantity)),2)>NEW.reorder_level THEN 'none' WHEN NEW.minimum_threshold>0 AND ROUND(MAX(0,NEW.quantity_on_hand-MAX(0,NEW.reserved_quantity)),2)<NEW.minimum_threshold THEN 'critical' ELSE 'reorder' END)
+      OR OLD.reorder_level <> NEW.reorder_level OR OLD.minimum_threshold <> NEW.minimum_threshold
+    BEGIN
+      INSERT OR REPLACE INTO inventory_alert_epochs VALUES(NEW.id,lower(hex(randomblob(16))));
+      DELETE FROM inventory_alert_reads WHERE item_id=NEW.id;
+    END;
+  `);
   // Ensure default supply categories exist
   const supplyCatCount = (
     db.prepare('SELECT COUNT(*) as count FROM supply_categories').get() as { count: number }

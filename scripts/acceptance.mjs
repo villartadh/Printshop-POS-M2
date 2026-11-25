@@ -356,6 +356,22 @@ async function main(){
     assert.ok((await state()).inventory.some(i=>i.id===item.id));
     assert.deepEqual(verifyResponse(await request('/api/inventory/'+item.id+'/history',{auth:true}),200).movements,before.movements);
   });
+  await check('persistent alert acknowledgment rejects stale shortage episodes',async()=>{
+    const item=await write('/inventory',{name:'Synthetic Alert Epoch',unit:'sheet',quantityOnHand:1,reorderLevel:5,minimumThreshold:2});
+    const list=async()=>verifyResponse(await request('/api/inventory/alerts',{auth:true}),200).alerts;
+    const find=async()=>(await list()).find(a=>a.itemId===item.id);
+    const first=await find();assert.equal(first.read,false);
+    await write('/inventory/alerts/read',{alerts:[first]},200);
+    assert.equal((await find()).read,true);
+    await write('/inventory/'+item.id+'/adjust',{clientMutationId:randomUUID(),movementType:'purchase',quantityDelta:10},200);
+    assert.equal(await find(),undefined);
+    await write('/inventory/'+item.id+'/adjust',{clientMutationId:randomUUID(),movementType:'wastage',quantityDelta:10},200);
+    const renewed=await find();assert.notEqual(renewed.epoch,first.epoch);assert.equal(renewed.read,false);
+    await write('/inventory/alerts/read',{alerts:[first]},409);
+    await write('/inventory/alerts/read',{alerts:[renewed]},200);
+    assert.equal((await find()).read,true);
+    verifyResponse(await request('/api/inventory/alerts'),401);
+  });
   await check('logout revokes session',async()=>{verifyResponse(await request('/api/auth/logout',{method:'POST',auth:true}),200);verifyResponse(await request('/api/bootstrap',{auth:true}),401);});
   await stop();report.status='PASS';
  }catch(e){report.error=String(e.message);console.error(report.status,report.error);process.exitCode=1;}
