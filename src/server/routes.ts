@@ -1531,7 +1531,7 @@ apiRouter.patch(
     }
     const patch = req.body as Partial<InventoryItem>;
     const validation = validateInventoryItemInput({...mapInventoryItemRow(existing),...patch});
-    if (!validation.valid) return res.status(400).json({error:validation.error});
+    if (validation.valid === false) return res.status(400).json({error:validation.error});
     if (patch.reservedQuantity !== undefined && Number(patch.reservedQuantity)>Number(existing.quantity_on_hand)) return res.status(400).json({error:'Reserved stock cannot exceed stock on hand.'});
     const now = new Date().toISOString();
 
@@ -1669,7 +1669,7 @@ function applyInventoryAdjustment(
     'adjustment') as StockMovementType;
   const validation = validateStockMovementInput({
     movementType: resolvedMovementType,
-    quantityDelta: Number(payload.quantityDelta) || 0,
+    quantityDelta: payload.quantityDelta,
   });
   if (validation.valid === false) {
     throw Object.assign(new Error(validation.error), { statusCode: 400 });
