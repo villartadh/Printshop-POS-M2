@@ -1,0 +1,11 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { paperLayout, escapeHtml, safeFilename, documentKind, printHtml } from '../src/shared/printDocument.ts';
+test('thermal widths reserve driver margins',()=>{assert.equal(paperLayout('58mm').width,50);assert.equal(paperLayout('80mm').width,72)});
+test('sheet formats use physical sizes',()=>{assert.equal(paperLayout('A4').page,'A4');assert.equal(paperLayout('Letter').page,'letter')});
+test('custom widths are bounded and finite',()=>{assert.equal(paperLayout('Custom',Infinity).width,72);assert.equal(paperLayout('Custom',0).width,32);assert.equal(paperLayout('Custom',900).width,292)});
+test('document titles escape markup',()=>assert.equal(escapeHtml('<&"\'>'),'&lt;&amp;&quot;&#39;&gt;'));
+test('file names cannot traverse directories',()=>assert.equal(safeFilename('../a/b'),'___a_b'));
+test('quotes and held orders are not sales slips',()=>{assert.equal(documentKind('quotation',false),'quotation');assert.equal(documentKind('held',false),'quotation');assert.equal(documentKind('sale',false),'sales_receipt');assert.equal(documentKind(undefined,true),'job_order_slip')});
+test('standalone export retains receipt content and no print button',()=>{const html=printHtml('<REF>','<div>PHP 25</div>','58mm',80);assert.match(html,/width:50mm/);assert.match(html,/&lt;REF&gt;/);assert.match(html,/PHP 25/);assert.doesNotMatch(html,/id="print-now"/)});
+test('preview has print controls hidden on paper and CSP',()=>{const html=printHtml('TEST','test','A4',80,true);assert.match(html,/id="print-now"/);assert.match(html,/@media print\{aside\{display:none/);assert.match(html,/default-src 'none'/)});

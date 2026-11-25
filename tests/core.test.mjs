@@ -1,0 +1,15 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {validateTransaction} from '../src/shared/transactionValidation.ts';
+import {convertToFeet,evaluateFormulaExpression} from '../src/shared/pricingEngine.ts';
+const sale=()=>({clientMutationId:'test',type:'sale',items:[{lineSubtotal:100,lineDiscount:0,lineTotal:100,effectiveQuantity:1,unitPrice:100,consumables:[]}],subtotal:100,itemDiscountsTotal:0,orderDiscountAmount:0,taxAmount:0,totalAmount:100,amountPaid:100,changeAmount:20,balanceDue:0,paymentStatus:'paid',payments:[{amount:120,methodType:'cash'}]});
+test('cash sale with change',()=>assert.doesNotThrow(()=>validateTransaction(sale())));
+test('invalid negative total rejected',()=>assert.throws(()=>validateTransaction({...sale(),totalAmount:-1})));
+test('invalid balance rejected',()=>assert.throws(()=>validateTransaction({...sale(),balanceDue:20})));
+test('electronic overpayment rejected',()=>assert.throws(()=>validateTransaction({...sale(),payments:[{amount:120,methodType:'gcash'}]})));
+test('dimension conversion',()=>assert.equal(convertToFeet(36,'in'),3));
+test('formula evaluation',()=>assert.equal(evaluateFormulaExpression('width * height * rate',{width:3,height:4,rate:25}),300));
+test('formula rejects unknown identifiers',()=>assert.equal(evaluateFormulaExpression('process.exit()' ,{}),null));
+test('forged line total rejected',()=>{const t=sale();t.items[0].lineTotal=1;assert.throws(()=>validateTransaction(t));});
+test('forged subtotal rejected',()=>assert.throws(()=>validateTransaction({...sale(),subtotal:200})));
+test('discount exceeding subtotal rejected',()=>assert.throws(()=>validateTransaction({...sale(),orderDiscountAmount:200})));

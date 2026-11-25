@@ -1,0 +1,13 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {pendingBatch,mutationOwner,validateSyncEnvelope} from '../src/shared/offlinePolicy.ts';
+const m=(id,owner='a',status='pending')=>({id,ownerId:owner,clientMutationId:id,type:'ADJUST_INVENTORY',status,createdAt:id});
+test('queue isolates cashier and quarantines conflicts',()=>assert.deepEqual(pendingBatch([m('1','b'),m('2','a','conflict'),m('3')],'a').map(x=>x.id),['3']));
+test('queue sorts and bounds batches',()=>assert.deepEqual(pendingBatch([m('3'),m('1'),m('2')],'a',2).map(x=>x.id),['1','2']));
+test('interrupted syncing records are recoverable',()=>assert.equal(pendingBatch([m('1','a','syncing')],'a').length,1));
+test('legacy unowned stock is quarantined',()=>assert.equal(pendingBatch([{...m('1'),ownerId:undefined}],'a').length,0));
+test('legacy sale ownership is recovered',()=>assert.equal(mutationOwner({...m('1'),ownerId:undefined,type:'CREATE_TRANSACTION',payload:{cashierId:'a'}}),'a'));
+test('server rejects foreign owner',()=>assert.throws(()=>validateSyncEnvelope(m('1','b'),'a'),/owner/));
+test('server rejects mismatched sale identity',()=>assert.throws(()=>validateSyncEnvelope({...m('1'),type:'CREATE_TRANSACTION',payload:{cashierId:'a',clientMutationId:'2'}},'a'),/identity/));
+test('server accepts matching sale identity',()=>assert.doesNotThrow(()=>validateSyncEnvelope({...m('1'),type:'CREATE_TRANSACTION',payload:{cashierId:'a',clientMutationId:'1'}},'a')));
+test('server rejects unsupported mutation and null',()=>{assert.throws(()=>validateSyncEnvelope({...m('1'),type:'CREATE_EXPENSE'},'a'));assert.throws(()=>validateSyncEnvelope(null,'a'));});

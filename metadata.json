@@ -1,0 +1,6 @@
+{
+  "name": "Printshop POS",
+  "description": "Smart Point of Sale for Printing Businesses — cross-platform, offline-first POS, dynamic print pricing, production job tracking, inventory, and financial analytics.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
