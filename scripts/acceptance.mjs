@@ -156,6 +156,27 @@ async function main(){
     await write('/inventory/'+history.id,undefined,409,'DELETE');
     assert.equal((await state()).stockMovements.filter(m=>m.inventoryItemId===history.id).length,2);
   });
+  await check('purchase price and weighted average valuation are atomic and replay safe',async()=>{
+    const item=await write('/inventory',{name:'Synthetic Purchase Cost',unit:'sheet',quantityOnHand:100,unitCost:2});
+    const url='/inventory/'+item.id+'/adjust';
+    const p={clientMutationId:randomUUID(),movementType:'purchase',quantityDelta:50,purchaseUnitCost:5};
+    const before=await state();
+    for(const patch of [{purchaseUnitCost:'5'},{purchaseUnitCost:-1},{movementType:'wastage'}])await write(url,{...p,...patch,clientMutationId:randomUUID()},400);
+    assert.deepEqual((await state()).stockMovements,before.stockMovements);
+    const result=await write(url,p,200);
+    assert.equal(result.item.quantityOnHand,150);
+    assert.equal(result.item.unitCost,3);
+    assert.equal(result.movement.purchaseUnitCost,5);
+    assert.equal(result.movement.unitCostAtMovement,5);
+    assert.deepEqual(await write(url,p,200),result);
+    await write(url,{...p,purchaseUnitCost:6},400);
+    const current=await state();
+    assert.equal(current.inventory.find(i=>i.id===item.id).unitCost,3);
+    assert.equal(current.stockMovements.filter(m=>m.inventoryItemId===item.id).length,2);
+    const later=await write(url,{clientMutationId:randomUUID(),movementType:'purchase',quantityDelta:10},200);
+    assert.equal(later.item.unitCost,3);
+    assert.equal(later.movement.purchaseUnitCost,undefined);
+  });
   await check('authoritative catalog checkout, tender/change and duplicate', async () => {
     const sale = makeOrder('sale',50);
     await write('/transactions',{...sale,items:[{...sale.items[0],unitPrice:1}]},409);
@@ -247,6 +268,13 @@ async function main(){
         'isActive','hasPin','preferredLandingModule','createdAt'].includes(key)));
     }
     verifyResponse(await request('/api/categories',{method:'POST',body:{name:'Forbidden'},headers}),403);
+    const costItem=(await state()).inventory.find(i=>i.name==='Synthetic Purchase Cost');
+    const payload={inventoryItemId:costItem.id,clientMutationId:randomUUID(),movementType:'purchase',quantityDelta:1,purchaseUnitCost:1};
+    verifyResponse(await request('/api/inventory/'+costItem.id+'/adjust',{method:'POST',body:payload,headers}),403);
+    const rejected=verifyResponse(await request('/api/sync/batch',{method:'POST',headers,body:{mutations:[{id:payload.clientMutationId,clientMutationId:payload.clientMutationId,ownerId:cashier.user.id,type:'ADJUST_INVENTORY',payload}]}}),200);
+    assert.equal(rejected.results[0].status,'error');
+    assert.match(rejected.results[0].error,/Only administrators/);
+    assert.equal((await state()).inventory.find(i=>i.id===costItem.id).quantityOnHand,160);
     verifyResponse(await request('/api/transactions/'+paid.id+'/refund',
       {method:'POST',body:{reason:'Forbidden'},headers}),403);
   });

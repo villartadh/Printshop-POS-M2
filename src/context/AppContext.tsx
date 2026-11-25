@@ -46,6 +46,7 @@ import {
   saveOfflineSnapshot,
   updateOutboxMutation,
 } from '../services/offlineDb.ts';
+import {validatePurchaseCost,weightedPurchaseCost} from '../shared/purchaseCost.ts';
 import { pendingBatch, mutationOwner, validateSyncResults } from '../shared/offlinePolicy.ts';
 import { useOnlineStatus } from '../hooks/usePWAInstall.ts';
 
@@ -784,6 +785,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       throw new Error(validation.error);
     }
 
+    validatePurchaseCost(payload.purchaseUnitCost,payload.movementType,session?.user.role || '');
     const mutationId = `inv_adj_${crypto.randomUUID()}`;
     const applyOptimisticOffline = async (): Promise<StockMovement> => {
       if (!session) throw new Error("Cashier session required.");
@@ -797,7 +799,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       );
       const qtyBefore = Number(target.quantityOnHand) || 0;
       const nextQty = Number((qtyBefore + signedDelta).toFixed(2));
-      if (nextQty < 0) throw new Error("Insufficient stock.");
+      if (nextQty < 0 || (signedDelta < 0 && nextQty < (target.reservedQuantity ?? 0))) throw new Error("Insufficient unreserved stock.");
       const now = new Date().toISOString();
       const occurredAt = payload.occurredAt || now;
       const restockedAt =
@@ -809,6 +811,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const updatedItem = normalizeInventoryItem({
         ...target,
         quantityOnHand: nextQty,
+        unitCost: weightedPurchaseCost(qtyBefore,target.unitCost,signedDelta,payload.purchaseUnitCost),
         lastRestockedAt: restockedAt,
         updatedAt: now,
       });
@@ -820,7 +823,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         quantityBefore: qtyBefore,
         quantityDelta: signedDelta,
         balanceAfter: nextQty,
-        unitCostAtMovement: target.unitCost,
+        unitCostAtMovement: payload.purchaseUnitCost ?? target.unitCost,
+        purchaseUnitCost: payload.purchaseUnitCost,
         referenceType: payload.referenceType || inferReferenceType(payload.movementType),
         reference: payload.reference || '',
         performedById: session?.user.id || '',

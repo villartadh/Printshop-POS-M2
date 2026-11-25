@@ -259,6 +259,7 @@ export function normalizeStockMovement(
     quantityDelta,
     balanceAfter,
     unitCostAtMovement: Math.max(0, Number(raw.unitCostAtMovement) || 0),
+    purchaseUnitCost: typeof raw.purchaseUnitCost === 'number' && Number.isFinite(raw.purchaseUnitCost) ? raw.purchaseUnitCost : undefined,
     referenceType: raw.referenceType || inferReferenceType(movementType),
     reference: (raw.reference || '').trim(),
     performedById: raw.performedById || '',

@@ -114,6 +114,8 @@ export interface StockMovement {
   /** Stock count immediately after this movement */
   balanceAfter: number;
   unitCostAtMovement?: number;
+  /** Explicit supplier price; absent on legacy or unpriced receipts. */
+  purchaseUnitCost?: number;
   referenceType?: StockMovementReferenceType;
   reference: string;
   performedById?: string;
@@ -127,6 +129,7 @@ export interface StockMovement {
 
 export interface StockAdjustmentPayload {
   movementType: StockMovementType;
+  purchaseUnitCost?: number;
   quantityDelta: number;
   note: string;
   reference?: string;

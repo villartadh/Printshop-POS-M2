@@ -93,6 +93,7 @@ export const InventoryModule: React.FC = () => {
   // Stock adjustment form
   const [movementType, setMovementType] = useState<StockMovementType>('purchase');
   const [delta, setDelta] = useState('50');
+  const [purchasePrice,setPurchasePrice] = useState('');
   const [reference, setReference] = useState('');
   const [note, setNote] = useState('');
 
@@ -207,6 +208,7 @@ export const InventoryModule: React.FC = () => {
     const suggested = getSuggestedRestockQuantity(item);
     setAdjustTarget(item);
     setMovementType('purchase');
+    setPurchasePrice('');
     setDelta(String(suggested > 0 ? suggested : 50));
     setReference('');
     setNote('');
@@ -260,6 +262,7 @@ export const InventoryModule: React.FC = () => {
       await trackStockChange(adjustTarget.id, {
         movementType,
         quantityDelta: Number(delta) || 0,
+        ...(movementType==='purchase' && canEditCatalog && purchasePrice.trim()!==''?{purchaseUnitCost:Number(purchasePrice)}:{}),
         reference,
         note,
       });
@@ -367,7 +370,7 @@ export const InventoryModule: React.FC = () => {
           </div>
         </Card>
         <Card>
-          <div className="text-xs font-medium text-[var(--pos-text-muted)]">Inventory Valuation</div>
+          <div className="text-xs font-medium text-[var(--pos-text-muted)]">Estimated Inventory Valuation</div>
           <div className="text-2xl font-bold font-mono-num text-[var(--pos-text)] mt-1">
             {formatCurrency(totalValuation, taxCurr)}
           </div>
@@ -880,6 +883,10 @@ export const InventoryModule: React.FC = () => {
             onChange={(e) => setDelta(e.target.value)}
             required
           />
+          {movementType==='purchase' && canEditCatalog && <div className="space-y-1">
+            <Input label={`Supplier purchase price per unit (${taxCurr.currencySymbol})`} type="number" min="0" max="1000000000" step="0.0001" placeholder="Optional — leave blank to keep current cost" value={purchasePrice} onChange={e=>setPurchasePrice(e.target.value)}/>
+            <p className="text-xs text-[var(--pos-text-muted)]">Current estimated unit cost: {formatCurrency(adjustTarget?.unitCost ?? 0,taxCurr)}. Entering a supplier price records the actual purchase price and recalculates the weighted-average estimate when accepted by the server. Offline values are provisional.</p>
+          </div>}
           <Input
             label="Reference # (PO / Job / Receipt)"
             placeholder="e.g. PO-2026-042 or JO-261124-102"

@@ -300,6 +300,7 @@ export function initDatabase() {
   ensureColumn('inventory_items', 'created_at', "TEXT NOT NULL DEFAULT ''");
 
   ensureColumn('stock_movements', 'quantity_before', 'REAL NOT NULL DEFAULT 0');
+  ensureColumn('stock_movements', 'purchase_unit_cost', 'REAL');
   ensureColumn('stock_movements', 'unit_cost_at_movement', 'REAL NOT NULL DEFAULT 0');
   ensureColumn('stock_movements', 'reference_type', "TEXT NOT NULL DEFAULT 'manual'");
   ensureColumn('stock_movements', 'performed_by_id', "TEXT NOT NULL DEFAULT ''");

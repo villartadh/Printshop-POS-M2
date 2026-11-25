@@ -1,5 +1,6 @@
 import { attemptGate, validPassword, validPin, removesLastAdmin } from '../shared/securityPolicy.ts';
 import { validateSyncEnvelope } from '../shared/offlinePolicy.ts';
+import {validatePurchaseCost,weightedPurchaseCost} from '../shared/purchaseCost.ts';
 import { recordOrderConversion } from './orderConversion.ts';
 import { validateJobPatch } from '../shared/jobWorkflow.ts';
 import { reverseSale, collectBalance } from './reversal.ts';
@@ -128,6 +129,7 @@ function mapStockMovementRow(m: Record<string, unknown>): StockMovement {
     quantityDelta: delta,
     balanceAfter,
     unitCostAtMovement: Number(m.unit_cost_at_movement) || 0,
+    purchaseUnitCost: m.purchase_unit_cost == null ? undefined : Number(m.purchase_unit_cost),
     referenceType: (m.reference_type
       ? String(m.reference_type)
       : inferReferenceType(movementType)) as StockMovement['referenceType'],
@@ -1656,6 +1658,7 @@ function applyInventoryAdjustment(
   payload: {
     movementType?: StockMovementType;
     quantityDelta?: number;
+    purchaseUnitCost?: number;
     note?: string;
     reference?: string;
     referenceType?: StockMovement['referenceType'];
@@ -1698,19 +1701,21 @@ function applyInventoryAdjustment(
         ? String(existing.last_restocked_at)
         : null;
 
+  const previousCost = Number(existing.unit_cost) || 0;
+  const nextCost = weightedPurchaseCost(qtyBefore,previousCost,signedDelta,payload.purchaseUnitCost);
   const movementId = genId('mov');
   const resolvedRefType = payload.referenceType || inferReferenceType(resolvedMovementType);
 
   const run = db.transaction(() => {
     db.prepare(
-      'UPDATE inventory_items SET quantity_on_hand = ?, last_restocked_at = ?, updated_at = ? WHERE id = ?',
-    ).run(nextQty, restockedAt, now, id);
+      'UPDATE inventory_items SET quantity_on_hand = ?, unit_cost = ?, last_restocked_at = ?, updated_at = ? WHERE id = ?',
+    ).run(nextQty, nextCost, restockedAt, now, id);
     db.prepare(`
       INSERT INTO stock_movements (
         id, inventory_item_id, item_name, movement_type, quantity_before, quantity_delta,
-        balance_after, unit_cost_at_movement, reference_type, reference, performed_by_id,
+        balance_after, unit_cost_at_movement, purchase_unit_cost, reference_type, reference, performed_by_id,
         performed_by, note, occurred_at, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       movementId,
       id,
@@ -1719,7 +1724,8 @@ function applyInventoryAdjustment(
       qtyBefore,
       signedDelta,
       nextQty,
-      Number(existing.unit_cost) || 0,
+      payload.purchaseUnitCost ?? previousCost,
+      payload.purchaseUnitCost ?? null,
       resolvedRefType,
       payload.reference || '',
       actorId,
@@ -1750,7 +1756,8 @@ function applyInventoryAdjustment(
   };
 }
 
-function applyInventoryOnce(id: string, payload: Parameters<typeof applyInventoryAdjustment>[1], actorId: string, actorName: string, mutationId: string) {
+function applyInventoryOnce(id: string, payload: Parameters<typeof applyInventoryAdjustment>[1], actorId: string, actorName: string, mutationId: string, actorRole: string) {
+  validatePurchaseCost(payload.purchaseUnitCost,payload.movementType || 'adjustment',actorRole);
   if (typeof mutationId !== 'string' || !mutationId || mutationId.length > 200) throw new Error('Invalid stock mutation ID');
   const { clientMutationId: _ignored, inventoryItemId: _item, ...fields } = payload as typeof payload & {clientMutationId?: string; inventoryItemId?: string};
   const request = JSON.stringify([id, Object.entries(fields).sort(([a],[b]) => a.localeCompare(b))]);
@@ -1775,6 +1782,7 @@ apiRouter.post('/inventory/:id/adjust', requireAuth, (req: AuthenticatedRequest,
       req.authUser!.id,
       req.authUser!.fullName,
       req.body?.clientMutationId,
+      req.authUser!.role,
     );
     res.json(result.result);
   } catch (err) {
@@ -2043,12 +2051,13 @@ apiRouter.post('/sync/batch', requireAuth, (req: AuthenticatedRequest, res) => {
           inventoryItemId: string;
           movementType?: StockMovementType;
           quantityDelta?: number;
+          purchaseUnitCost?: number;
           note?: string;
           reference?: string;
           referenceType?: StockMovement['referenceType'];
           occurredAt?: string;
         };
-        const {duplicate} = applyInventoryOnce(adj.inventoryItemId, adj, req.authUser!.id, req.authUser!.fullName, mut.clientMutationId);
+        const {duplicate} = applyInventoryOnce(adj.inventoryItemId, adj, req.authUser!.id, req.authUser!.fullName, mut.clientMutationId, req.authUser!.role);
         results.push({
           clientMutationId: mut.clientMutationId,
           status: duplicate ? 'duplicate' : 'applied',
