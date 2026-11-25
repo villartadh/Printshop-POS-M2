@@ -1,8 +1,10 @@
 export type PaperFormat = '58mm' | '80mm' | 'A4' | 'Letter' | 'Custom';
+export const CUSTOM_PAPER_MIN_MM = 30;
+export const CUSTOM_PAPER_MAX_MM = 500;
 export function paperLayout(format: PaperFormat, customMm = 80) {
   if (format === 'A4') return {width: 190, page: 'A4', margin: 10};
   if (format === 'Letter') return {width: 195.9, page: 'letter', margin: 10};
-  const width = format === '58mm' ? 58 : format === '80mm' ? 80 : Math.min(300, Math.max(40, Number.isFinite(customMm) ? customMm : 80));
+  const width = format === '58mm' ? 58 : format === '80mm' ? 80 : Math.min(CUSTOM_PAPER_MAX_MM, Math.max(CUSTOM_PAPER_MIN_MM, Number.isFinite(customMm) ? customMm : 80));
   return {width: width - 8, page: 'auto', margin: 4};
 }
 export function escapeHtml(value: string) {
