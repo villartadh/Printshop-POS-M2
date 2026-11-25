@@ -653,6 +653,27 @@ apiRouter.get('/bootstrap', requireAuth, (_req, res) => {
   });
 });
 
+// ---------- DATE-RANGE FINANCIAL REPORTS ----------
+apiRouter.get('/reports/finance', requireAuth, (req, res) => {
+  const from = req.query.from;
+  const to = req.query.to;
+  const valid = (v: unknown): v is string => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) &&
+    Number.isFinite(Date.parse(v)) && new Date(v).toISOString().slice(0,10) === v;
+  if (!valid(from) || !valid(to) || from > to) return res.status(400).json({error:'Valid reporting date range required.'});
+  const start = new Date(from+'T00:00:00+08:00').toISOString();
+  const end = new Date(Date.parse(to+'T00:00:00+08:00') + 86400000).toISOString();
+  const result = db.transaction(() => {
+    const transactions = (db.prepare("SELECT * FROM transactions WHERE type = 'sale' AND created_at >= ? AND created_at < ? ORDER BY created_at DESC, id DESC").all(start,end) as Record<string,unknown>[]).map(mapTransactionRow);
+    const expenses = (db.prepare('SELECT * FROM expenses WHERE expense_date >= ? AND expense_date <= ? ORDER BY expense_date DESC, created_at DESC').all(from,to) as Record<string,unknown>[]).map(e=>({
+      id:String(e.id), category:e.category as ExpenseRecord['category'], description:String(e.description),
+      amount:Number(e.amount)||0, vendor:String(e.vendor||''), recordedBy:String(e.recorded_by),
+      expenseDate:String(e.expense_date), isDemo:e.is_demo===1, createdAt:String(e.created_at),
+    }));
+    return {from,to,transactions,expenses,generatedAt:new Date().toISOString()};
+  })();
+  res.json(result);
+});
+
 // ---------- SETTINGS ----------
 
 apiRouter.put(
