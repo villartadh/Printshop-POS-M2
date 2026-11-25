@@ -39,6 +39,7 @@ import type {
 import { verifyCatalogPricing } from '../shared/authoritativePricing.ts';
 import { validateTransaction } from '../shared/transactionValidation.ts';
 import { DEFAULT_SETTINGS } from '../shared/defaults.ts';
+import { validateSettings } from '../shared/settingsValidation.ts';
 import {
   computeSignedStockDelta,
   inferReferenceType,
@@ -660,9 +661,8 @@ apiRouter.put(
   requireRole(['admin', 'manager']),
   (req: AuthenticatedRequest, res) => {
     const incoming = req.body as AppSettings;
-    if (!incoming || !incoming.branding || !incoming.tokens) {
-      return res.status(400).json({ error: 'Invalid settings payload.' });
-    }
+    const invalid = validateSettings(incoming);
+    if (invalid) return res.status(400).json({ error: invalid });
     const updated: AppSettings = {
       ...incoming,
       updatedAt: new Date().toISOString(),
