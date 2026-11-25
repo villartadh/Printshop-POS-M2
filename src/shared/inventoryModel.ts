@@ -266,22 +266,24 @@ export function normalizeStockMovement(
 export function validateInventoryItemInput(
   input: Partial<InventoryItem>,
 ): { valid: true } | { valid: false; error: string } {
-  if (!input.name || !input.name.trim()) {
+  if (typeof input.name !== 'string' || !input.name.trim()) {
     return { valid: false, error: 'Item name is required.' };
   }
-  if (!input.unit || !input.unit.trim()) {
+  if (typeof input.unit !== 'string' || !input.unit.trim()) {
     return { valid: false, error: 'Stock unit (e.g., sheet, pc, sq ft) is required.' };
   }
-  const stockVal = input.quantityOnHand ?? input.currentStock;
-  if (stockVal !== undefined && Number(stockVal) < 0) {
-    return { valid: false, error: 'Quantity on hand cannot be negative.' };
+  for (const key of ['quantityOnHand','currentStock','reservedQuantity','reorderLevel','reorderThreshold','reorderQuantity','unitCost','leadTimeDays'] as const) {
+    const value = input[key];
+    if (value !== undefined && (typeof value !== 'number' || !Number.isFinite(value) || value < 0)) {
+      return { valid:false, error: key + ' must be a finite non-negative number.' };
+    }
   }
-  const thresholdVal = input.reorderLevel ?? input.reorderThreshold;
-  if (thresholdVal !== undefined && Number(thresholdVal) < 0) {
-    return { valid: false, error: 'Reorder level cannot be negative.' };
+  const stock = input.quantityOnHand ?? input.currentStock;
+  if (stock !== undefined && (input.reservedQuantity ?? 0) > stock) {
+    return { valid:false, error:'Reserved stock cannot exceed stock on hand.' };
   }
-  if (input.unitCost !== undefined && Number(input.unitCost) < 0) {
-    return { valid: false, error: 'Unit cost cannot be negative.' };
+  for (const key of ['name','unit','sku','barcode','categoryId','category','supplier','supplierContact','supplierSku','storageLocation'] as const) {
+    if (input[key] !== undefined && typeof input[key] !== 'string') return {valid:false,error:key+' must be text.'};
   }
   return { valid: true };
 }
@@ -290,9 +292,15 @@ export function validateStockMovementInput(input: {
   movementType?: StockMovementType;
   quantityDelta?: number;
 }): { valid: true } | { valid: false; error: string } {
-  const delta = Number(input.quantityDelta) || 0;
-  if (delta === 0) {
+  if (input.movementType !== undefined && !Object.prototype.hasOwnProperty.call(STOCK_MOVEMENT_LABELS,input.movementType)) {
+    return {valid:false,error:'Invalid stock movement type.'};
+  }
+  const delta = input.quantityDelta;
+  if (typeof delta !== 'number' || !Number.isFinite(delta) || delta === 0 || Math.abs(delta) < 0.01) {
     return { valid: false, error: 'Stock quantity change must be non-zero.' };
+  }
+  if (Math.abs(delta - Number(delta.toFixed(2))) > 1e-9) {
+    return {valid:false,error:'Stock quantity change supports up to two decimal places.'};
   }
   return { valid: true };
 }
