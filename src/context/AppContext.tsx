@@ -42,12 +42,12 @@ import {
   enqueueOfflineMutation,
   getOutboxMutations,
   loadOfflineSnapshot,
-  removeOutboxMutation,
+  commitSyncAcknowledgments,
+  retryOutboxConflict,
   saveOfflineSnapshot,
-  updateOutboxMutation,
 } from '../services/offlineDb.ts';
 import {validatePurchaseCost,weightedPurchaseCost} from '../shared/purchaseCost.ts';
-import { pendingBatch, mutationOwner, validateSyncResults, retainSyncFailure } from '../shared/offlinePolicy.ts';
+import { pendingBatch, mutationOwner, validateSyncResults } from '../shared/offlinePolicy.ts';
 import { useOnlineStatus } from '../hooks/usePWAInstall.ts';
 
 export interface QuickUserInfo {
@@ -114,6 +114,9 @@ interface AppContextValue {
   lastSyncedAt: string | null;
   outbox: OfflineMutation[];
   syncNow: () => Promise<void>;
+  retrySyncConflict: (id:string) => Promise<void>;
+  refreshSyncQueue: () => Promise<void>;
+  syncError: string | null;
 
   // Data stores
   loadingData: boolean;
@@ -257,6 +260,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const syncLock = useRef(false);
   const [outbox, setOutbox] = useState<OfflineMutation[]>([]);
+  const [syncError,setSyncError]=useState<string|null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
@@ -358,6 +362,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!session || !isOnline || syncLock.current) return;
     syncLock.current = true;
     setIsSyncing(true);
+    setSyncError(null);
     try {
       const queue = pendingBatch(await getOutboxMutations(), session.user.id);
       if (!queue.length) return;
@@ -370,19 +375,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
 
       const results = validateSyncResults(queue, res);
-      let appliedCount = 0;
-      let conflictCount = 0;
-      for (const item of results) {
-        const mut = queue.find((q) => q.clientMutationId === item.clientMutationId);
-        if (!mut) continue;
-        if (item.status === 'applied' || item.status === 'duplicate') {
-          await removeOutboxMutation(mut.id);
-          appliedCount++;
-        } else {
-          if (!item.retryable) conflictCount++;
-          await updateOutboxMutation(retainSyncFailure(mut,item));
-        }
-      }
+      await commitSyncAcknowledgments(queue,res);
+      const appliedCount=results.filter(r=>r.status==='applied'||r.status==='duplicate').length;
+      const conflictCount=results.filter(r=>r.status==='error'&&!r.retryable).length;
       setOutbox(await getOutboxMutations());
       setLastSyncedAt(res.syncedAt);
       if (appliedCount > 0) {
@@ -391,6 +386,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (conflictCount > 0) notify(`${conflictCount} offline record(s) need reconciliation. Records retained in the offline queue.`, 'error');
       await refreshBootstrap();
     } catch (err) {
+      setSyncError('Synchronization could not be confirmed. Records remain queued for safe retry.');
+      try {setOutbox(await getOutboxMutations());} catch {setSyncError('Offline storage could not be read. Do not clear browser data.');}
       void appendDiagnosticLog({
         level: 'warn',
         category: 'sync',
@@ -402,6 +399,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [isOnline, notify, refreshBootstrap, session]);
 
+  const refreshSyncQueue=useCallback(async()=>{
+    try{setOutbox(await getOutboxMutations());}
+    catch{setSyncError('Offline storage could not be read. Do not clear browser data.');}
+  },[]);
+  const retrySyncConflict=useCallback(async(id:string)=>{
+    if(!session||!isOnline||syncLock.current)throw new Error('Connect and wait for synchronization to finish before retrying.');
+    syncLock.current=true;
+    setIsSyncing(true);
+    try{await retryOutboxConflict(id,session.user.id);await refreshSyncQueue();setSyncError(null);}
+    finally{syncLock.current=false;setIsSyncing(false);}
+    await syncNow();
+  },[session,isOnline,refreshSyncQueue,syncNow]);
+
   useEffect(() => {
     if (!isOnline || !session || !pendingBatch(outbox, session.user.id).length) return;
     const timer = window.setInterval(() => void syncNow(), 15000);
@@ -412,12 +422,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     async (authSession: AuthSession) => {
       setMemoryToken(authSession.token);
       setSession(authSession);
+      setSyncError(null);
+      await refreshSyncQueue();
       setIsLocked(false);
       setNeedsSetup(false);
       await refreshBootstrap();
       setActiveModule(authSession.user.preferredLandingModule || settings.defaultLandingModule || 'pos');
     },
-    [refreshBootstrap, settings.defaultLandingModule],
+    [refreshBootstrap, settings.defaultLandingModule,refreshSyncQueue],
   );
 
   const setupAdmin = async (payload: {
@@ -1029,6 +1041,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     lastSyncedAt,
     outbox: outbox.filter(m => session && mutationOwner(m) === session.user.id),
     syncNow,
+    retrySyncConflict,
+    refreshSyncQueue,
+    syncError,
     loadingData,
     dataError,
     settings,

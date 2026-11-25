@@ -1,5 +1,7 @@
 import type { DiagnosticLogEntry, OfflineMutation } from '../shared/types.ts';
 
+import {validateSyncResults,retainSyncFailure,requeueConflict,sameQueuedVersion} from '../shared/offlinePolicy.ts';
+
 const DB_NAME = 'printshop_pos_offline_v1';
 const DB_VERSION = 1;
 
@@ -144,4 +146,47 @@ export async function getDiagnosticLogs(): Promise<DiagnosticLogEntry[]> {
   } catch {
     return [];
   }
+}
+
+/** Apply a fully validated acknowledgment in one transaction; never recreate missing or changed records. */
+export async function commitSyncAcknowledgments(queue:OfflineMutation[],response:unknown):Promise<void>{
+ const results=validateSyncResults(queue,response);
+ const byId=new Map(queue.map(m=>[m.clientMutationId,m]));
+ const db=await openDb();
+ try{
+  await new Promise<void>((resolve,reject)=>{
+   const tx=db.transaction('outbox','readwrite'),store=tx.objectStore('outbox');
+   tx.oncomplete=()=>resolve();
+   tx.onerror=()=>reject(tx.error||new Error('Queue acknowledgment failed'));
+   tx.onabort=()=>reject(tx.error||new Error('Queue acknowledgment aborted'));
+   for(const result of results){
+    const submitted=byId.get(result.clientMutationId)!;
+    const get=store.get(submitted.id);
+    get.onsuccess=()=>{
+     const current=get.result as OfflineMutation|undefined;
+     if(!sameQueuedVersion(current,submitted))return;
+     if(result.status==='applied'||result.status==='duplicate')store.delete(submitted.id);
+     else store.put(retainSyncFailure(submitted,result));
+    };
+   }
+  });
+ }finally{db.close();}
+}
+export async function retryOutboxConflict(id:string,owner:string):Promise<void>{
+ const db=await openDb();
+ try{
+  await new Promise<void>((resolve,reject)=>{
+   const tx=db.transaction('outbox','readwrite'),store=tx.objectStore('outbox');
+   let failure:unknown;
+   tx.oncomplete=()=>resolve();
+   tx.onerror=()=>reject(failure||tx.error||new Error('Queue retry failed'));
+   tx.onabort=()=>reject(failure||tx.error||new Error('Queue retry aborted'));
+   const get=store.get(id);
+   get.onsuccess=()=>{
+    try{if(!get.result)throw new Error('Offline record no longer exists. Refresh the queue.');
+      store.put(requeueConflict(get.result as OfflineMutation,owner));
+    }catch(e){failure=e;tx.abort();}
+   };
+  });
+ }finally{db.close();}
 }

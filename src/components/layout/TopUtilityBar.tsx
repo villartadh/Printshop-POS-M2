@@ -21,6 +21,7 @@ import type { InterfaceDensity, ModuleId, PlatformPreviewMode } from '../../shar
 import { PWAInstallButton } from '../ui/PWAInstallButton.tsx';
 import { MODULE_META } from './navigationMeta.ts';
 import { NotificationCenter } from './NotificationCenter.tsx';
+import { SyncRecovery } from './SyncRecovery.tsx';
 
 interface TopUtilityBarProps {
   layoutTier: 'desktop' | 'tablet' | 'mobile';
@@ -53,10 +54,15 @@ export const TopUtilityBar: React.FC<TopUtilityBarProps> = ({
     isOnline,
     isSyncing,
     pendingSyncCount,
-    syncNow,
+    syncError,
+    refreshSyncQueue,
+    outbox,
   } = useApp();
 
   const [printerMenuOpen, setPrinterMenuOpen] = useState(false);
+  const [recoveryOpen,setRecoveryOpen]=useState(false);
+  const conflicts=outbox.some(m=>m.status==='conflict'||m.status==='failed');
+  const openRecovery=()=>{setRecoveryOpen(true);void refreshSyncQueue();};
   const printerPopoverRef = useRef<HTMLDivElement>(null);
 
   const caps = useMemo(() => detectHardwareCapabilities(), []);
@@ -165,23 +171,11 @@ export const TopUtilityBar: React.FC<TopUtilityBarProps> = ({
           </button>
         )}
 
-        {/* Offline / Pending Sync Action */}
-        {!isOnline ? (
-          <span className="inline-flex items-center gap-1.5 px-2.5 h-9 rounded-lg border border-[#D97706]/30 bg-[#D97706]/10 text-[#D97706] text-xs font-medium whitespace-nowrap shrink-0">
-            <WifiOff className="w-3.5 h-3.5 shrink-0" />
-            <span className="hidden sm:inline">Offline</span>
-            {pendingSyncCount > 0 && <span className="font-mono-num">({pendingSyncCount})</span>}
-          </span>
-        ) : pendingSyncCount > 0 ? (
-          <button
-            type="button"
-            onClick={() => void syncNow()}
-            className="inline-flex items-center gap-1.5 px-2.5 h-9 rounded-lg bg-[var(--pos-primary)]/15 text-[var(--pos-primary)] text-xs font-medium cursor-pointer whitespace-nowrap shrink-0"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 shrink-0 ${isSyncing ? 'animate-spin' : ''}`} />
-            <span className="hidden sm:inline">Sync ({pendingSyncCount})</span><span className="sm:hidden">{pendingSyncCount}</span>
-          </button>
-        ) : null}
+        {(!isOnline||pendingSyncCount>0||syncError)&&<button type="button" aria-label="Offline Record Recovery" title="Offline Record Recovery" onClick={openRecovery} className={`inline-flex items-center gap-1.5 px-2 h-9 rounded-lg border border-[var(--pos-border)] text-xs font-medium shrink-0 ${conflicts||syncError?'text-[var(--pos-error)]':!isOnline?'text-[var(--pos-warning)]':'text-[var(--pos-primary)]'}`}>
+          {isOnline?<RefreshCw className={`w-3.5 h-3.5 ${isSyncing?'animate-spin':''}`}/>:<WifiOff className="w-3.5 h-3.5"/>}
+          <span className="hidden sm:inline">{conflicts?'Review':!isOnline?'Offline':'Sync'}</span><span>{pendingSyncCount||''}</span>
+        </button>}
+        {recoveryOpen&&<SyncRecovery onClose={()=>setRecoveryOpen(false)}/>}
 
         <NotificationCenter />
 

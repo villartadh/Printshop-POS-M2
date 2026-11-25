@@ -37,3 +37,12 @@ export function isRetryableSyncError(error: unknown): boolean {
 export function retainSyncFailure(mutation: OfflineMutation,result: SyncResult): OfflineMutation {
   return {...mutation,status:result.retryable===true?'pending':'conflict',retryCount:mutation.retryCount+1,errorMessage:result.error||'Sync conflict'};
 }
+
+export function requeueConflict(mutation:OfflineMutation,owner:string):OfflineMutation {
+  validateSyncEnvelope(mutation,owner);
+  if(mutation.status!=='conflict'&&mutation.status!=='failed')throw new Error('Only unresolved conflicts can be requeued.');
+  return {...mutation,status:'pending',errorMessage:undefined};
+}
+export function sameQueuedVersion(current:OfflineMutation|undefined,submitted:OfflineMutation):boolean {
+  return Boolean(current && JSON.stringify(current)===JSON.stringify(submitted));
+}

@@ -23,3 +23,20 @@ import {isRetryableSyncError,retainSyncFailure} from '../src/shared/offlinePolic
 test('only known database contention is automatically retryable',()=>{for(const e of [{code:'SQLITE_BUSY'},{code:'SQLITE_LOCKED_SHAREDCACHE'},{code:'ERR_SQLITE_ERROR',errcode:261}])assert.equal(isRetryableSyncError(e),true);for(const e of [null,new Error('busy'),{statusCode:409},{code:'ERR_SQLITE_ERROR',errcode:19}])assert.equal(isRetryableSyncError(e),false);});
 test('retry preserves mutation identity and payload; business conflict remains quarantined',()=>{const original={...m('1'),retryCount:2,payload:{quantityDelta:4}};const retry=retainSyncFailure(original,{...result('1','error'),retryable:true});assert.deepEqual(retry,{...original,status:'pending',retryCount:3,errorMessage:'Sync conflict'});assert.equal(retainSyncFailure(original,result('1','error')).status,'conflict');});
 test('retryable acknowledgment metadata is validated',()=>{assert.equal(validateSyncResults([m('1')],ack([{...result('1','error'),retryable:true}]))[0].retryable,true);for(const x of [{...result('1'),retryable:true},{...result('1','error'),retryable:'true'}])assert.throws(()=>validateSyncResults([m('1')],ack([x])));});
+
+import {requeueConflict,sameQueuedVersion} from '../src/shared/offlinePolicy.ts';
+test('manual retry preserves original identity, payload and attempt count',()=>{
+ const original={...m('1','a','conflict'),retryCount:2,payload:{inventoryItemId:'paper',quantityDelta:4},errorMessage:'Insufficient stock'};
+ const retry=requeueConflict(original,'a');
+ assert.deepEqual(retry,{...original,status:'pending',errorMessage:undefined});
+ assert.throws(()=>requeueConflict(original,'b'),/owner/);
+ assert.throws(()=>requeueConflict(retry,'a'),/Only unresolved/);
+ assert.throws(()=>requeueConflict({...original,type:'CREATE_EXPENSE'},'a'),/Unsupported/);
+});
+test('stale acknowledgments cannot recreate or overwrite newer queue records',()=>{
+ const original={...m('1'),retryCount:0,payload:{quantityDelta:4}};
+ assert.equal(sameQueuedVersion({...original},original),true);
+ assert.equal(sameQueuedVersion(undefined,original),false);
+ assert.equal(sameQueuedVersion({...original,retryCount:1},original),false);
+ assert.equal(sameQueuedVersion({...original,status:'conflict'},original),false);
+});
