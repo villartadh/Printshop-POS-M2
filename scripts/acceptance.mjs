@@ -198,6 +198,35 @@ async function main(){
     verifyResponse(await request('/api/transactions/'+paid.id+'/refund',
       {method:'POST',body:{reason:'Forbidden'},headers}),403);
   });
+  await check('complete financial history beyond bootstrap caps and Manila midnight boundary',async()=>{
+    const db=new DatabaseSync(path.join(sandbox,'data','printshop-pos.db'));
+    const dates=['2020-01-01T15:59:59.999Z','2020-01-01T16:00:00.000Z','2020-01-02T15:59:59.999Z','2020-01-02T16:00:00.000Z'];
+    try {
+      db.exec('BEGIN');
+      const sale=db.prepare("INSERT INTO transactions (id,receipt_number,client_mutation_id,type,cashier_id,cashier_name,items_json,subtotal,total_amount,amount_paid,payment_status,created_at) VALUES (?,?,?,'sale',?,?,'[]',10,10,10,'paid',?)");
+      const expense=db.prepare("INSERT INTO expenses (id,category,description,amount,recorded_by,expense_date,created_at) VALUES (?,'other','Synthetic report fixture',2,'Acceptance',?,?)");
+      for(let i=0;i<305;i++) sale.run('report-sale-'+i,'REPORT-'+i,'report-mutation-'+i,'acceptance','Acceptance',dates[1+i%2]);
+      sale.run('report-before','REPORT-BEFORE','report-before','acceptance','Acceptance',dates[0]);
+      sale.run('report-after','REPORT-AFTER','report-after','acceptance','Acceptance',dates[3]);
+      for(let i=0;i<205;i++)expense.run('report-expense-'+i,'2020-01-02',dates[1]);
+      expense.run('report-expense-before','2020-01-01',dates[0]);
+      expense.run('report-expense-after','2020-01-03',dates[3]);
+      db.exec('COMMIT');
+    } finally {db.close();}
+    const url='/api/reports/finance?from=2020-01-02&to=2020-01-02';
+    verifyResponse(await request(url),401);
+    for(const query of ['from=2020-02-30&to=2020-03-01','from=2020-01-03&to=2020-01-02','from=2020-01-02']) verifyResponse(await request('/api/reports/finance?'+query,{auth:true}),400);
+    const report=verifyResponse(await request(url,{auth:true}),200);
+    assert.equal(report.transactions.length,305);
+    assert.equal(report.expenses.length,205);
+    assert.equal(report.transactions.reduce((sum,t)=>sum+t.totalAmount,0),3050);
+    assert.equal(report.expenses.reduce((sum,e)=>sum+e.amount,0),410);
+    assert.ok(report.transactions.every(t=>/^report-sale-/.test(t.id)));
+    assert.ok(report.expenses.every(e=>e.expenseDate==='2020-01-02'));
+    const bootstrap=await state();
+    assert.equal(bootstrap.transactions.length,300);
+    assert.equal(bootstrap.expenses.length,200);
+  });
   await check('logout revokes session',async()=>{verifyResponse(await request('/api/auth/logout',{method:'POST',auth:true}),200);verifyResponse(await request('/api/bootstrap',{auth:true}),401);});
   await stop();report.status='PASS';
  }catch(e){report.error=String(e.message);console.error(report.status,report.error);process.exitCode=1;}
