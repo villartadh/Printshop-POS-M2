@@ -1,5 +1,5 @@
 import { attemptGate, validPassword, validPin, removesLastAdmin } from '../shared/securityPolicy.ts';
-import { validateSyncEnvelope } from '../shared/offlinePolicy.ts';
+import { validateSyncEnvelope, isRetryableSyncError } from '../shared/offlinePolicy.ts';
 import {validatePurchaseCost,weightedPurchaseCost} from '../shared/purchaseCost.ts';
 import { recordOrderConversion } from './orderConversion.ts';
 import { validateJobPatch } from '../shared/jobWorkflow.ts';
@@ -2133,7 +2133,7 @@ apiRouter.post('/shifts/:id/close', requireAuth, (req: AuthenticatedRequest, res
 
 apiRouter.post('/sync/batch', requireAuth, (req: AuthenticatedRequest, res) => {
   const mutations = Array.isArray(req.body?.mutations) ? req.body.mutations : [];
-  const results: Array<{ clientMutationId: string; status: string; error?: string }> = [];
+  const results: Array<{ clientMutationId: string; status: string; error?: string; retryable?: boolean }> = [];
 
   if (mutations.length > 50) return res.status(400).json({error: "Maximum 50 mutations per batch"});
   for (const mut of mutations) {
@@ -2177,7 +2177,8 @@ apiRouter.post('/sync/batch', requireAuth, (req: AuthenticatedRequest, res) => {
       results.push({
         clientMutationId: mut?.clientMutationId || "",
         status: 'error',
-        error: err instanceof Error ? err.message : 'Sync failed',
+        error: isRetryableSyncError(err) ? 'Database temporarily busy; retry pending.' : err instanceof Error ? err.message : 'Sync failed',
+        retryable: isRetryableSyncError(err),
       });
     }
   }

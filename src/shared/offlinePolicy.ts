@@ -15,7 +15,7 @@ export function validateSyncEnvelope(m: OfflineMutation, owner: string): void {
   } else if (m.type !== 'ADJUST_INVENTORY') throw new Error('Unsupported offline mutation');
 }
 
-export type SyncResult = { clientMutationId: string; status: 'applied' | 'duplicate' | 'error'; error?: string };
+export type SyncResult = { clientMutationId: string; status: 'applied' | 'duplicate' | 'error'; error?: string; retryable?: boolean };
 export function validateSyncResults(queue: OfflineMutation[], response: unknown): SyncResult[] {
   const envelope = response as {results?: unknown; syncedAt?: unknown} | null;
   if (!envelope || !Array.isArray(envelope.results) || typeof envelope.syncedAt !== 'string' || !Number.isFinite(Date.parse(envelope.syncedAt))) throw new Error('Invalid synchronization acknowledgment');
@@ -23,7 +23,17 @@ export function validateSyncResults(queue: OfflineMutation[], response: unknown)
   if (expected.size !== queue.length || envelope.results.length !== queue.length) throw new Error('Incomplete or ambiguous synchronization acknowledgment');
   for (const raw of envelope.results) {
     const item = raw as SyncResult | null;
-    if (!item || typeof item.clientMutationId !== 'string' || !expected.delete(item.clientMutationId) || !['applied','duplicate','error'].includes(item.status) || (item.error !== undefined && typeof item.error !== 'string')) throw new Error('Unrecognized or duplicate synchronization acknowledgment');
+    if (!item || typeof item.clientMutationId !== 'string' || !expected.delete(item.clientMutationId) || !['applied','duplicate','error'].includes(item.status) || (item.error !== undefined && typeof item.error !== 'string') || (item.retryable !== undefined && (typeof item.retryable !== 'boolean' || item.status !== 'error'))) throw new Error('Unrecognized or duplicate synchronization acknowledgment');
   }
   return envelope.results as SyncResult[];
+}
+
+// Only explicitly recognized SQLite lock contention is safe for automatic retry.
+export function isRetryableSyncError(error: unknown): boolean {
+  const code=(error as {code?:unknown}|null)?.code;
+  const errcode=(error as {errcode?:unknown}|null)?.errcode;
+  return (typeof code==='string' && /^SQLITE_(BUSY|LOCKED)(_|$)/.test(code)) || (code==='ERR_SQLITE_ERROR' && typeof errcode==='number' && [5,6].includes(errcode & 255));
+}
+export function retainSyncFailure(mutation: OfflineMutation,result: SyncResult): OfflineMutation {
+  return {...mutation,status:result.retryable===true?'pending':'conflict',retryCount:mutation.retryCount+1,errorMessage:result.error||'Sync conflict'};
 }

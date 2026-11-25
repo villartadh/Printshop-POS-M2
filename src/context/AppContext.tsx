@@ -47,7 +47,7 @@ import {
   updateOutboxMutation,
 } from '../services/offlineDb.ts';
 import {validatePurchaseCost,weightedPurchaseCost} from '../shared/purchaseCost.ts';
-import { pendingBatch, mutationOwner, validateSyncResults } from '../shared/offlinePolicy.ts';
+import { pendingBatch, mutationOwner, validateSyncResults, retainSyncFailure } from '../shared/offlinePolicy.ts';
 import { useOnlineStatus } from '../hooks/usePWAInstall.ts';
 
 export interface QuickUserInfo {
@@ -379,13 +379,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           await removeOutboxMutation(mut.id);
           appliedCount++;
         } else {
-          conflictCount++;
-          await updateOutboxMutation({
-            ...mut,
-            status: 'conflict',
-            retryCount: mut.retryCount + 1,
-            errorMessage: item.error || 'Sync conflict',
-          });
+          if (!item.retryable) conflictCount++;
+          await updateOutboxMutation(retainSyncFailure(mut,item));
         }
       }
       setOutbox(await getOutboxMutations());
