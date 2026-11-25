@@ -202,9 +202,12 @@ try {
     await page.getByTitle('Recall held order (F10)').click();
     await click('Recall');
     await click(/Receive payment/);
-    await page.getByRole('spinbutton').filter({visible:true}).last().fill('10');
+    const tender=page.getByRole('dialog').getByLabel(/Amount Tendered/);
+    await tender.fill('10');
+    assert.equal(await tender.inputValue(),'10');
     await click('Complete Payment');
-    await waitText(/Amount received is short/);
+    await page.getByRole('dialog').getByRole('alert').filter({hasText:'Amount received is short'}).waitFor();
+    assert.equal((await api('/bootstrap')).transactions.filter(t=>t.type==='sale').length,1);
     await page.getByText('Allow partial / down payment',{exact:true}).click();
     await click('Complete Payment');
     await waitText('Document & Receipt Preview');
@@ -213,7 +216,14 @@ try {
     assert.ok(state.transactions.some(t=>t.type==='sale'&&t.balanceDue===10&&t.paymentStatus==='partial'));
     assert.ok(state.transactions.some(t=>t.type==='quotation'&&t.convertedSaleId));
   });
-  await check('offline sale, reconnect and replay deduplication',async()=>{
+  await check('offline sale, conflict retry, lost acknowledgment and reload recovery',async()=>{
+    const initial=await api('/bootstrap');
+    const service=initial.services.find(s=>s.name==='Synthetic Print');
+    assert.ok(service);
+    const setPrice=async(basePrice)=>{
+      const response=await context.request.put(origin+'/api/services/'+service.id,{data:{...service,basePrice},headers:{Authorization:'Bearer '+session.token}});
+      assert.equal(response.status(),200);
+    };
     await page.waitForFunction(async()=>Boolean((await navigator.serviceWorker.getRegistration())?.active));
     await context.setOffline(true);
     const offlineTab = await context.newPage();
@@ -228,12 +238,55 @@ try {
     await click('Complete Payment');
     await waitText('Document & Receipt Preview');
     await click('Close');
-    const sync = page.waitForResponse(r=>r.url().endsWith('/api/sync/batch'),{timeout:22000});
+    // A real server-side price conflict: do not alter the recorded offline payment.
+    await setPrice(21);
     await context.setOffline(false);
-    const response=await sync;
-    assert.equal((await response.json()).results[0].status,'applied');
-    const replay=await api('/sync/batch',response.request().postDataJSON(),200);
-    assert.equal(replay.results[0].status,'duplicate');
+    await click('Offline Record Recovery');
+    const recovery=page.getByRole('dialog').filter({has:page.getByText('Offline Record Recovery',{exact:true})});
+    const conflictResponse=page.waitForResponse(r=>r.url().endsWith('/api/sync/batch'),{timeout:22000});
+    await recovery.getByRole('button',{name:'Synchronize Pending'}).click();
+    const rejected=await conflictResponse;
+    const original=rejected.request().postDataJSON().mutations[0];
+    assert.equal((await rejected.json()).results[0].status,'error');
+    await recovery.getByText(/Price or quantity changed/).waitFor();
+    assert.equal((await api('/bootstrap')).transactions.some(t=>t.clientMutationId===original.clientMutationId),false);
+    await page.screenshot({path:path.join(evidence,'offline-price-conflict.png'),animations:'disabled'});
+    await setPrice(20);
+    // Server accepts the original mutation, but the browser receives an incomplete acknowledgment.
+    let forwarded=null;
+    await page.route('**/api/sync/batch',async route=>{
+      if(forwarded){await route.abort();return;}
+      const upstream=await route.fetch();
+      const body=await upstream.json();
+      forwarded={request:route.request().postDataJSON(),body};
+      await route.fulfill({response:upstream,json:{...body,results:[]}});
+    });
+    await recovery.getByRole('button',{name:'Retry Original Record'}).click();
+    await recovery.getByRole('button',{name:'Confirm Retry'}).click();
+    await recovery.getByText('Synchronization could not be confirmed. Records remain queued for safe retry.',{exact:true}).waitFor({timeout:22000});
+    assert.equal(forwarded.body.results[0].status,'applied');
+    assert.deepEqual(forwarded.request.mutations[0].payload,original.payload);
+    assert.equal(forwarded.request.mutations[0].clientMutationId,original.clientMutationId);
+    const accepted=await api('/bootstrap');
+    assert.equal(accepted.transactions.filter(t=>t.clientMutationId===original.clientMutationId).length,1);
+    await page.screenshot({path:path.join(evidence,'offline-lost-ack.png'),animations:'disabled'});
+    // Restart the browser page and recover the durable local record.
+    await page.reload();await signIn();
+    await click('Offline Record Recovery');
+    await recovery.getByText('Mutation: '+original.clientMutationId,{exact:true}).waitFor();
+    await page.unroute('**/api/sync/batch');
+    const duplicateResponse=page.waitForResponse(r=>r.url().endsWith('/api/sync/batch'),{timeout:22000});
+    await recovery.getByRole('button',{name:'Synchronize Pending'}).click();
+    const replay=await duplicateResponse;
+    assert.equal((await replay.json()).results[0].status,'duplicate');
+    await recovery.getByText('No unresolved records for this operator.',{exact:true}).waitFor();
+    const final=await api('/bootstrap');
+    assert.equal(final.transactions.filter(t=>t.clientMutationId===original.clientMutationId).length,1);
+    assert.deepEqual(final.shifts,accepted.shifts);
+    assert.deepEqual(final.printJobs,accepted.printJobs);
+    assert.deepEqual(final.stockMovements,accepted.stockMovements);
+    await page.screenshot({path:path.join(evidence,'offline-recovered.png'),animations:'disabled'});
+    await recovery.getByRole('button',{name:'Close',exact:true}).click();
   });
   await check('production stages and reports',async()=>{
     await click('Print Jobs');

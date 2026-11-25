@@ -34,6 +34,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const [splitPayments, setSplitPayments] = useState<PaymentEntry[]>([]);
   const [allowPartial, setAllowPartial] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [submitError,setSubmitError]=useState('');
 
   useEffect(() => {
     if (open) {
@@ -43,6 +44,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       setOperatorVerified(false);
       setSplitPayments([]);
       setAllowPartial(false);
+      setSubmitError('');
     }
   }, [open, totalAmount, taxCurr.decimalPlaces]);
 
@@ -95,6 +97,8 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   };
 
   const handleSubmit = async () => {
+    if(submitting)return;
+    setSubmitError('');
     const finalPayments = [...splitPayments];
     if (currentInputVal > 0) {
       const entry = buildPaymentEntry();
@@ -104,10 +108,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
     const finalPaid = finalPayments.reduce((s, p) => s + p.amount, 0);
     if (!allowPartial && finalPaid + 0.001 < totalAmount) {
-      notify(
-        `Amount received is short by ${formatCurrency(totalAmount - finalPaid, taxCurr)}. Enable partial payment or collect full amount.`,
-        'error',
-      );
+      setSubmitError(`Amount received is short by ${formatCurrency(totalAmount - finalPaid, taxCurr)}. Enable partial payment or collect full amount.`);
       return;
     }
     if (allowPartial && finalPayments.length === 0) {
@@ -116,7 +117,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
     const cashTendered = finalPayments.filter(p => p.methodType === 'cash').reduce((sum, p) => sum + p.amount, 0);
     if (finalPaid - totalAmount > cashTendered + 0.01) {
-      notify('Change cannot exceed cash tendered.', 'error');
+      setSubmitError('Change cannot exceed cash tendered.');
       return;
     }
     setSubmitting(true);
@@ -124,7 +125,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       await onCompletePayment(finalPayments, allowPartial);
       onClose();
     } catch (err) {
-      notify(err instanceof Error ? err.message : 'Checkout failed.', 'error');
+      setSubmitError(err instanceof Error ? err.message : 'Checkout failed.');
     } finally {
       setSubmitting(false);
     }
@@ -182,7 +183,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
           step="0.01"
           min="0"
           value={tenderAmount}
-          onChange={(e) => setTenderAmount(e.target.value)}
+          onChange={(e) => {setTenderAmount(e.target.value);setSubmitError('');}}
         />
         {activeMethod?.requiresReference && (
           <Input
@@ -264,7 +265,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
           <input
             type="checkbox"
             checked={allowPartial}
-            onChange={(e) => setAllowPartial(e.target.checked)}
+            onChange={(e) => {setAllowPartial(e.target.checked);setSubmitError('');}}
             className="h-4 w-4 accent-[var(--pos-primary)]"
           />
           Allow partial / down payment
@@ -300,7 +301,9 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   );
 
   const footer = (
-    <div className="w-full flex items-center justify-end gap-2.5">
+    <div className="w-full space-y-2">
+      {submitError&&<p role="alert" className="text-sm text-[var(--pos-error)] break-words">{submitError}</p>}
+      <div className="flex items-center justify-end gap-2.5">
       <Button variant="secondary" onClick={onClose}>
         Cancel
       </Button>
@@ -308,6 +311,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         <CreditCard className="w-4 h-4" />
         Complete Payment
       </Button>
+      </div>
     </div>
   );
 
