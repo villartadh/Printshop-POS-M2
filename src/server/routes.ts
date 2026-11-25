@@ -663,22 +663,21 @@ apiRouter.put(
     const incoming = req.body as AppSettings;
     const invalid = validateSettings(incoming);
     if (invalid) return res.status(400).json({ error: invalid });
-    const updated: AppSettings = {
-      ...incoming,
-      updatedAt: new Date().toISOString(),
-    };
-    db.prepare(
-      'INSERT OR REPLACE INTO app_settings (key, value_json, updated_at) VALUES (?, ?, ?)',
-    ).run('app_settings', JSON.stringify(updated), updated.updatedAt);
-
-    writeAuditLog(
-      req.authUser!.id,
-      req.authUser!.fullName,
-      'SETTINGS_UPDATED',
-      'app_settings',
-      'app_settings',
-      'Updated business branding, layout, and system settings',
-    );
+    const updated = db.transaction(() => {
+      const row = db.prepare('SELECT value_json FROM app_settings WHERE key = ?').get('app_settings') as { value_json: string } | undefined;
+      const current = row ? parseJsonSafe(row.value_json, DEFAULT_SETTINGS) : DEFAULT_SETTINGS;
+      if (incoming.updatedAt !== current.updatedAt) return null;
+      const next: AppSettings = {
+        ...incoming,
+        updatedAt: new Date(Math.max(Date.now(), (Date.parse(current.updatedAt) || 0) + 1)).toISOString(),
+      };
+      db.prepare('INSERT OR REPLACE INTO app_settings (key, value_json, updated_at) VALUES (?, ?, ?)')
+        .run('app_settings', JSON.stringify(next), next.updatedAt);
+      writeAuditLog(req.authUser!.id, req.authUser!.fullName, 'SETTINGS_UPDATED', 'app_settings', 'app_settings',
+        'Updated business branding, layout, and system settings');
+      return next;
+    })();
+    if (!updated) return res.status(409).json({ error: 'Settings changed on another terminal. Reload settings and review your changes before saving again.' });
     res.json(updated);
   },
 );
