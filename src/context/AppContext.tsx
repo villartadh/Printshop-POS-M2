@@ -214,7 +214,6 @@ export function useApp() {
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const {
     settings,
-    hasLocalCustomizations,
     setSettingsState,
     updateBranding,
     updateTokens,
@@ -275,14 +274,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const applyBootstrapData = useCallback(
     (data: BootstrapPayload) => {
-      const serverTs = Date.parse(data.settings?.updatedAt || '') || 0;
-      const localTs = Date.parse(settings.updatedAt || '') || 0;
-      if (!hasLocalCustomizations || serverTs > localTs) {
-        setSettingsState((prev) => ({
-          ...data.settings,
-          shellPreferences: data.settings.shellPreferences ?? prev.shellPreferences,
-        }));
-      }
+      setSettingsState((prev) => ({
+        ...data.settings,
+        themeMode: prev.themeMode,
+        density: prev.density,
+        shellPreferences: prev.shellPreferences ?? data.settings.shellPreferences,
+      }));
       setCategories(data.categories);
       if (Array.isArray(data.supplyCategories) && data.supplyCategories.length > 0) {
         setSupplyCategories(data.supplyCategories);
@@ -302,7 +299,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setUsers(data.users);
       setAuditLogs(data.auditLogs);
     },
-    [hasLocalCustomizations, setSettingsState, settings.updatedAt],
+    [setSettingsState],
   );
 
   const refreshBootstrap = useCallback(async () => {
@@ -472,36 +469,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const saveSettings = async (next: AppSettings) => {
-    const stamped: AppSettings = {
-      ...next,
-      updatedAt: new Date().toISOString(),
-    };
-    const persisted = setSettingsState(stamped);
-
-    const canSyncServer =
-      isOnline &&
-      session &&
-      (session.user.role === 'admin' || session.user.role === 'manager');
-
-    if (canSyncServer) {
-      try {
-        const updated = await apiRequest<AppSettings>('/api/settings', {
-          method: 'PUT',
-          body: JSON.stringify(persisted),
-        });
-        setSettingsState(updated);
-        notify('Settings saved and synced.', 'success');
-        return;
-      } catch (err) {
-        if (!(err instanceof TypeError)) {
-          throw err;
-        }
-        notify('Settings saved locally (offline).', 'info');
-        return;
-      }
+    if (!session || !['admin','manager'].includes(session.user.role)) {
+      throw new Error('Only managers or administrators can save business settings.');
     }
-
-    notify('Preferences saved locally on this device.', 'success');
+    if (!isOnline) throw new Error('Connect to the store server before saving business settings.');
+    const updated = await apiRequest<AppSettings>('/api/settings', {
+      method: 'PUT',
+      body: JSON.stringify(next),
+    });
+    setSettingsState(updated);
+    notify('Settings saved and synced.', 'success');
   };
 
   const submitTransaction = async (txn: Transaction) => {
