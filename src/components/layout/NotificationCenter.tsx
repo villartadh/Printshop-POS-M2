@@ -4,14 +4,16 @@ import {useApp} from '../../context/AppContext.tsx';
 import {buildInventoryAlerts} from '../../shared/inventoryModel.ts';
 import {Modal} from '../ui/Overlays.tsx';
 import {Button} from '../ui/Primitives.tsx';
+import {ReorderRequestModal} from '../inventory/ReorderRequestModal.tsx';
 
 const readKey=(id:string)=>'printshop_inventory_alert_reads_v1:'+id;
 function loadReads(id:string):string[]{
   try {const value=JSON.parse(localStorage.getItem(readKey(id)) || '[]');return Array.isArray(value)?value.filter(v=>typeof v==='string'):[];} catch {return [];}
 }
 function AlertPanel({owner}:{owner:string}){
-  const {inventory,inventoryState,loadingData,dataError,isOnline,setActiveModule}=useApp();
+  const {inventory,inventoryState,loadingData,dataError,isOnline,setActiveModule,session}=useApp();
   const [open,setOpen]=useState(false);
+  const [reorderOpen,setReorderOpen]=useState(false);
   const [read,setRead]=useState<string[]>(()=>loadReads(owner));
   const alerts=useMemo(()=>buildInventoryAlerts(inventory),[inventory]);
   const ready=Boolean(inventoryState.lastLoadedAt)&&!loadingData&&!dataError;
@@ -30,8 +32,9 @@ function AlertPanel({owner}:{owner:string}){
       <Bell className={`w-4 h-4 ${critical?'text-[var(--pos-error)]':''}`}/>
       {ready&&unread>0&&<span className="absolute -top-1 -right-1 min-w-4 px-1 rounded-full bg-red-600 text-white text-[10px] leading-4">{unread>99?'99+':unread}</span>}
     </button>
+    {reorderOpen&&<ReorderRequestModal onClose={()=>setReorderOpen(false)}/>}
     <Modal open={open} onClose={()=>setOpen(false)} title="Inventory Notification Center" subtitle={ready?`${alerts.length} active alerts · ${unread} unread`:'Inventory status not yet available'} maxWidth="md"
-      footer={<><Button variant="outline" size="sm" onClick={()=>setOpen(false)}>Close</Button><Button size="sm" onClick={()=>{setOpen(false);setActiveModule('inventory');}}>Open Inventory</Button></>}>
+      footer={<><Button variant="outline" size="sm" onClick={()=>setOpen(false)}>Close</Button>{['admin','manager'].includes(session?.user.role||'')&&<Button variant="outline" size="sm" disabled={!ready||!alerts.length} onClick={()=>{setOpen(false);setReorderOpen(true);}}>Create Reorder Request</Button>}<Button size="sm" onClick={()=>{setOpen(false);setActiveModule('inventory');}}>Open Inventory</Button></>}>
       <div className="space-y-3">
         {!isOnline&&<p className="text-xs text-[var(--pos-warning)]">Offline: showing last available local inventory data.</p>}
         {!ready?<p>Inventory data is not ready. Refresh the store records before relying on these alerts.</p>:<>

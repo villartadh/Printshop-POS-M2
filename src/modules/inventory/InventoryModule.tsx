@@ -26,6 +26,7 @@ import {
   type InventoryItemFormValues,
 } from '../../components/inventory/InventoryItemDialog.tsx';
 import { InventoryTable } from '../../components/inventory/InventoryTable.tsx';
+import { ReorderRequestModal } from '../../components/inventory/ReorderRequestModal.tsx';
 
 type InventoryTab = 'items' | 'low_stock' | 'movements';
 type InventorySortKey = Extract<
@@ -81,6 +82,7 @@ export const InventoryModule: React.FC = () => {
 
   // Modals
   const [itemModalOpen, setItemModalOpen] = useState(false);
+  const [reorderOpen,setReorderOpen]=useState(false);
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
   const [adjustTarget, setAdjustTarget] = useState<InventoryItem | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<InventoryItem | null>(null);
@@ -332,6 +334,8 @@ export const InventoryModule: React.FC = () => {
         </div>
       )}
 
+      {canEditCatalog && <Button variant="outline" size="sm" onClick={()=>setReorderOpen(true)}>Create Reorder Request</Button>}
+      {reorderOpen && canEditCatalog && <ReorderRequestModal onClose={()=>setReorderOpen(false)}/>}
       {/* KPI Strip */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <Card>

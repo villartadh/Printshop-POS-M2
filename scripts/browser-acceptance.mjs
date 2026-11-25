@@ -112,7 +112,7 @@ try {
     await waitText('Synthetic Print');
   });
   await check('reservation-aware inventory notification center and read tracking',async()=>{
-    const item=await api('/inventory',{name:'Synthetic Alert Paper',unit:'sheet',quantityOnHand:100,reservedQuantity:90,reorderLevel:50,minimumThreshold:20});
+    const item=await api('/inventory',{name:'Synthetic Alert Paper',unit:'sheet',quantityOnHand:100,reservedQuantity:90,reorderLevel:50,minimumThreshold:20,unitCost:2,supplier:'Synthetic Paper Supplier',reorderQuantity:40});
     assert.equal(item.minimumThreshold,20);
     await page.reload(); await signIn();
     await click('Inventory notifications');
@@ -130,6 +130,32 @@ try {
     await dialog.getByText('1 active alerts · 0 unread',{exact:true}).waitFor();
     await dialog.getByRole('button',{name:'Close',exact:true}).click();
     await click('POS Terminal');
+  });
+  await check('supplier reorder draft quantity override and export',async()=>{
+    await click('Inventory notifications');
+    await click('Create Reorder Request');
+    const dialog=page.getByRole('dialog').filter({has:page.getByText('Supplier Reorder Request',{exact:true})});
+    await dialog.getByText('Synthetic Paper Supplier',{exact:true}).waitFor();
+    const qty=dialog.getByLabel('Order quantity Synthetic Alert Paper',{exact:true});
+    assert.equal(await qty.inputValue(),'40');
+    await qty.fill('60');
+    assert.match(await dialog.getByLabel('Estimated procurement total').innerText(),/120/);
+    const dl=page.waitForEvent('download');
+    await dialog.getByRole('button',{name:'Export CSV'}).click();
+    const file=await dl;
+    const csv=await fs.readFile(await file.path(),'utf8');
+    assert.match(csv,/Synthetic Paper Supplier/);assert.match(csv,/Draft estimate/);
+    const pop=page.waitForEvent('popup');
+    await dialog.getByRole('button',{name:'Print Request'}).click();
+    const popup=await pop;
+    await popup.locator('#print-now').waitFor();
+    assert.match(await popup.locator('main').innerText(),/NOT A PURCHASE ORDER/);
+    assert.match(await popup.locator('main').innerText(),/60 sheet/);
+    await popup.close();
+    await page.screenshot({path:path.join(evidence,'supplier-reorder.png'),animations:'disabled'});
+    await dialog.getByRole('button',{name:'Close',exact:true}).click();
+    const state=await api('/bootstrap');
+    assert.equal(state.inventory.find(i=>i.name==='Synthetic Alert Paper').quantityOnHand,100);
   });
   await check('cart editing, CSS viewports and cash checkout',async()=>{
     await waitText('Synthetic Print');
