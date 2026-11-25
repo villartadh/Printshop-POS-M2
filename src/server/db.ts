@@ -286,6 +286,7 @@ export function initDatabase() {
     }
   };
 
+  ensureColumn('transactions', 'receipt_snapshot_json', 'TEXT');
   ensureColumn('inventory_items', 'barcode', "TEXT NOT NULL DEFAULT ''");
   ensureColumn('inventory_items', 'category_id', "TEXT NOT NULL DEFAULT ''");
   ensureColumn('inventory_items', 'reserved_quantity', 'REAL NOT NULL DEFAULT 0');
