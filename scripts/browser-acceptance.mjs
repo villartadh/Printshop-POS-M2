@@ -207,6 +207,34 @@ try {
     const revenue=await page.getByText('Total Revenue',{exact:true}).locator('..').innerText();
     assert.match(revenue,/80\.00/);
   });
+  await check('historical receipt survives business identity change and reprint',async()=>{
+    const original=await api('/bootstrap');
+    const sale=original.transactions.find(t=>t.type==='sale'&&t.totalAmount===40);
+    assert.ok(sale?.receiptSnapshot);
+    assert.equal(sale.receiptSnapshot.branding.businessName,'Synthetic Browser Shop');
+    const next={...original.settings,branding:{...original.settings.branding,businessName:'Renamed Synthetic Shop',address:'Changed synthetic address'}};
+    const saved=await context.request.put(origin+'/api/settings',{data:next,headers:{Authorization:'Bearer '+session.token}});
+    assert.equal(saved.status(),200);
+    await page.reload();
+    await signIn();
+    await click('Dashboard');
+    await page.getByText(sale.receiptNumber,{exact:true}).filter({visible:true}).first().click();
+    await waitText('Document & Receipt Preview');
+    const receipt=page.getByRole('dialog').locator('#printable-document');
+    assert.match(await receipt.innerText(),/Synthetic Browser Shop/);
+    assert.match(await receipt.innerText(),/Synthetic test address/);
+    assert.doesNotMatch(await receipt.innerText(),/Renamed Synthetic Shop/);
+    assert.match(await receipt.innerText(),/REPRINT \/ COPY/);
+    const popupPromise=page.waitForEvent('popup');
+    await click('Print / Save as PDF');
+    const popup=await popupPromise;
+    await popup.locator('#print-now').waitFor();
+    assert.match(await popup.locator('main').innerText(),/Synthetic Browser Shop/);
+    assert.doesNotMatch(await popup.locator('main').innerText(),/Renamed Synthetic Shop/);
+    await popup.close();
+    await page.screenshot({path:path.join(evidence,'historical-reprint.png'),animations:'disabled'});
+    await click('Close');
+  });
   await check('logout and password login',async()=>{
     await page.getByRole('button',{name:'Lock Terminal / Switch User',exact:true}).filter({visible:true}).first().click();
     await click('Sign Out Completely');
