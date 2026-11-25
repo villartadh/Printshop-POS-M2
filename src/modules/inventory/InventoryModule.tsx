@@ -927,6 +927,7 @@ export const InventoryModule: React.FC = () => {
               variant="danger"
               type="button"
               loading={deleting}
+              disabled={Boolean(deleteTarget && ((deleteTarget.currentStock ?? deleteTarget.quantityOnHand) > 0 || getItemStockMovements(deleteTarget.id).length > 0))}
               onClick={() => void handleConfirmDelete()}
             >
               <Trash2 className="w-3.5 h-3.5" />
@@ -941,6 +942,7 @@ export const InventoryModule: React.FC = () => {
               Are you sure you want to permanently remove{' '}
               <strong className="font-semibold">{deleteTarget.name}</strong> from inventory?
             </p>
+            <p className="text-xs text-[var(--pos-text-muted)]">Only empty items without stock movement history or service bindings can be permanently deleted. The server checks all historical records before allowing deletion.</p>
             {(deleteTarget.currentStock ?? deleteTarget.quantityOnHand) > 0 && (
               <div
                 style={{ borderRadius: 'var(--pos-radius)' }}
@@ -952,7 +954,7 @@ export const InventoryModule: React.FC = () => {
                   <strong className="font-mono-num">
                     {deleteTarget.currentStock ?? deleteTarget.quantityOnHand} {deleteTarget.unit}
                   </strong>{' '}
-                  on hand. Deleting it will also remove its associated stock movement history.
+                  on hand. Items with physical stock cannot be deleted. Reconcile the stock before discontinuing this item.
                 </span>
               </div>
             )}
