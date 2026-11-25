@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Copy, Download, Printer } from 'lucide-react';
 import { useApp } from '../../context/AppContext.tsx';
 import { formatCurrency } from '../../shared/pricingEngine.ts';
@@ -24,6 +24,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
   reprint = false,
 }) => {
   const { settings, notify, session, voidTransaction, refundTransaction } = useApp();
+  const documentRef = useRef<HTMLDivElement>(null);
   const [reversing, setReversing] = useState(false);
   const [paperSize, setPaperSize] = useState<ReceiptTemplateConfig['defaultPaperSize']>(
     settings.receiptTemplate.defaultPaperSize,
@@ -62,7 +63,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
   const taxCurr = settings.taxAndCurrency;
 
   const handlePrint = () => {
-    const el = document.getElementById('printable-document');
+    const el = documentRef.current;
     if (!el) return;
     try { openPrintPreview(docReference, el.innerHTML, paperSize, settings.receiptTemplate.customWidthMm); setPreviewOpened(true); }
     catch (err) { notify(err instanceof Error ? err.message : String(err), 'error'); }
@@ -72,8 +73,9 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
     const total = transaction ? transaction.totalAmount : printJob?.totalAmount || 0;
     const customer = transaction?.customerName || printJob?.customerName || 'Customer';
     const text = `${settings.branding.businessName}\n${transaction?.type === 'held' ? 'HELD ORDER — NOT A SALE' : docTitleMap[effectiveType]} #${docReference}\nCustomer: ${customer}\nTotal: ${formatCurrency(total, taxCurr)}`;
+    const status = transaction ? [transaction.syncStatus !== 'synced' ? 'PROVISIONAL — SERVER CONFIRMATION PENDING' : '', ['voided','refunded'].includes(transaction.paymentStatus) ? transaction.paymentStatus.toUpperCase()+' — ORIGINAL SALE RECORD' : '', reprint || previewOpened ? 'REPRINT / COPY' : ''].filter(Boolean).join('\n') : '';
     try {
-      await navigator.clipboard.writeText(text);
+      await navigator.clipboard.writeText(status ? status+'\n'+text : text);
       notify('Receipt summary copied to clipboard.', 'success');
     } catch {
       notify('Unable to copy automatically in this browser.', 'error');
@@ -81,7 +83,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
   };
 
   const handleDownloadHtml = () => {
-    const el = document.getElementById('printable-document');
+    const el = documentRef.current;
     if (!el) return;
     try { downloadPrintDocument(docReference, el.innerHTML, paperSize, settings.receiptTemplate.customWidthMm); }
     catch (err) { notify(err instanceof Error ? err.message : String(err), 'error'); }
@@ -168,6 +170,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
 
         <div className="bg-slate-100 dark:bg-slate-900/70 p-4 rounded-xl flex justify-center overflow-x-auto border border-[var(--pos-border)]">
           <div
+            ref={documentRef}
             id="printable-document"
             style={{ width: `${widthPx}px` }}
             className={`bg-white text-slate-900 border border-slate-300 shadow-sm ${
@@ -214,7 +217,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
                 <span>
                   {new Date(
                     transaction?.createdAt || printJob?.createdAt || Date.now(),
-                  ).toLocaleString()}
+                  ).toLocaleString('en-PH', { timeZone: 'Asia/Manila' })}
                 </span>
               </div>
               <div className="flex justify-between">
