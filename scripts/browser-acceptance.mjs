@@ -111,6 +111,26 @@ try {
     await click('POS Terminal');
     await waitText('Synthetic Print');
   });
+  await check('reservation-aware inventory notification center and read tracking',async()=>{
+    const item=await api('/inventory',{name:'Synthetic Alert Paper',unit:'sheet',quantityOnHand:100,reservedQuantity:90,reorderLevel:50,minimumThreshold:20});
+    assert.equal(item.minimumThreshold,20);
+    await page.reload(); await signIn();
+    await click('Inventory notifications');
+    const dialog=page.getByRole('dialog').filter({has:page.getByText('Inventory Notification Center',{exact:true})});
+    await dialog.waitFor();
+    await dialog.getByText('Synthetic Alert Paper',{exact:true}).waitFor();
+    assert.match(await dialog.innerText(),/Critical shortage/);
+    assert.match(await dialog.innerText(),/Available: 10 sheet/);
+    await dialog.getByRole('button',{name:'Mark all read'}).click();
+    await dialog.getByText('1 active alerts · 0 unread',{exact:true}).waitFor();
+    await page.screenshot({path:path.join(evidence,'inventory-notifications.png'),animations:'disabled'});
+    await dialog.getByRole('button',{name:'Close',exact:true}).click();
+    await page.reload(); await signIn();
+    await click('Inventory notifications');
+    await dialog.getByText('1 active alerts · 0 unread',{exact:true}).waitFor();
+    await dialog.getByRole('button',{name:'Close',exact:true}).click();
+    await click('POS Terminal');
+  });
   await check('cart editing, CSS viewports and cash checkout',async()=>{
     await waitText('Synthetic Print');
     await page.getByText('Synthetic Print',{exact:true}).first().click();

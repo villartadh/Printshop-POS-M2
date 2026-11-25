@@ -34,9 +34,9 @@ export function isBelowMinimumThreshold(item: Pick<InventoryItem, 'quantityOnHan
 }
 
 export function getInventoryStockStatus(
-  item: Pick<InventoryItem, 'quantityOnHand' | 'reorderLevel'>,
+  item: Pick<InventoryItem, 'quantityOnHand' | 'reservedQuantity' | 'reorderLevel'>,
 ): StockStatus {
-  const onHand = Number(item.quantityOnHand) || 0;
+  const onHand = getAvailableStock(item);
   const reorder = Number(item.reorderLevel) || 0;
   if (onHand <= 0) return 'out_of_stock';
   if (onHand <= reorder) return 'low_stock';
@@ -44,19 +44,19 @@ export function getInventoryStockStatus(
 }
 
 export function isLowStockItem(
-  item: Pick<InventoryItem, 'quantityOnHand' | 'reorderLevel'>,
+  item: Pick<InventoryItem, 'quantityOnHand' | 'reservedQuantity' | 'reorderLevel'>,
 ): boolean {
-  return (Number(item.quantityOnHand) || 0) <= (Number(item.reorderLevel) || 0);
+  return getInventoryStockStatus(item) !== 'in_stock';
 }
 
 export function getSuggestedRestockQuantity(
-  item: Pick<InventoryItem, 'quantityOnHand' | 'reorderLevel' | 'reorderQuantity'>,
+  item: Pick<InventoryItem, 'quantityOnHand' | 'reservedQuantity' | 'reorderLevel' | 'reorderQuantity'>,
 ): number {
-  const onHand = Number(item.quantityOnHand) || 0;
+  const onHand = getAvailableStock(item);
   const reorderLevel = Number(item.reorderLevel) || 0;
   if (onHand > reorderLevel) return 0;
   if (item.reorderQuantity && item.reorderQuantity > 0) {
-    return item.reorderQuantity;
+    return Math.max(item.reorderQuantity, Number((reorderLevel-onHand).toFixed(2)));
   }
   return Math.max(1, Number((reorderLevel * 2 - onHand).toFixed(2)));
 }
@@ -311,4 +311,12 @@ export function validateStockMovementInput(input: {
     return {valid:false,error:'Stock quantity change supports up to two decimal places.'};
   }
   return { valid: true };
+}
+
+export function buildInventoryAlerts(items: InventoryItem[]) {
+  return items.filter(isLowStockItem).map(item => {
+    const available = getAvailableStock(item);
+    const severity = available === 0 ? 'out' as const : isBelowMinimumThreshold(item) ? 'critical' as const : 'reorder' as const;
+    return {item, available, severity, signature: JSON.stringify([item.id,severity,item.reorderLevel,item.minimumThreshold ?? 0])};
+  }).sort((a,b)=>({out:0,critical:1,reorder:2}[a.severity]-{out:0,critical:1,reorder:2}[b.severity]) || a.item.name.localeCompare(b.item.name) || a.item.id.localeCompare(b.item.id));
 }
