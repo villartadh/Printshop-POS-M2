@@ -89,7 +89,13 @@ async function main(){
       await write('/settings',payload,400,'PUT');
       assert.deepEqual((await state()).settings,saved);
     }
-    await write('/settings',original,200,'PUT');
+    const stale = structuredClone(valid);
+    stale.branding.businessName = 'Synthetic stale edit';
+    await write('/settings',stale,409,'PUT');
+    assert.deepEqual((await state()).settings,saved);
+    const restored = await write('/settings',{...original,updatedAt:saved.updatedAt},200,'PUT');
+    assert.notEqual(restored.updatedAt,saved.updatedAt);
+    assert.deepEqual(restored.branding,original.branding);
   });
   await check('expense validation, Philippine business date and deletion audit', async () => {
     const fixture={description:'Synthetic expense',category:'other',amount:25};
