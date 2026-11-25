@@ -952,14 +952,14 @@ function applyTransactionCreation(
           const deductQty = Number((binding.quantityPerUnit * item.effectiveQuantity).toFixed(2));
           if (deductQty <= 0) continue;
           const invRow = db
-            .prepare('SELECT id, name, quantity_on_hand, unit_cost FROM inventory_items WHERE id = ?')
+            .prepare('SELECT id, name, quantity_on_hand, reserved_quantity, unit_cost FROM inventory_items WHERE id = ?')
             .get(binding.inventoryItemId) as
-            | { id: string; name: string; quantity_on_hand: number; unit_cost: number }
+            | { id: string; name: string; quantity_on_hand: number; reserved_quantity: number; unit_cost: number }
             | undefined;
           if (!invRow) throw Object.assign(new Error("Configured consumable not found."), { statusCode: 409 });
           if (invRow) {
             const qtyBefore = Number(invRow.quantity_on_hand) || 0;
-            if (deductQty > qtyBefore) throw Object.assign(new Error(`Insufficient stock: ${invRow.name}`), { statusCode: 409 });
+            if (!Number.isFinite(deductQty) || deductQty > Number((qtyBefore - Math.max(0,Number(invRow.reserved_quantity)||0)).toFixed(2))) throw Object.assign(new Error(`Insufficient stock: ${invRow.name}`), { statusCode: 409 });
             const nextQty = Number((qtyBefore - deductQty).toFixed(2));
             db.prepare('UPDATE inventory_items SET quantity_on_hand = ?, updated_at = ? WHERE id = ?').run(
               nextQty,
@@ -1282,6 +1282,7 @@ apiRouter.post(
         ? Math.max(0, Number(i.reorderQuantity) || 0)
         : Math.max(reorderLevel * 2, 0);
     const unitCost = Math.max(0, Number(i.unitCost) || 0);
+    if (Number(i.reservedQuantity ?? 0) > initialQty) return res.status(400).json({error:'Reserved stock cannot exceed stock on hand.'});
     const itemName = i.name!.trim();
 
     const supplierDetails = i.supplierDetails ?? i.supplierInfo;
@@ -1529,6 +1530,9 @@ apiRouter.patch(
       return res.status(404).json({ error: 'Inventory item not found.' });
     }
     const patch = req.body as Partial<InventoryItem>;
+    const validation = validateInventoryItemInput({...mapInventoryItemRow(existing),...patch});
+    if (!validation.valid) return res.status(400).json({error:validation.error});
+    if (patch.reservedQuantity !== undefined && Number(patch.reservedQuantity)>Number(existing.quantity_on_hand)) return res.status(400).json({error:'Reserved stock cannot exceed stock on hand.'});
     const now = new Date().toISOString();
 
     const patchDetails = patch.supplierDetails ?? patch.supplierInfo;
@@ -1619,8 +1623,12 @@ apiRouter.delete(
       return res.status(404).json({ error: 'Inventory item not found.' });
     }
 
+    if (existing.quantity_on_hand !== 0 || db.prepare('SELECT 1 FROM stock_movements WHERE inventory_item_id = ? LIMIT 1').get(id)) {
+      return res.status(409).json({error:'Inventory with stock or movement history cannot be deleted.'});
+    }
+    const linked = (db.prepare('SELECT consumables_json FROM services').all() as {consumables_json:string}[]).some(s=>parseJsonSafe<{inventoryItemId:string}[]>(s.consumables_json,[]).some(b=>b.inventoryItemId===id));
+    if (linked) return res.status(409).json({error:'Inventory is linked to a service. Remove the binding first.'});
     const run = db.transaction(() => {
-      db.prepare('DELETE FROM stock_movements WHERE inventory_item_id = ?').run(id);
       db.prepare('DELETE FROM inventory_items WHERE id = ?').run(id);
       writeAuditLog(
         req.authUser!.id,
@@ -1673,7 +1681,7 @@ function applyInventoryAdjustment(
   );
   const qtyBefore = Number(existing.quantity_on_hand) || 0;
   const nextQty = Number((qtyBefore + signedDelta).toFixed(2));
-  if (nextQty < 0) throw Object.assign(new Error("Insufficient inventory quantity."), { statusCode: 409 });
+  if (!Number.isFinite(nextQty) || nextQty < 0 || (signedDelta < 0 && nextQty < (Number(existing.reserved_quantity)||0))) throw Object.assign(new Error('Insufficient unreserved inventory quantity.'), { statusCode: 409 });
   const now = new Date().toISOString();
   const effectiveTimestamp =
     typeof payload.occurredAt === 'string' && payload.occurredAt ? payload.occurredAt : now;
