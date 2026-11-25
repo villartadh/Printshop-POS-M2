@@ -60,6 +60,30 @@ async function main(){
       payments:tender?[{methodId:'cash',methodType:'cash',amount:tender,verificationStatus:'verified'}]:[],
       ...extra};
   };
+  await check('fresh business identity contains no fictional registration details', async () => {
+    const {branding,taxAndCurrency} = (await state()).settings;
+    for (const key of ['businessName','storeId','address','phone','email','taxRegistrationNumber','receiptFooter']) assert.equal(branding[key],'',key);
+    assert.equal(branding.showQrOnReceipt,false);
+    assert.equal(taxAndCurrency.currencyCode,'PHP');
+    assert.equal(taxAndCurrency.taxEnabled,false);
+  });
+  await check('expense validation, Philippine business date and deletion audit', async () => {
+    const fixture={description:'Synthetic expense',category:'other',amount:25};
+    for (const invalid of [{amount:'Infinity'},{amount:-1},{amount:0},{amount:true},{description:' '},{category:'invalid'},{vendor:42},{expenseDate:'2026-02-30'},{expenseDate:'not-a-date'}]) {
+      await write('/expenses',{...fixture,...invalid},400);
+    }
+    const date=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Manila',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+    const before=date();
+    const expense=await write('/expenses',fixture);
+    assert.ok([before,date()].includes(expense.expenseDate));
+    assert.equal(expense.amount,25);
+    assert.ok((await state()).expenses.some(e=>e.id===expense.id));
+    await write('/expenses/'+expense.id,undefined,200,'DELETE');
+    await write('/expenses/'+expense.id,undefined,404,'DELETE');
+    const data=await state();
+    assert.ok(!data.expenses.some(e=>e.id===expense.id));
+    assert.ok(data.auditLogs.some(log=>log.entityId===expense.id&&log.action==='EXPENSE_DELETED'));
+  });
   await check('synthetic catalog and customer setup', async () => {
     const category = await write('/categories',{name:'Acceptance Services'});
     stock = await write('/inventory',{name:'Acceptance Paper',unit:'sheet',quantityOnHand:20,unitCost:1});
