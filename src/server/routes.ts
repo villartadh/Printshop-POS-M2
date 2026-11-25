@@ -171,6 +171,7 @@ function mapServiceRow(row: Record<string, unknown>): PrintService {
 
 function mapTransactionRow(row: Record<string, unknown>): Transaction {
   return {
+    receiptSnapshot: row.receipt_snapshot_json ? parseJsonSafe(String(row.receipt_snapshot_json), undefined) : undefined,
     id: String(row.id),
     receiptNumber: String(row.receipt_number),
     clientMutationId: String(row.client_mutation_id),
@@ -941,6 +942,8 @@ function applyTransactionCreation(
       payload.notes || '',
       now,
     );
+
+    db.prepare('UPDATE transactions SET receipt_snapshot_json = ? WHERE id = ?').run(JSON.stringify({branding:pricingSettings.branding,taxAndCurrency:pricingSettings.taxAndCurrency}),txId);
 
     // If this is a real completed or partial sale (not held or quotation), deduct inventory consumables, update customer, and update shift
     if (payload.type === 'sale') {
