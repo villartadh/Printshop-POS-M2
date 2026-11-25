@@ -213,6 +213,24 @@ async function main(){
   });
   await check('cashier shift close',async()=>{const x=verifyResponse(await request(`/api/shifts/${shift.id}/close`,{method:'POST',auth:true,body:{actualCash:540}}),200);assert.equal(x.discrepancy,0);});
   await check('database and session persist across restart',async()=>{await stop();await start();const x=verifyResponse(await request('/api/bootstrap',{auth:true}),200);assert.ok(x.shifts.some(s=>s.id===shift.id&&s.status==='closed'));});
+  await check('historical receipt snapshot survives settings change, restart and duplicate submission',async()=>{
+    const original=(await state()).settings;
+    const before=(await state()).transactions.find(t=>t.id===paid.id);
+    assert.ok(before.receiptSnapshot);
+    assert.deepEqual(before.receiptSnapshot.branding,original.branding);
+    const changed=await write('/settings',{...original,branding:{...original.branding,businessName:'Synthetic renamed historical shop'},taxAndCurrency:{...original.taxAndCurrency,currencySymbol:'USD',currencyCode:'USD'}},200,'PUT');
+    try {
+      await stop();await start();
+      const after=(await state()).transactions.find(t=>t.id===paid.id);
+      assert.deepEqual(after.receiptSnapshot,before.receiptSnapshot);
+      const replay=await write('/transactions',{...before,receiptSnapshot:{branding:changed.branding,taxAndCurrency:changed.taxAndCurrency}},200);
+      assert.equal(replay.duplicate,true);
+      assert.deepEqual(replay.transaction.receiptSnapshot,before.receiptSnapshot);
+    } finally {
+      const current=(await state()).settings;
+      await write('/settings',{...original,updatedAt:current.updatedAt},200,'PUT');
+    }
+  });
   await check('cashier controls and sanitized bootstrap',async()=>{
     const cashierPassword = randomUUID();
     await write('/auth/users',{username:'acceptance-cashier',fullName:'Synthetic Cashier',
