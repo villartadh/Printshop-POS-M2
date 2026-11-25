@@ -22,7 +22,11 @@ function openDb(): Promise<IDBDatabase> {
         db.createObjectStore('diagnostics', { keyPath: 'id' });
       }
     };
-    req.onsuccess = () => resolve(req.result);
+    req.onsuccess = () => {
+      const db = req.result;
+      db.onversionchange = () => db.close();
+      resolve(db);
+    };
     req.onerror = () => reject(req.error || new Error('Failed to open IndexedDB'));
   });
 }
@@ -30,6 +34,7 @@ function openDb(): Promise<IDBDatabase> {
 export async function saveOfflineSnapshot<T>(key: string, value: T): Promise<void> {
   try {
     const db = await openDb();
+    try {
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction('kv', 'readwrite');
       tx.objectStore('kv').put(value, key);
@@ -37,6 +42,7 @@ export async function saveOfflineSnapshot<T>(key: string, value: T): Promise<voi
       tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error || new Error("Storage transaction aborted"));
     });
+    } finally { db.close(); }
   } catch {
     // Graceful degradation when private browsing blocks IndexedDB
   }
@@ -45,12 +51,14 @@ export async function saveOfflineSnapshot<T>(key: string, value: T): Promise<voi
 export async function loadOfflineSnapshot<T>(key: string): Promise<T | null> {
   try {
     const db = await openDb();
+    try {
     return await new Promise<T | null>((resolve, reject) => {
       const tx = db.transaction('kv', 'readonly');
       const req = tx.objectStore('kv').get(key);
       req.onsuccess = () => resolve((req.result as T) ?? null);
       req.onerror = () => reject(req.error);
     });
+    } finally { db.close(); }
   } catch {
     return null;
   }
@@ -58,6 +66,7 @@ export async function loadOfflineSnapshot<T>(key: string): Promise<T | null> {
 
 export async function enqueueOfflineMutation(mutation: OfflineMutation): Promise<void> {
   const db = await openDb();
+    try {
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction('outbox', 'readwrite');
     tx.objectStore('outbox').put(mutation);
@@ -65,6 +74,7 @@ export async function enqueueOfflineMutation(mutation: OfflineMutation): Promise
     tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error || new Error("Storage transaction aborted"));
   });
+    } finally { db.close(); }
 }
 
 export async function getOutboxMutations(): Promise<OfflineMutation[]> {
@@ -82,6 +92,7 @@ export async function getOutboxMutations(): Promise<OfflineMutation[]> {
 
 export async function removeOutboxMutation(id: string): Promise<void> {
   const db = await openDb();
+    try {
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction('outbox', 'readwrite');
     tx.objectStore('outbox').delete(id);
@@ -89,6 +100,7 @@ export async function removeOutboxMutation(id: string): Promise<void> {
     tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error || new Error("Storage transaction aborted"));
   });
+    } finally { db.close(); }
 }
 
 export async function updateOutboxMutation(mutation: OfflineMutation): Promise<void> {
@@ -98,6 +110,7 @@ export async function updateOutboxMutation(mutation: OfflineMutation): Promise<v
 export async function appendDiagnosticLog(entry: Omit<DiagnosticLogEntry, 'id' | 'timestamp'>): Promise<void> {
   try {
     const db = await openDb();
+    try {
     const record: DiagnosticLogEntry = {
       id: `diag_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       timestamp: new Date().toISOString(),
@@ -110,6 +123,7 @@ export async function appendDiagnosticLog(entry: Omit<DiagnosticLogEntry, 'id' |
       tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error || new Error("Storage transaction aborted"));
     });
+    } finally { db.close(); }
   } catch {
     // Ignore storage quota errors
   }
@@ -118,6 +132,7 @@ export async function appendDiagnosticLog(entry: Omit<DiagnosticLogEntry, 'id' |
 export async function getDiagnosticLogs(): Promise<DiagnosticLogEntry[]> {
   try {
     const db = await openDb();
+    try {
     const all = await new Promise<DiagnosticLogEntry[]>((resolve, reject) => {
       const tx = db.transaction('diagnostics', 'readonly');
       const req = tx.objectStore('diagnostics').getAll();
@@ -125,6 +140,7 @@ export async function getDiagnosticLogs(): Promise<DiagnosticLogEntry[]> {
       req.onerror = () => reject(req.error);
     });
     return all.sort((a, b) => b.timestamp.localeCompare(a.timestamp)).slice(0, 100);
+    } finally { db.close(); }
   } catch {
     return [];
   }
