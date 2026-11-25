@@ -315,7 +315,10 @@ export type ProductionStatus =
 
 export type PaymentStatus = 'unpaid' | 'partial' | 'paid' | 'refunded' | 'voided';
 
+export type ReceiptSnapshot = Pick<AppSettings, 'branding' | 'taxAndCurrency'>;
+
 export interface Transaction {
+  receiptSnapshot?: ReceiptSnapshot;
   id: string;
   receiptNumber: string;
   clientMutationId: string;
