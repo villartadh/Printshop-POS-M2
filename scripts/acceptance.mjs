@@ -67,6 +67,30 @@ async function main(){
     assert.equal(taxAndCurrency.currencyCode,'PHP');
     assert.equal(taxAndCurrency.taxEnabled,false);
   });
+  await check('settings validation preserves authoritative configuration on rejection', async () => {
+    const original = (await state()).settings;
+    const valid = structuredClone(original);
+    valid.branding.businessName = 'Synthetic Acceptance Shop';
+    const saved = await write('/settings',valid,200,'PUT');
+    assert.equal(saved.branding.businessName,valid.branding.businessName);
+    const invalidCases = [
+      {branding:valid.branding,tokens:valid.tokens},
+      {...valid,taxAndCurrency:{...valid.taxAndCurrency,taxRatePercent:-1}},
+      {...valid,taxAndCurrency:{...valid.taxAndCurrency,decimalPlaces:3}},
+      {...valid,paymentMethods:[valid.paymentMethods[0],valid.paymentMethods[0]]},
+      {...valid,paymentMethods:valid.paymentMethods.map(m=>({...m,enabled:false}))},
+      {...valid,hiddenModules:['pos']},
+      {...valid,receiptTemplate:{...valid.receiptTemplate,defaultPaperSize:'unknown'}},
+      {...valid,branding:{...valid.branding,businessName:123}},
+      {...valid,posLayout:{...valid.posLayout,gridColumnsDesktop:0}},
+      {...valid,dashboardWidgets:[null]},
+    ];
+    for (const payload of invalidCases) {
+      await write('/settings',payload,400,'PUT');
+      assert.deepEqual((await state()).settings,saved);
+    }
+    await write('/settings',original,200,'PUT');
+  });
   await check('expense validation, Philippine business date and deletion audit', async () => {
     const fixture={description:'Synthetic expense',category:'other',amount:25};
     for (const invalid of [{amount:'Infinity'},{amount:-1},{amount:0},{amount:true},{description:' '},{category:'invalid'},{vendor:42},{expenseDate:'2026-02-30'},{expenseDate:'not-a-date'}]) {
