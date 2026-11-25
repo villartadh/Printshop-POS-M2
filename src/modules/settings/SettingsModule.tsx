@@ -46,7 +46,6 @@ export const SettingsModule: React.FC = () => {
     saveSettings,
     setThemeMode,
     setDensity,
-    resetSettingsToDefaults,
     syncNow,
     seedDemo,
     clearDemo,
@@ -94,7 +93,11 @@ export const SettingsModule: React.FC = () => {
       notify('Only managers or administrators can save store settings.', 'error');
       return;
     }
-    await saveSettings(draft);
+    try {
+      await saveSettings(draft);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Unable to save settings.', 'error');
+    }
   };
 
   const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -194,12 +197,12 @@ export const SettingsModule: React.FC = () => {
               variant="outline"
               size="sm"
               onClick={() => {
-                resetSettingsToDefaults();
-                notify('Default settings restored locally. Click Save Changes to sync.', 'info');
+                setDraft(prev => ({ ...prev, themeMode: 'light', density: 'comfortable' }));
+                notify('Display defaults prepared. Business settings preserved. Click Save Changes to apply.', 'info');
               }}
             >
               <RotateCcw className="w-3.5 h-3.5" />
-              Reset Defaults
+              Reset Display Defaults
             </Button>
             <Button size="sm" onClick={() => void handleSave()}>
               Save Changes
