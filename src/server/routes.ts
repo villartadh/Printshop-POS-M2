@@ -94,6 +94,8 @@ function mapInventoryItemRow(i: Record<string, unknown>): InventoryItem {
     reorderLevel,
     reorderThreshold: reorderLevel,
     minimumThreshold: Number(i.minimum_threshold) || 0,
+    archivedAt: i.archived_at ? String(i.archived_at) : undefined,
+    archiveReason: i.archive_reason ? String(i.archive_reason) : undefined,
     reorderQuantity: Number(i.reorder_quantity) || Math.max(reorderLevel * 2, 0),
     unitCost: Number(i.unit_cost) || 0,
     supplier,
@@ -541,7 +543,7 @@ apiRouter.get('/bootstrap', requireAuth, (_req, res) => {
   }));
 
   const inventory = (
-    db.prepare('SELECT * FROM inventory_items ORDER BY name ASC').all() as Array<
+    db.prepare('SELECT * FROM inventory_items WHERE archived_at IS NULL ORDER BY name ASC').all() as Array<
       Record<string, unknown>
     >
   ).map(mapInventoryItemRow);
@@ -743,6 +745,11 @@ apiRouter.delete(
   },
 );
 
+function hasInactiveConsumable(bindings: unknown): boolean {
+  if(bindings===undefined)return false;
+  return !Array.isArray(bindings)||bindings.some(b=>!b||typeof b.inventoryItemId!=='string'||!db.prepare('SELECT id FROM inventory_items WHERE id=? AND archived_at IS NULL').get(b.inventoryItemId));
+}
+
 apiRouter.post(
   '/services',
   requireAuth,
@@ -752,6 +759,7 @@ apiRouter.post(
     if (!s.name || !s.categoryId || !s.pricingMethod) {
       return res.status(400).json({ error: 'Service name, category, and pricing method are required.' });
     }
+    if(hasInactiveConsumable(s.consumables))return res.status(409).json({error:'Service consumables must reference active inventory items.'});
     const id = s.id || genId('srv');
     const now = new Date().toISOString();
     db.prepare(`
@@ -810,6 +818,7 @@ apiRouter.put(
     const s = req.body as Partial<PrintService>;
     const existing = db.prepare('SELECT id FROM services WHERE id = ?').get(id);
     if (!existing) return res.status(404).json({ error: 'Service not found.' });
+    if(hasInactiveConsumable(s.consumables))return res.status(409).json({error:'Service consumables must reference active inventory items.'});
 
     const now = new Date().toISOString();
     db.prepare(`
@@ -958,7 +967,7 @@ function applyTransactionCreation(
           const deductQty = Number((binding.quantityPerUnit * item.effectiveQuantity).toFixed(2));
           if (deductQty <= 0) continue;
           const invRow = db
-            .prepare('SELECT id, name, quantity_on_hand, reserved_quantity, unit_cost FROM inventory_items WHERE id = ?')
+            .prepare('SELECT id, name, quantity_on_hand, reserved_quantity, unit_cost FROM inventory_items WHERE id = ? AND archived_at IS NULL')
             .get(binding.inventoryItemId) as
             | { id: string; name: string; quantity_on_hand: number; reserved_quantity: number; unit_cost: number }
             | undefined;
@@ -1235,6 +1244,47 @@ apiRouter.patch('/print-jobs/:id', requireAuth, (req: AuthenticatedRequest, res)
 
 // ---------- INVENTORY ----------
 
+apiRouter.get('/inventory/archived',requireAuth,requireRole(['admin','manager']),(_req,res)=>{
+  res.setHeader('Cache-Control','no-store');
+  res.json({items:(db.prepare('SELECT * FROM inventory_items WHERE archived_at IS NOT NULL ORDER BY archived_at DESC,id').all() as Record<string,unknown>[]).map(mapInventoryItemRow)});
+});
+
+apiRouter.post('/inventory/:id/archive',requireAuth,requireRole(['admin','manager']),(req:AuthenticatedRequest,res)=>{
+  const id=String(req.params.id);
+  const reason=req.body?.reason;
+  if(typeof reason!=='string'||!reason.trim()||reason.trim().length>500)return res.status(400).json({error:'An archive reason of 1–500 characters is required.'});
+  const result=db.transaction(()=>{
+    const item=db.prepare('SELECT * FROM inventory_items WHERE id=?').get(id) as Record<string,unknown>|undefined;
+    if(!item)return {status:404,error:'Inventory item not found.'};
+    if(item.archived_at)return {status:200,item:mapInventoryItemRow(item)};
+    if(Number(item.quantity_on_hand)!==0||Number(item.reserved_quantity)!==0)return {status:409,error:'Reconcile all physical and reserved stock before archiving.'};
+    const linked=(db.prepare('SELECT consumables_json FROM services').all() as {consumables_json:string}[]).some(s=>{
+      const bindings=parseJsonSafe<unknown>(s.consumables_json,[]);
+      return !Array.isArray(bindings)||bindings.some(b=>b?.inventoryItemId===id);
+    });
+    if(linked)return {status:409,error:'Remove all service bindings before archiving.'};
+    const now=new Date().toISOString();
+    db.prepare('UPDATE inventory_items SET archived_at=?,archive_reason=?,updated_at=? WHERE id=?').run(now,reason.trim(),now,id);
+    writeAuditLog(req.authUser!.id,req.authUser!.fullName,'INVENTORY_ITEM_ARCHIVED','inventory_item',id,reason.trim());
+    return {status:200,item:mapInventoryItemRow(db.prepare('SELECT * FROM inventory_items WHERE id=?').get(id) as Record<string,unknown>)};
+  })();
+  res.status(result.status).json(result.item??{error:result.error});
+});
+apiRouter.post('/inventory/:id/restore',requireAuth,requireRole(['admin','manager']),(req:AuthenticatedRequest,res)=>{
+  const id=String(req.params.id);
+  const result=db.transaction(()=>{
+    const item=db.prepare('SELECT * FROM inventory_items WHERE id=?').get(id) as Record<string,unknown>|undefined;
+    if(!item)return null;
+    if(item.archived_at){
+      db.prepare("UPDATE inventory_items SET archived_at=NULL,archive_reason='',updated_at=? WHERE id=?").run(new Date().toISOString(),id);
+      writeAuditLog(req.authUser!.id,req.authUser!.fullName,'INVENTORY_ITEM_RESTORED','inventory_item',id,'Restored discontinued inventory item.');
+    }
+    return mapInventoryItemRow(db.prepare('SELECT * FROM inventory_items WHERE id=?').get(id) as Record<string,unknown>);
+  })();
+  if(!result)return res.status(404).json({error:'Inventory item not found.'});
+  res.json(result);
+});
+
 apiRouter.get('/inventory/:id/history', requireAuth, (req,res)=>{
   const id=String(req.params.id);
   const integer=(v:unknown,defaultValue:number,max:number)=>v===undefined?defaultValue:typeof v==='string'&&/^\d+$/.test(v)&&Number.isSafeInteger(Number(v))&&Number(v)<=max?Number(v):NaN;
@@ -1272,7 +1322,7 @@ apiRouter.get('/inventory', requireAuth, (_req, res) => {
   }));
 
   const items = (
-    db.prepare('SELECT * FROM inventory_items ORDER BY name ASC').all() as Array<
+    db.prepare('SELECT * FROM inventory_items WHERE archived_at IS NULL ORDER BY name ASC').all() as Array<
       Record<string, unknown>
     >
   ).map(mapInventoryItemRow);
@@ -1447,6 +1497,7 @@ apiRouter.patch(
       .prepare(`SELECT * FROM inventory_items WHERE id IN (${placeholders})`)
       .all(...ids) as Array<Record<string, unknown>>;
 
+    if(existingRows.some(row=>row.archived_at))return res.status(409).json({error:'Restore archived items before editing.'});
     if (existingRows.length === 0) {
       return res.status(404).json({ error: 'No matching inventory items found.' });
     }
@@ -1558,6 +1609,7 @@ apiRouter.patch(
     if (!existing) {
       return res.status(404).json({ error: 'Inventory item not found.' });
     }
+    if(existing.archived_at)return res.status(409).json({error:'Restore archived items before editing.'});
     const patch = req.body as Partial<InventoryItem>;
     const validation = validateInventoryItemInput({...mapInventoryItemRow(existing),...patch,reorderLevel:patch.reorderLevel ?? patch.reorderThreshold ?? Number(existing.reorder_level)});
     if (validation.valid === false) return res.status(400).json({error:validation.error});
@@ -1646,13 +1698,14 @@ apiRouter.delete(
   requireRole(['admin', 'manager']),
   (req: AuthenticatedRequest, res) => {
     const id = String(req.params.id);
-    const existing = db.prepare('SELECT id, name, sku, quantity_on_hand FROM inventory_items WHERE id = ?').get(id) as
-      | { id: string; name: string; sku: string; quantity_on_hand: number }
+    const existing = db.prepare('SELECT id, name, sku, quantity_on_hand, archived_at FROM inventory_items WHERE id = ?').get(id) as
+      | { id: string; name: string; sku: string; quantity_on_hand: number; archived_at: string|null }
       | undefined;
     if (!existing) {
       return res.status(404).json({ error: 'Inventory item not found.' });
     }
 
+    if(existing.archived_at)return res.status(409).json({error:'Archived items cannot be permanently deleted. Restore the item first.'});
     if (existing.quantity_on_hand !== 0 || db.prepare('SELECT 1 FROM stock_movements WHERE inventory_item_id = ? LIMIT 1').get(id)) {
       return res.status(409).json({error:'Inventory with stock or movement history cannot be deleted.'});
     }
@@ -1696,6 +1749,7 @@ function applyInventoryAdjustment(
     throw Object.assign(new Error('Inventory item not found.'), { statusCode: 404 });
   }
 
+  if(existing.archived_at)throw Object.assign(new Error('Restore archived items before adjusting stock.'),{statusCode:409});
   const resolvedMovementType: StockMovementType = (payload.movementType ||
     'adjustment') as StockMovementType;
   const validation = validateStockMovementInput({

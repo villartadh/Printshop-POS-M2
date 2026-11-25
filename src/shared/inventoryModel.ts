@@ -217,6 +217,8 @@ export function normalizeInventoryItem(
     reorderLevel,
     reorderThreshold: reorderLevel,
     minimumThreshold: Math.max(0, Number(raw.minimumThreshold) || 0),
+    archivedAt: raw.archivedAt || undefined,
+    archiveReason: raw.archiveReason || undefined,
     reorderQuantity:
       raw.reorderQuantity !== undefined
         ? Math.max(0, Number(raw.reorderQuantity) || 0)

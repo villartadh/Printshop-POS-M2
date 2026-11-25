@@ -28,6 +28,8 @@ import {
 import { InventoryTable } from '../../components/inventory/InventoryTable.tsx';
 import { ReorderRequestModal } from '../../components/inventory/ReorderRequestModal.tsx';
 import { InventoryHistory } from '../../components/inventory/InventoryHistory.tsx';
+import { ArchivedInventory } from '../../components/inventory/ArchivedInventory.tsx';
+import { apiRequest } from '../../services/apiClient.ts';
 
 type InventoryTab = 'items' | 'low_stock' | 'movements';
 type InventorySortKey = Extract<
@@ -45,6 +47,7 @@ export const InventoryModule: React.FC = () => {
   const {
     session,
     isOnline,
+    outbox,
     settings,
     inventoryState,
     loadInventory,
@@ -88,6 +91,8 @@ export const InventoryModule: React.FC = () => {
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
   const [adjustTarget, setAdjustTarget] = useState<InventoryItem | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<InventoryItem | null>(null);
+  const [archiveOpen,setArchiveOpen]=useState(false);
+  const [archiveReason,setArchiveReason]=useState('');
   const [detailItemId, setDetailItemId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -278,6 +283,18 @@ export const InventoryModule: React.FC = () => {
     }
   };
 
+  const pendingForTarget=Boolean(deleteTarget&&outbox.some(m=>m.type==='ADJUST_INVENTORY'&&(m.payload as {inventoryItemId?:string})?.inventoryItemId===deleteTarget.id));
+  const handleArchive=async()=>{
+    if(!deleteTarget||!isOnline||pendingForTarget||!archiveReason.trim())return;
+    setDeleting(true);
+    try{
+      await apiRequest('/api/inventory/'+encodeURIComponent(deleteTarget.id)+'/archive',{method:'POST',body:JSON.stringify({reason:archiveReason.trim()})});
+      setDeleteTarget(null);setDetailItemId(null);setArchiveReason('');
+      await loadInventory();notify('Inventory item archived; movement history retained.','success');
+    }catch(e){notify(e instanceof Error?e.message:'Archive failed','error');}
+    finally{setDeleting(false);}
+  };
+
   const handleConfirmDelete = async () => {
     if (!deleteTarget) return;
     setDeleting(true);
@@ -341,6 +358,8 @@ export const InventoryModule: React.FC = () => {
 
       {canEditCatalog && <Button variant="outline" size="sm" onClick={()=>setReorderOpen(true)}>Create Reorder Request</Button>}
       {reorderOpen && canEditCatalog && <ReorderRequestModal onClose={()=>setReorderOpen(false)}/>}
+      {canEditCatalog&&<Button size="sm" variant="outline" onClick={()=>setArchiveOpen(true)}>Archived Inventory</Button>}
+      {archiveOpen&&canEditCatalog&&<ArchivedInventory onClose={()=>setArchiveOpen(false)}/>}
       {/* KPI Strip */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <Card>
@@ -544,7 +563,7 @@ export const InventoryModule: React.FC = () => {
           taxAndCurrency={taxCurr}
           canEdit={canEditCatalog}
           onEdit={openEditItemModal}
-          onDelete={(item) => setDeleteTarget(item)}
+          onDelete={(item) => {setArchiveReason('');setDeleteTarget(item);}}
           onAdjustStock={openAdjustModal}
           onBulkUpdate={bulkUpdateInventoryItems}
           onRowClick={(item) => setDetailItemId(item.id)}
@@ -860,7 +879,7 @@ export const InventoryModule: React.FC = () => {
         onClose={() => {
           if (!deleting) setDeleteTarget(null);
         }}
-        title="Delete Inventory Item"
+        title="Discontinue Inventory Item"
         subtitle={
           deleteTarget ? `${deleteTarget.name} · ${deleteTarget.sku}` : ''
         }
@@ -879,22 +898,25 @@ export const InventoryModule: React.FC = () => {
               variant="danger"
               type="button"
               loading={deleting}
-              disabled={Boolean(deleteTarget && ((deleteTarget.currentStock ?? deleteTarget.quantityOnHand) > 0 || getItemStockMovements(deleteTarget.id).length > 0))}
+              disabled={!isOnline||pendingForTarget||Boolean(deleteTarget && ((deleteTarget.currentStock ?? deleteTarget.quantityOnHand) > 0 || getItemStockMovements(deleteTarget.id).length > 0))}
               onClick={() => void handleConfirmDelete()}
             >
               <Trash2 className="w-3.5 h-3.5" />
               Delete Item
             </Button>
+            <Button size="sm" loading={deleting} disabled={!isOnline||pendingForTarget||!archiveReason.trim()||Boolean(deleteTarget&&(deleteTarget.quantityOnHand!==0||(deleteTarget.reservedQuantity??0)!==0))} onClick={()=>void handleArchive()}>Archive Item</Button>
           </>
         }
       >
         {deleteTarget && (
           <div className="space-y-3 text-sm text-[var(--pos-text)]">
             <p>
-              Are you sure you want to permanently remove{' '}
+              Archive or permanently remove{' '}
               <strong className="font-semibold">{deleteTarget.name}</strong> from inventory?
             </p>
-            <p className="text-xs text-[var(--pos-text-muted)]">Only empty items without stock movement history or service bindings can be permanently deleted. The server checks all historical records before allowing deletion.</p>
+            <p className="text-xs text-[var(--pos-text-muted)]">Archiving preserves all movement history. Reconcile stock and reservations, remove service bindings, and synchronize all terminals first. Permanent deletion is restricted to unused items.</p>
+            <Input label="Archive reason" value={archiveReason} onChange={e=>setArchiveReason(e.target.value)} maxLength={500}/>
+            {pendingForTarget&&<p role="alert">This terminal has pending or conflicted stock adjustments for this item. Reconcile them first.</p>}
             {(deleteTarget.currentStock ?? deleteTarget.quantityOnHand) > 0 && (
               <div
                 style={{ borderRadius: 'var(--pos-radius)' }}

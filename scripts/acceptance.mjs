@@ -335,6 +335,27 @@ async function main(){
     assert.equal(refreshed.summary.count,104);
     assert.equal(refreshed.purchasePoints.at(-1).purchaseUnitCost,3);
   });
+  await check('archive and restore preserve movements and prevent inactive stock operations',async()=>{
+    const item=await write('/inventory',{name:'Synthetic Archive Fixture',unit:'sheet',quantityOnHand:2,unitCost:1});
+    const url='/inventory/'+item.id;
+    await write(url+'/archive',{reason:'Discontinued'},409);
+    await write(url+'/adjust',{clientMutationId:randomUUID(),movementType:'wastage',quantityDelta:2},200);
+    const before=verifyResponse(await request('/api/inventory/'+item.id+'/history',{auth:true}),200);
+    await write(url+'/archive',{reason:''},400);
+    const archived=await write(url+'/archive',{reason:'Discontinued'},200);
+    assert.ok(archived.archivedAt);
+    assert.equal((await state()).inventory.some(i=>i.id===item.id),false);
+    const list=verifyResponse(await request('/api/inventory/archived',{auth:true}),200);
+    assert.equal(list.items.find(i=>i.id===item.id).archiveReason,'Discontinued');
+    await write(url,{name:'Forbidden edit'},409,'PATCH');
+    await write(url+'/adjust',{clientMutationId:randomUUID(),movementType:'purchase',quantityDelta:1},409);
+    await write(url,undefined,409,'DELETE');
+    assert.deepEqual(verifyResponse(await request('/api/inventory/'+item.id+'/history',{auth:true}),200).movements,before.movements);
+    const restored=await write(url+'/restore',{},200);
+    assert.equal(restored.archivedAt,undefined);
+    assert.ok((await state()).inventory.some(i=>i.id===item.id));
+    assert.deepEqual(verifyResponse(await request('/api/inventory/'+item.id+'/history',{auth:true}),200).movements,before.movements);
+  });
   await check('logout revokes session',async()=>{verifyResponse(await request('/api/auth/logout',{method:'POST',auth:true}),200);verifyResponse(await request('/api/bootstrap',{auth:true}),401);});
   await stop();report.status='PASS';
  }catch(e){report.error=String(e.message);console.error(report.status,report.error);process.exitCode=1;}

@@ -290,6 +290,8 @@ export function initDatabase() {
   ensureColumn('inventory_items', 'barcode', "TEXT NOT NULL DEFAULT ''");
   ensureColumn('inventory_items', 'category_id', "TEXT NOT NULL DEFAULT ''");
   ensureColumn('inventory_items', 'reserved_quantity', 'REAL NOT NULL DEFAULT 0');
+  ensureColumn('inventory_items', 'archived_at', 'TEXT');
+  ensureColumn('inventory_items', 'archive_reason', "TEXT NOT NULL DEFAULT ''");
   ensureColumn('inventory_items', 'minimum_threshold', 'REAL NOT NULL DEFAULT 0');
   ensureColumn('inventory_items', 'reorder_quantity', 'REAL NOT NULL DEFAULT 0');
   ensureColumn('inventory_items', 'supplier_contact', "TEXT NOT NULL DEFAULT ''");

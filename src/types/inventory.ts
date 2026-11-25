@@ -61,6 +61,8 @@ export interface InventoryItem {
   reorderThreshold?: number;
   /** Critical available-stock threshold; zero disables the separate alert. */
   minimumThreshold?: number;
+  archivedAt?: string;
+  archiveReason?: string;
   /** Recommended restock quantity when ordering from supplier */
   reorderQuantity?: number;
   unitCost: number;
