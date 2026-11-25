@@ -74,6 +74,33 @@ try {
     session = await (await setup).json();
     assert.ok(session.token);
   });
+  await check('guided business setup saves authoritative profile',async()=>{
+    await click('Configure business profile');
+    const wizard=page.getByRole('region',{name:'Guided business setup'});
+    await wizard.waitFor();
+    assert.equal(await wizard.getByRole('button',{name:'Continue',exact:true}).isEnabled(),false);
+    await wizard.getByLabel('Business name (required)',{exact:true}).fill('Synthetic Browser Shop');
+    await wizard.getByLabel('Business address (required)',{exact:true}).fill('Synthetic test address');
+    await wizard.getByRole('button',{name:'Continue',exact:true}).click();
+    await wizard.getByLabel('Receipt paper size').selectOption('58mm');
+    await wizard.getByRole('button',{name:'Continue',exact:true}).click();
+    await wizard.getByLabel('GCash',{exact:true}).uncheck();
+    await wizard.getByRole('button',{name:'Continue',exact:true}).click();
+    await wizard.getByRole('button',{name:'Back',exact:true}).click();
+    assert.equal(await wizard.getByLabel('GCash',{exact:true}).isChecked(),false);
+    await wizard.getByRole('button',{name:'Continue',exact:true}).click();
+    await page.screenshot({path:path.join(evidence,'business-setup.png'),animations:'disabled'});
+    const save=page.waitForResponse(r=>r.url().endsWith('/api/settings')&&r.request().method()==='PUT');
+    await wizard.getByRole('button',{name:'Save business setup'}).click();
+    assert.equal((await save).status(),200);
+    await wizard.waitFor({state:'hidden'});
+    const {settings}=await api('/bootstrap');
+    assert.equal(settings.branding.businessName,'Synthetic Browser Shop');
+    assert.equal(settings.branding.address,'Synthetic test address');
+    assert.equal(settings.receiptTemplate.defaultPaperSize,'58mm');
+    assert.equal(settings.paymentMethods.find(m=>m.id==='gcash').enabled,false);
+    assert.equal(await button('Configure business profile').count(),0);
+  });
   await check('catalog fixture and authenticated first-run dashboard',async()=>{
     const category=await api('/categories',{name:'Browser Fixtures'});
     await api('/services',{name:'Synthetic Print',categoryId:category.id,pricingMethod:'fixed',basePrice:20,requiresProductionJob:true});
