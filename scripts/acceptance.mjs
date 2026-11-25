@@ -223,7 +223,7 @@ async function main(){
       await stop();await start();
       const after=(await state()).transactions.find(t=>t.id===paid.id);
       assert.deepEqual(after.receiptSnapshot,before.receiptSnapshot);
-      const replay=await write('/transactions',{...before,receiptSnapshot:{branding:changed.branding,taxAndCurrency:changed.taxAndCurrency}},200);
+      const replay=await write('/transactions',{...paid,receiptSnapshot:{branding:changed.branding,taxAndCurrency:changed.taxAndCurrency}},200);
       assert.equal(replay.duplicate,true);
       assert.deepEqual(replay.transaction.receiptSnapshot,before.receiptSnapshot);
     } finally {
