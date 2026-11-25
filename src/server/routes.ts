@@ -1807,13 +1807,23 @@ apiRouter.post('/customers/:id/pay-balance', requireAuth, (req: AuthenticatedReq
 // ---------- EXPENSES ----------
 
 apiRouter.post('/expenses', requireAuth, (req: AuthenticatedRequest, res) => {
-  const e = req.body as Partial<ExpenseRecord>;
-  if (!e.description || !(Number(e.amount) > 0)) {
-    return res.status(400).json({ error: 'Description and positive amount are required.' });
+  const e = (req.body ?? {}) as Partial<ExpenseRecord>;
+  const amount = Number(e.amount);
+  const categories = ['electricity','ink_toner','printing_materials','maintenance','equipment','labor','rent','other'];
+  if (typeof e.description !== 'string' || !e.description.trim() || !Number.isFinite(amount) || amount <= 0 ||
+      (typeof e.amount !== 'number' && typeof e.amount !== 'string') ||
+      (e.category !== undefined && !categories.includes(e.category)) ||
+      (e.vendor !== undefined && typeof e.vendor !== 'string')) {
+    return res.status(400).json({ error: 'Valid description, category and finite positive amount are required.' });
   }
   const id = genId('exp');
   const now = new Date().toISOString();
-  const expenseDate = e.expenseDate || now.slice(0, 10);
+  const businessDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(now));
+  const expenseDate = e.expenseDate ?? businessDate;
+  if (typeof expenseDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(expenseDate) ||
+      !Number.isFinite(Date.parse(expenseDate)) || new Date(expenseDate).toISOString().slice(0,10) !== expenseDate) {
+    return res.status(400).json({ error: 'Valid expense date is required (YYYY-MM-DD).' });
+  }
   db.prepare(`
     INSERT INTO expenses (id, category, description, amount, vendor, recorded_by, expense_date, is_demo, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)
@@ -1845,7 +1855,16 @@ apiRouter.delete(
   requireAuth,
   requireRole(['admin', 'manager']),
   (req: AuthenticatedRequest, res) => {
-    db.prepare('DELETE FROM expenses WHERE id = ?').run(String(req.params.id));
+    const id = String(req.params.id);
+    const removed = db.transaction(() => {
+      const expense = db.prepare('SELECT amount, category FROM expenses WHERE id = ?').get(id) as { amount: number; category: string } | undefined;
+      if (!expense) return false;
+      db.prepare('DELETE FROM expenses WHERE id = ?').run(id);
+      writeAuditLog(req.authUser!.id, req.authUser!.fullName, 'EXPENSE_DELETED', 'expense', id,
+        `Deleted expense: ${expense.category}, amount ${expense.amount}`);
+      return true;
+    })();
+    if (!removed) return res.status(404).json({ error: 'Expense not found.' });
     res.json({ ok: true });
   },
 );
