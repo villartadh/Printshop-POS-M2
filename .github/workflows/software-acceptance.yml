@@ -60,6 +60,8 @@ jobs:
             & .\runtime\node.exe --input-type=module -e "import fs from 'node:fs'; import {verifyRelease} from './scripts/install.mjs'; verifyRelease(process.cwd(), JSON.parse(fs.readFileSync('RELEASE-MANIFEST.json')));"
             if ($LASTEXITCODE -ne 0) { throw 'Release manifest verification failed' }
           } finally { Pop-Location }
+          node scripts/windows/package-smoke.mjs windows-stage
+          if ($LASTEXITCODE -ne 0) { throw 'Isolated packaged application smoke test failed' }
           Compress-Archive -Path windows-stage\* -DestinationPath Printshop-POS-Windows-x64.zip
           $hash = (Get-FileHash Printshop-POS-Windows-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
           Set-Content -Encoding ascii SHA256SUMS.txt "$hash  Printshop-POS-Windows-x64.zip"
