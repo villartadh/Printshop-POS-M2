@@ -122,6 +122,40 @@ async function main(){
       consumables:[{inventoryItemId:stock.id,quantityPerUnit:1}]});
     customer = await write('/customers',{name:'Acceptance Customer'});
   });
+  await check('inventory numeric validation, reservations, rollback and movement preservation',async()=>{
+    for(const patch of [{quantityOnHand:-1},{quantityOnHand:'Infinity'},{unitCost:true},{reservedQuantity:-1},{reservedQuantity:21},{name:42}]) {
+      await write('/inventory',{name:'Invalid fixture',unit:'sheet',quantityOnHand:20,...patch},400);
+    }
+    const url='/inventory/'+stock.id;
+    await write(url,{reservedQuantity:21},400,'PATCH');
+    await write(url,{reservedQuantity:19},200,'PATCH');
+    const before=await state();
+    await write('/transactions',makeOrder('sale',50),409);
+    const after=await state();
+    assert.deepEqual(after.transactions,before.transactions);
+    assert.deepEqual(after.stockMovements,before.stockMovements);
+    assert.deepEqual(after.shifts,before.shifts);
+    assert.deepEqual(after.customers,before.customers);
+    assert.equal(after.inventory.find(i=>i.id===stock.id).quantityOnHand,20);
+    const adjust=(payload,status=200)=>write(url+'/adjust',{clientMutationId:randomUUID(),...payload},status);
+    for(const payload of [{quantityDelta:'Infinity'},{quantityDelta:true},{quantityDelta:0},{quantityDelta:0.001},{quantityDelta:1,movementType:'invalid'}]) await adjust(payload,400);
+    await adjust({movementType:'wastage',quantityDelta:2},409);
+    await write(url,undefined,409,'DELETE');
+    assert.deepEqual((await state()).stockMovements,before.stockMovements);
+    const purchase={clientMutationId:randomUUID(),movementType:'purchase',quantityDelta:2};
+    await write(url+'/adjust',purchase,200);
+    await write(url+'/adjust',purchase,200);
+    assert.equal((await state()).inventory.find(i=>i.id===stock.id).quantityOnHand,22);
+    await adjust({movementType:'wastage',quantityDelta:2});
+    await write(url,{reservedQuantity:0},200,'PATCH');
+    assert.equal((await state()).inventory.find(i=>i.id===stock.id).quantityOnHand,20);
+    const empty=await write('/inventory',{name:'Unused empty fixture',unit:'sheet',quantityOnHand:0});
+    await write('/inventory/'+empty.id,undefined,200,'DELETE');
+    const history=await write('/inventory',{name:'Historical fixture',unit:'sheet',quantityOnHand:1});
+    await write('/inventory/'+history.id+'/adjust',{clientMutationId:randomUUID(),movementType:'wastage',quantityDelta:1},200);
+    await write('/inventory/'+history.id,undefined,409,'DELETE');
+    assert.equal((await state()).stockMovements.filter(m=>m.inventoryItemId===history.id).length,2);
+  });
   await check('authoritative catalog checkout, tender/change and duplicate', async () => {
     const sale = makeOrder('sale',50);
     await write('/transactions',{...sale,items:[{...sale.items[0],unitPrice:1}]},409);
