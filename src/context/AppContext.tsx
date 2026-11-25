@@ -44,6 +44,8 @@ import {
   loadOfflineSnapshot,
   commitSyncAcknowledgments,
   retryOutboxConflict,
+  acknowledgePendingCollection,
+  type PendingBalanceCollection,
   saveOfflineSnapshot,
 } from '../services/offlineDb.ts';
 import {validatePurchaseCost,weightedPurchaseCost} from '../shared/purchaseCost.ts';
@@ -197,7 +199,7 @@ interface AppContextValue {
   getInventoryItemById: (id: string) => InventoryItem | undefined;
   getItemStockMovements: (inventoryItemId: string) => StockMovement[];
   createCustomer: (customer: Partial<Customer>) => Promise<Customer>;
-  collectCustomerBalance: (id: string, amount: number) => Promise<void>;
+  collectCustomerBalance: (record: PendingBalanceCollection) => Promise<void>;
   createExpense: (expense: Partial<ExpenseRecord>) => Promise<void>;
   deleteExpense: (id: string) => Promise<void>;
   startShift: (openingCash: number) => Promise<void>;
@@ -925,13 +927,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return created;
   };
 
-  const collectCustomerBalance = async (id: string, amount: number) => {
-    await apiRequest(`/api/customers/${id}/pay-balance`, {
-      method: 'POST',
-      body: JSON.stringify({ amount }),
+  const collectCustomerBalance = async (record:PendingBalanceCollection) => {
+    if(!session||record.ownerId!==session.user.id||!isOnline)throw new Error('Connect and sign in as the original operator to confirm this collection.');
+    const result=await apiRequest<{id:string;clientMutationId:string;amount:number;outstandingBalance:number;duplicate:boolean}>(`/api/customers/${encodeURIComponent(record.customerId)}/pay-balance`,{
+      method:'POST',body:JSON.stringify({amount:record.amount,clientMutationId:record.clientMutationId}),
     });
+    if(result.id!==record.customerId||result.clientMutationId!==record.clientMutationId||result.amount!==record.amount||typeof result.duplicate!=='boolean'||!Number.isFinite(result.outstandingBalance)||result.outstandingBalance<0)throw new Error('Payment confirmation could not be verified. Retry the original reference.');
+    await acknowledgePendingCollection(record);
     await refreshBootstrap();
-    notify('Customer balance payment recorded.', 'success');
+    notify(result.duplicate?'Original balance payment confirmed.':'Customer balance payment recorded.','success');
   };
 
   const createExpense = async (expense: Partial<ExpenseRecord>) => {

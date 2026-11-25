@@ -212,7 +212,22 @@ async function main(){
       await write(url,{productionStatus},200,'PATCH');
     }
     await write(url,{productionStatus:'completed'},409,'PATCH');
-    await write('/customers/'+customer.id+'/pay-balance',{amount:25},200);
+    const collectionUrl='/customers/'+customer.id+'/pay-balance';
+    const payment={amount:25,clientMutationId:randomUUID()};
+    await write(collectionUrl,{amount:25},400);
+    const first=await write(collectionUrl,payment,200);
+    assert.equal(first.duplicate,false);assert.equal(first.outstandingBalance,0);
+    const accepted=await state();
+    const replay=await write(collectionUrl,payment,200);
+    assert.equal(replay.duplicate,true);assert.equal(replay.clientMutationId,payment.clientMutationId);
+    await write(collectionUrl,{...payment,amount:24},409);
+    const another=await write('/customers',{name:'Synthetic Other Collection Customer'});
+    await write('/customers/'+another.id+'/pay-balance',payment,409);
+    const after=await state();
+    assert.deepEqual(after.shifts,accepted.shifts);
+    assert.deepEqual(after.transactions,accepted.transactions);
+    assert.deepEqual(after.printJobs,accepted.printJobs);
+    assert.deepEqual(after.customers.find(c=>c.id===customer.id),accepted.customers.find(c=>c.id===customer.id));
     assert.equal((await write(url,{productionStatus:'completed'},200,'PATCH')).productionStatus,'completed');
     const settled = await state();
     assert.equal(settled.customers.find(c=>c.id===customer.id).outstandingBalance,0);

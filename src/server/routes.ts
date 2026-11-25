@@ -1950,12 +1950,21 @@ apiRouter.post('/customers/:id/pay-balance', requireAuth, (req: AuthenticatedReq
   const id = String(req.params.id);
   const amount = req.body?.amount;
   const actor = req.authUser!;
-  const outstandingBalance = db.transaction(() => {
-    const balance = collectBalance(db,id,amount,actor.id);
-    writeAuditLog(actor.id,actor.fullName,'CUSTOMER_BALANCE_PAYMENT','customer',id,`Collected cash ${amount}`);
-    return balance;
+  const mutationId=req.body?.clientMutationId;
+  if(typeof mutationId!=='string'||!mutationId.trim()||mutationId.length>200||typeof amount!=='number'||!Number.isFinite(amount)||amount<=0||amount>1e9||Math.abs(amount-Math.round(amount*100)/100)>0.000001)return res.status(400).json({error:'A valid payment reference and positive amount in cents are required.'});
+  const result=db.transaction(()=>{
+    const existing=db.prepare('SELECT * FROM balance_collection_requests WHERE mutation_id=?').get(mutationId) as {actor_id:string;customer_id:string;amount:number;outstanding_after:number}|undefined;
+    if(existing){
+      if(existing.actor_id!==actor.id||existing.customer_id!==id||existing.amount!==amount)throw Object.assign(new Error('Payment reference belongs to a different collection.'),{statusCode:409});
+      return {outstandingBalance:existing.outstanding_after,duplicate:true};
+    }
+    const balance=collectBalance(db,id,amount,actor.id);
+    db.prepare('INSERT INTO balance_collection_requests(mutation_id,actor_id,customer_id,amount,outstanding_after,created_at) VALUES (?,?,?,?,?,?)').run(mutationId,actor.id,id,amount,balance,new Date().toISOString());
+    writeAuditLog(actor.id,actor.fullName,'CUSTOMER_BALANCE_PAYMENT','customer',id,`Collected cash ${amount}; reference ${mutationId}`);
+    return {outstandingBalance:balance,duplicate:false};
   })();
-  res.json({id,outstandingBalance});
+  res.setHeader('Cache-Control','no-store');
+  res.json({id,clientMutationId:mutationId,amount,...result});
 });
 
 // ---------- EXPENSES ----------

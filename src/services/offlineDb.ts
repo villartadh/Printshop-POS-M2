@@ -190,3 +190,44 @@ export async function retryOutboxConflict(id:string,owner:string):Promise<void>{
   });
  }finally{db.close();}
 }
+
+export interface PendingBalanceCollection {ownerId:string;customerId:string;amount:number;clientMutationId:string;createdAt:string}
+const collectionKey=(owner:string)=>'pending_balance_collection:'+owner;
+export async function readPendingCollection(owner:string):Promise<PendingBalanceCollection|null>{
+ const db=await openDb();
+ try{return await new Promise((resolve,reject)=>{
+  const tx=db.transaction('kv','readonly'),req=tx.objectStore('kv').get(collectionKey(owner));
+  req.onsuccess=()=>resolve(req.result??null);
+  req.onerror=()=>reject(req.error);
+  tx.onabort=()=>reject(tx.error||new Error('Collection read aborted'));
+ });}finally{db.close();}
+}
+export async function reservePendingCollection(owner:string,customerId:string,amount:number):Promise<PendingBalanceCollection>{
+ if(!owner||!customerId||!Number.isFinite(amount)||amount<=0||amount>1e9||Math.abs(amount-Math.round(amount*100)/100)>0.000001)throw new Error('Enter a positive cash amount in cents.');
+ const candidate={ownerId:owner,customerId,amount,clientMutationId:crypto.randomUUID?.()??Array.from(crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join(''),createdAt:new Date().toISOString()};
+ const db=await openDb();
+ try{return await new Promise((resolve,reject)=>{
+  const tx=db.transaction('kv','readwrite'),store=tx.objectStore('kv');
+  let result=candidate;let failure:unknown;
+  tx.oncomplete=()=>resolve(result);
+  tx.onerror=()=>reject(failure||tx.error||new Error('Collection reservation failed'));
+  tx.onabort=()=>reject(failure||tx.error||new Error('Collection reservation aborted'));
+  const req=store.get(collectionKey(owner));
+  req.onsuccess=()=>{
+   const existing=req.result as PendingBalanceCollection|undefined;
+   if(existing){failure=new Error('Resolve the existing payment reference before recording another collection.');tx.abort();return;}
+   store.put(candidate,collectionKey(owner));
+  };
+ });}finally{db.close();}
+}
+export async function acknowledgePendingCollection(record:PendingBalanceCollection):Promise<void>{
+ const db=await openDb();
+ try{await new Promise<void>((resolve,reject)=>{
+  const tx=db.transaction('kv','readwrite'),store=tx.objectStore('kv');
+  tx.oncomplete=()=>resolve();
+  tx.onerror=()=>reject(tx.error||new Error('Collection acknowledgment failed'));
+  tx.onabort=()=>reject(tx.error||new Error('Collection acknowledgment aborted'));
+  const req=store.get(collectionKey(record.ownerId));
+  req.onsuccess=()=>{if(req.result?.clientMutationId===record.clientMutationId)store.delete(collectionKey(record.ownerId));};
+ });}finally{db.close();}
+}

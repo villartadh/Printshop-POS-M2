@@ -373,6 +373,42 @@ try {
     await archive.getByRole('button',{name:'Close dialog'}).click();
     await page.getByText(item.name,{exact:true}).filter({visible:true}).first().waitFor();
   });
+  await check('customer balance collection recovers original reference after incomplete acknowledgment',async()=>{
+    const original=await api('/bootstrap');
+    const customer=original.customers.find(c=>c.name==='Synthetic Customer');
+    assert.equal(customer.outstandingBalance,10);
+    await click('Customers');
+    await page.getByText(customer.name,{exact:true}).filter({visible:true}).first().click();
+    const detail=page.getByRole('dialog');
+    await detail.getByLabel(/Collect Cash Balance Payment/).fill('10');
+    let forwarded;
+    await page.route('**/api/customers/*/pay-balance',async route=>{
+      const upstream=await route.fetch();
+      forwarded={request:route.request().postDataJSON(),response:await upstream.json()};
+      await route.fulfill({response:upstream,json:{...forwarded.response,clientMutationId:'invalid-ack'}});
+    });
+    await detail.getByRole('button',{name:'Record Payment'}).click();
+    await detail.getByText('Payment confirmation could not be verified. Retry the original reference.',{exact:true}).waitFor();
+    assert.equal(forwarded.response.duplicate,false);
+    assert.equal(forwarded.response.outstandingBalance,0);
+    const accepted=await api('/bootstrap');
+    await page.reload();await signIn();
+    await click('Customers');
+    await waitText('Unconfirmed balance payment');
+    await waitText('Reference: '+forwarded.request.clientMutationId);
+    await page.unroute('**/api/customers/*/pay-balance');
+    const retried=page.waitForResponse(r=>r.url().endsWith('/pay-balance'));
+    await click('Retry Original Balance Payment');
+    const response=await retried;
+    assert.equal((await response.json()).duplicate,true);
+    assert.deepEqual(response.request().postDataJSON(),forwarded.request);
+    await page.getByText('Unconfirmed balance payment',{exact:true}).waitFor({state:'hidden'});
+    const final=await api('/bootstrap');
+    assert.deepEqual(final.shifts,accepted.shifts);
+    assert.deepEqual(final.transactions,accepted.transactions);
+    assert.deepEqual(final.printJobs,accepted.printJobs);
+    assert.equal(final.customers.find(c=>c.id===customer.id).outstandingBalance,0);
+  });
   await check('logout and password login',async()=>{
     await page.getByRole('button',{name:'Lock Terminal / Switch User',exact:true}).filter({visible:true}).first().click();
     await click('Sign Out Completely');
