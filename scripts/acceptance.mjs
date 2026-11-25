@@ -24,7 +24,7 @@ async function main(){
   for(const p of ['node_modules/tsx/package.json','node_modules/better-sqlite3/package.json','dist/index.html'])if(!fs.existsSync(path.join(root,p)))throw new Error('Missing prerequisite: '+p+'; run install and build first.');
   sandbox=fs.mkdtempSync(path.join(os.tmpdir(),'printshop-pos-acceptance-'));fs.cpSync(path.join(root,'dist'),path.join(sandbox,'dist'),{recursive:true});
   const port=await freePort(), instance=randomUUID(), base=`http://127.0.0.1:${port}`;
-  const password=randomUUID();let token,shift,customer,stock,service,paid,partial;
+  const password=randomUUID();let token,shift,customer,stock,service,paid,partial,originalPaidRequest;
   const request=async(url,{method='GET',body,auth=false,headers={}}={})=>{const r=await fetch(base+url,{method,headers:{...(body!==undefined?{'Content-Type':'application/json'}:{}),...(auth?{Authorization:'Bearer '+token}:{}),...headers},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(5000)});const raw=await r.text();let data;try{data=JSON.parse(raw);}catch{data=raw;}return {status:r.status,body:data,headers:r.headers};};
   const start=async()=>{child=spawn(process.execPath,['--import',import.meta.resolve('tsx'),path.join(root,'scripts/start.ts')],{cwd:sandbox,env:acceptanceEnv(port,instance),stdio:'ignore'});spawnFailed=false;child.once('error',()=>{spawnFailed=true;});exitPromise=new Promise(resolve=>{child.once('exit',resolve);child.once('error',resolve);});for(let i=0;i<60;i++){if(spawnFailed||child.exitCode!==null||child.signalCode!==null)throw new Error('Isolated server exited during startup');try{assertInstance(verifyResponse(await request('/api/health'),200),instance);return;}catch{}await new Promise(r=>setTimeout(r,500));}throw new Error('Isolated server health timeout');};
   const stop=async()=>{if(!child)return;const p=child;if(p.exitCode===null&&p.signalCode===null&&!spawnFailed)p.kill();const timer=setTimeout(()=>p.kill('SIGKILL'),5000);try{await exitPromise;}finally{clearTimeout(timer);child=null;}};
@@ -179,11 +179,14 @@ async function main(){
   });
   await check('authoritative catalog checkout, tender/change and duplicate', async () => {
     const sale = makeOrder('sale',50);
+    originalPaidRequest=structuredClone(sale);
     await write('/transactions',{...sale,items:[{...sale.items[0],unitPrice:1}]},409);
     paid = (await write('/transactions',sale)).transaction;
     assert.equal(paid.totalAmount,40);
     assert.equal(paid.changeAmount,10);
     assert.equal((await write('/transactions',sale,200)).duplicate,true);
+    await write('/transactions',{...sale,notes:'Changed after submission'},409);
+    await write('/transactions',{...sale,payments:[{...sale.payments[0],amount:60}],changeAmount:20},409);
     const data = await state();
     assert.equal(data.inventory.find(i=>i.id===stock.id).quantityOnHand,18);
     assert.equal(data.shifts.find(s=>s.id===shift.id).expectedCash,540);
@@ -244,7 +247,7 @@ async function main(){
       await stop();await start();
       const after=(await state()).transactions.find(t=>t.id===paid.id);
       assert.deepEqual(after.receiptSnapshot,before.receiptSnapshot);
-      const replay=await write('/transactions',{...paid,receiptSnapshot:{branding:changed.branding,taxAndCurrency:changed.taxAndCurrency}},200);
+      const replay=await write('/transactions',{...originalPaidRequest,syncStatus:'pending_sync',receiptSnapshot:{branding:changed.branding,taxAndCurrency:changed.taxAndCurrency}},200);
       assert.equal(replay.duplicate,true);
       assert.deepEqual(replay.transaction.receiptSnapshot,before.receiptSnapshot);
     } finally {
@@ -371,6 +374,23 @@ async function main(){
     await write('/inventory/alerts/read',{alerts:[renewed]},200);
     assert.equal((await find()).read,true);
     verifyResponse(await request('/api/inventory/alerts'),401);
+  });
+  await check('transaction mutation identity survives held-order deletion and quarantines legacy replay',async()=>{
+    const held=makeOrder('held',0);
+    const stored=(await write('/transactions',held)).transaction;
+    await write('/transactions/'+stored.id+'/held',undefined,200,'DELETE');
+    assert.equal((await state()).transactions.some(t=>t.id===stored.id),false);
+    await write('/transactions',held,409);
+    assert.equal((await state()).transactions.some(t=>t.id===stored.id),false);
+    const db=new DatabaseSync(path.join(sandbox,'data','printshop-pos.db'));
+    try{db.prepare('DELETE FROM transaction_request_identities WHERE mutation_id=?').run(originalPaidRequest.clientMutationId);}
+    finally{db.close();}
+    await write('/transactions',originalPaidRequest,409);
+    const stateAfter=await state();
+    // Historical test fixtures may push the original sale out of bootstrap; verify durable identity directly.
+    const verify=new DatabaseSync(path.join(sandbox,'data','printshop-pos.db'),{readOnly:true});
+    try{assert.equal(verify.prepare('SELECT COUNT(*) AS n FROM transactions WHERE client_mutation_id=?').get(originalPaidRequest.clientMutationId).n,1);}
+    finally{verify.close();}
   });
   await check('logout revokes session',async()=>{verifyResponse(await request('/api/auth/logout',{method:'POST',auth:true}),200);verifyResponse(await request('/api/bootstrap',{auth:true}),401);});
   await stop();report.status='PASS';

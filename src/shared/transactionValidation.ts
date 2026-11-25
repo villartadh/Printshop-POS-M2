@@ -1,7 +1,7 @@
 import type { Transaction } from './types.ts';
 export function validateTransaction(t: Transaction) {
   const fail = (message: string): never => { throw Object.assign(new Error(message), { statusCode: 400 }); };
-  if (!t || typeof t.clientMutationId !== 'string' || !t.clientMutationId || !['sale','held','quotation'].includes(t.type) || !Array.isArray(t.items) || !t.items.length || !Array.isArray(t.payments)) fail('Invalid transaction structure.');
+  if (!t || typeof t.clientMutationId !== 'string' || !t.clientMutationId || t.clientMutationId.length>200 || !['sale','held','quotation'].includes(t.type) || !Array.isArray(t.items) || !t.items.length || !Array.isArray(t.payments)) fail('Invalid transaction structure.');
   const nonnegative = (n: number) => typeof n === 'number' && Number.isFinite(n) && n >= 0;
   if (![t.subtotal,t.itemDiscountsTotal,t.orderDiscountAmount,t.taxAmount,t.totalAmount,t.amountPaid,t.changeAmount,t.balanceDue].every(nonnegative)) fail('Invalid transaction amounts.');
   for (const i of t.items) {

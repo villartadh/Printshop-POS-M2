@@ -27,6 +27,12 @@ db.pragma('foreign_keys = ON');
 
 export function initDatabase() {
   db.exec(`
+    CREATE TABLE IF NOT EXISTS transaction_request_identities (
+      mutation_id TEXT PRIMARY KEY,
+      actor_id TEXT NOT NULL,
+      transaction_id TEXT NOT NULL,
+      request_digest TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS inventory_mutation_results (
       id TEXT PRIMARY KEY, actor_id TEXT NOT NULL, request_json TEXT NOT NULL, result_json TEXT NOT NULL
     );

@@ -1,3 +1,4 @@
+import {transactionRequestDigest} from './transactionIdentity.ts';
 import { attemptGate, validPassword, validPin, removesLastAdmin } from '../shared/securityPolicy.ts';
 import { validateSyncEnvelope, isRetryableSyncError } from '../shared/offlinePolicy.ts';
 import {validatePurchaseCost,weightedPurchaseCost} from '../shared/purchaseCost.ts';
@@ -890,13 +891,19 @@ function applyTransactionCreation(
   actorRole: string,
 ): { transaction: Transaction; duplicate: boolean } {
   validateTransaction(payload);
+  const digest=transactionRequestDigest(payload);
+  const identity=db.prepare('SELECT * FROM transaction_request_identities WHERE mutation_id=?').get(payload.clientMutationId) as {actor_id:string;transaction_id:string;request_digest:string}|undefined;
   const existing = db
     .prepare('SELECT * FROM transactions WHERE client_mutation_id = ?')
     .get(payload.clientMutationId) as Record<string, unknown> | undefined;
 
-  if (existing) {
-    if (existing.cashier_id !== actorId) throw Object.assign(new Error("Mutation belongs to another cashier."), {statusCode:409});
-    return { transaction: mapTransactionRow(existing), duplicate: true };
+  if(identity||existing){
+    const conflict=(message:string):never=>{throw Object.assign(new Error(message),{statusCode:409});};
+    if((identity&&identity.actor_id!==actorId)||(existing&&existing.cashier_id!==actorId))return conflict('Mutation belongs to another cashier.');
+    if(!identity)return conflict('Legacy transaction already exists; original request identity is unavailable. Reconcile with the recorded receipt.');
+    if(!existing||existing.id!==identity.transaction_id)return conflict('Original transaction no longer exists. Do not recreate this mutation.');
+    if(digest!==identity.request_digest)return conflict('Transaction mutation identity conflict. Retry only the unchanged original request.');
+    return {transaction:mapTransactionRow(existing),duplicate:true};
   }
 
   const settingsRow = db.prepare('SELECT value_json FROM app_settings WHERE key = ?').get('app_settings') as { value_json: string } | undefined;
@@ -956,6 +963,7 @@ function applyTransactionCreation(
       now,
     );
 
+    db.prepare('INSERT INTO transaction_request_identities(mutation_id,actor_id,transaction_id,request_digest) VALUES (?,?,?,?)').run(payload.clientMutationId,actorId,txId,digest);
     db.prepare('UPDATE transactions SET receipt_snapshot_json = ? WHERE id = ?').run(JSON.stringify({branding:pricingSettings.branding,taxAndCurrency:pricingSettings.taxAndCurrency}),txId);
 
     // If this is a real completed or partial sale (not held or quotation), deduct inventory consumables, update customer, and update shift
