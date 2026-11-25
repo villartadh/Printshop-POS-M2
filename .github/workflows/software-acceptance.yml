@@ -5,6 +5,9 @@ on:
   pull_request:
     branches: [main, develop]
   workflow_dispatch:
+concurrency:
+  group: software-acceptance-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
@@ -42,6 +45,34 @@ jobs:
       - run: npm run acceptance:browser
       - if: runner.os == 'Linux'
         run: npm run acceptance:https
+      - name: Stage and verify Windows runtime
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $nodeDir = Split-Path (Get-Command node.exe).Source
+          node scripts/stage-windows.mjs $nodeDir windows-stage
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Push-Location windows-stage
+          try {
+            & .\runtime\node.exe --input-type=commonjs -e "const db = new (require('better-sqlite3'))(':memory:'); if(db.prepare('SELECT 1 AS ok').get().ok !== 1) process.exit(1); db.close();"
+            if ($LASTEXITCODE -ne 0) { throw 'Bundled SQLite test failed' }
+            & .\runtime\node.exe --input-type=module -e "import fs from 'node:fs'; import {verifyRelease} from './scripts/install.mjs'; verifyRelease(process.cwd(), JSON.parse(fs.readFileSync('RELEASE-MANIFEST.json')));"
+            if ($LASTEXITCODE -ne 0) { throw 'Release manifest verification failed' }
+          } finally { Pop-Location }
+          Compress-Archive -Path windows-stage\* -DestinationPath Printshop-POS-Windows-x64.zip
+          $hash = (Get-FileHash Printshop-POS-Windows-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content -Encoding ascii SHA256SUMS.txt "$hash  Printshop-POS-Windows-x64.zip"
+      - name: Upload Windows candidate
+        if: runner.os == 'Windows' && success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64-candidate
+          path: |
+            Printshop-POS-Windows-x64.zip
+            SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
       - uses: actions/upload-artifact@v4
         if: always()
         with:
