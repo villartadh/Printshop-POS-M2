@@ -1,0 +1,14 @@
+# Native pricing preferences (engineering preview)
+
+From the native catalog, use **Configure service pricing** to choose a method. Document methods optionally use pages × copies. Bulk tiers contain a minimum billable quantity (maximum two decimals) and a PHP rate (maximum two decimals). The highest qualifying tier is the intended rate; below all thresholds the base catalog rate applies. Add a tier to the draft, remove draft tiers if needed, then save. Reload requires explicit confirmation before unsaved changes are discarded. UI draft state survives ordinary Activity recreation if the stored service and pricing revisions still match.
+
+## Data and safety
+
+- Preview SQLite schema v4 adds immutable pricing_profile_versions and pricing_tier_versions with foreign keys; previous v1/v2/v3 catalog, stock, and recipe tables are preserved. No default rows are synthesized: existing services get revision-zero per-unit pricing until configured. Each write validates current catalog and pricing revisions, active service, method/pages compatibility, and unique tier thresholds, then appends a snapshot transactionally.
+- No price, material recipe or stock movement is rewritten. Service unit changes are rejected once material or pricing history exists because reinterpretation could corrupt the meaning of historical quantities. To change billing basis, configure the appropriate new service. Archived services retain history; writes are blocked.
+- The advanced quote input screen and fractional material-demand calculation are not implemented in this branch. Catalog selection for advanced profiles is intentionally unavailable; an already-linked quote stops displaying legacy totals if the profile changes to an advanced method. Regular per-unit/fixed quotes remain editable; the clear-service action returns to manual calculation. No sales or live shop data.
+- Future native quote UI must explicitly show the material usage basis. Do not silently reinterpret per-item or per-service-unit recipe usage as per-square-foot or per-meter usage. Exact fractional demand must be compared to actual stock without falsely passing a shortage. Distinguish an estimated material cost from a selling rate.
+
+## Tests and continuation
+
+21 standalone PricingProfile checks passed locally with source/target 17 on OpenJDK 21 compiler module; 27 in-memory SQLite DDL fixture checks passed for former schemas v1/v2/v3. These are not Android acceptance. The installed emulator gate now requires NATIVE_PRICING_STORE_PASS and NATIVE_PRICING_SETTINGS_PASS in addition to all earlier markers. Verify real v3→v4 migration and historical snapshot counts, stale revision rejection, unit guards, persistence, actual catalog/editor flow, advanced quote guard, and base selling-price preservation. See DEVELOPMENT_QUEUE.md and HANDOFF-README.md for ordered integration and the next native work. No production, physical device, printing or BIR acceptance.
