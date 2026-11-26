@@ -516,8 +516,15 @@ try {
       forwarded={request:route.request().postDataJSON(),response:await upstream.json()};
       await route.fulfill({response:upstream,json:{...forwarded.response,clientMutationId:'invalid-ack'}});
     });
+    const rejectedAck=page.waitForResponse(r=>r.url().endsWith('/api/expenses')&&r.request().method()==='POST');
     await dialog.getByRole('button',{name:'Save Expense',exact:true}).click();
+    const rejectedResponse=await rejectedAck;
+    assert.equal(rejectedResponse.status(),201);
+    assert.equal((await rejectedResponse.json()).clientMutationId,'invalid-ack');
+    await waitText('Expense confirmation could not be verified. Retry the original reference.');
+    await dialog.waitFor({state:'hidden'});
     await waitText('Unconfirmed expense');
+    assert.ok(forwarded,'Intercepted server expense response');
     assert.equal(forwarded.response.duplicate,false);
     assert.equal((await api('/bootstrap')).expenses.filter(e=>e.id===forwarded.response.id).length,1);
     await page.reload();await signIn();await click('Expenses & Reports');
