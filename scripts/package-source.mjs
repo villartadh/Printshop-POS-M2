@@ -10,9 +10,13 @@ const sha=execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).tr
 if(!/^0\.9\.\d+$/.test(version)||!/^[0-9a-f]{40}$/.test(sha))throw Error('Unexpected candidate identity');
 if(fs.existsSync(output))throw Error('Refusing to overwrite source staging directory');
 const tracked=execFileSync('git',['ls-files','-z'],{cwd:root}).toString().split('\0').filter(Boolean);
-const allowed=name=>/^(src|scripts|tests|public|\.github)\//.test(name)||['.env.example','.gitignore','AGENTS.md','CHANGELOG.md','DEVELOPMENT_QUEUE.md','HANDOFF_SNAPSHOT.md','HANDOFF-README.md','FEATURE-MATRIX.md','BIR-GAP-ANALYSIS.md','INSTALL-WINDOWS.cmd','OPERATOR-GUIDE.md','README.md','START-LDC.cmd','START-PRINTSHOP-POS.cmd','favicon.ico','index.html','metadata.json','package-lock.json','package.json','server.ts','tsconfig.json','validate.mjs','vite.config.ts'].includes(name);
+const androidSource=name=>/^android-native\/(?:README\.md|\.gitignore|(?:app\/)?(?:build|settings)\.gradle|app\/src\/main\/AndroidManifest\.xml|app\/src\/(?:main|androidTest)\/java\/[A-Za-z0-9_/]+\.java|tests\/[A-Za-z0-9_]+\.java)$/.test(name);
+const allowed=name=>androidSource(name)||/^(src|scripts|tests|public|\.github)\//.test(name)||['.env.example','.gitignore','AGENTS.md','CHANGELOG.md','DEVELOPMENT_QUEUE.md','HANDOFF_SNAPSHOT.md','HANDOFF-README.md','FEATURE-MATRIX.md','BIR-GAP-ANALYSIS.md','INSTALL-WINDOWS.cmd','OPERATOR-GUIDE.md','README.md','START-LDC.cmd','START-PRINTSHOP-POS.cmd','favicon.ico','index.html','metadata.json','package-lock.json','package.json','server.ts','tsconfig.json','validate.mjs','vite.config.ts'].includes(name);
 for(const required of ['README.md','AGENTS.md','HANDOFF-README.md','DEVELOPMENT_QUEUE.md','HANDOFF_SNAPSHOT.md','FEATURE-MATRIX.md']){
  if(!tracked.includes(required)||!allowed(required))throw Error('Missing required continuation document: '+required);
+}
+if(tracked.includes('android-native/README.md')){
+ for(const required of ['android-native/README.md','android-native/settings.gradle','android-native/build.gradle','android-native/app/build.gradle','android-native/app/src/main/AndroidManifest.xml','android-native/app/src/main/java/ph/printshop/pos/MainActivity.java','android-native/app/src/main/java/ph/printshop/pos/QuoteMath.java','android-native/tests/QuoteMathTest.java','android-native/app/src/androidTest/java/ph/printshop/pos/NativeQuoteSmoke.java']) if(!tracked.includes(required)||!allowed(required))throw Error('Missing required native Android source: '+required);
 }
 const files={};
 fs.mkdirSync(output,{recursive:true});
