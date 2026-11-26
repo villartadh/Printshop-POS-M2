@@ -108,6 +108,25 @@ public final class CatalogStore extends SQLiteOpenHelper {
             return new StockMath.Balance(after,revision);
         } finally { db.endTransaction(); }
     }
+    public static final class StockMovement {
+        public final long revision, delta, before, after, createdMs;
+        public final String reason, unit;
+        StockMovement(long revision,long delta,long before,long after,long createdMs,String reason,String unit) {
+            this.revision=revision; this.delta=delta; this.before=before; this.after=after; this.createdMs=createdMs; this.reason=reason; this.unit=unit;
+        }
+    }
+    public List<StockMovement> stockHistory(String id,long beforeRevision,int limit) {
+        if (beforeRevision<0 || limit<1 || limit>50) throw new IllegalArgumentException("Invalid history page.");
+        SQLiteDatabase db=getReadableDatabase();
+        if (read(db,id).kind!=CatalogEntry.Kind.MATERIAL) throw new IllegalArgumentException("Stock history is only available for materials.");
+        List<StockMovement> result=new ArrayList<>();
+        String selection=beforeRevision==0?"material_id=?":"material_id=? AND stock_revision<?";
+        String[] args=beforeRevision==0?new String[]{id}:new String[]{id,Long.toString(beforeRevision)};
+        try (Cursor c=db.query("stock_movements",new String[]{"stock_revision","delta","before_quantity","after_quantity","created_ms","reason","unit"},selection,args,null,null,"stock_revision DESC",Integer.toString(limit))) {
+            while(c.moveToNext()) result.add(new StockMovement(c.getLong(0),c.getLong(1),c.getLong(2),c.getLong(3),c.getLong(4),c.getString(5),c.getString(6)));
+        }
+        return result;
+    }
     public List<CatalogEntry> list(boolean includeArchived) {
         List<CatalogEntry> result = new ArrayList<>();
         try (Cursor cursor = getReadableDatabase().query("catalog", null, includeArchived ? null : "archived=0", null, null, null, "kind,name COLLATE NOCASE,id")) {
