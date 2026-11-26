@@ -63,12 +63,14 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "v9 administrative audit migration"; verifyCheckoutMigration(9);
             phase = "v10 drawer migration"; verifyCheckoutMigration(10);
             phase = "v11 refund migration"; verifyCheckoutMigration(11);
+            phase = "v12 recurring migration"; verifyCheckoutMigration(12);
             phase = "durable atomic checkout fixture"; verifyDurableCheckout();
             phase = "cashier authorization and shift fixture"; verifyCashierAuthShift();
             phase = "audited credential lifecycle"; verifyCredentialLifecycle();
             phase = "owner-only fixture administration"; verifyOwnerAdministration();
             phase = "authenticated dynamic catalog selection"; verifyCatalogSelectionAccess();
             phase = "durable audited drawer fixture"; verifyDrawerLedger();
+            phase = "recurring expense occurrence fixture"; verifyRecurringExpense();
             phase = "owner-controlled cashier disable"; verifyStaffDisable();
             phase = "material costing"; verifyMaterials();
             phase = "recipe and quote screen"; verifyRecipeScreen(screen);
@@ -76,7 +78,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "pricing settings and document quote"; verifyPricingScreen(screen);
             phase = "measured quote"; verifyMeasuredQuote(screen);
             phase = "native cashier training UI"; verifyCashierTrainingScreen(screen);
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\n");
+            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\n");
             result = Activity.RESULT_OK;
         } catch (Throwable error) {
             evidence.putString("stream", failureDetails(phase, error));
@@ -985,7 +987,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 db.setVersion(4);
             }
             try(CatalogStore store=new CatalogStore(context,filename)){
-                require(store.getReadableDatabase().getVersion()==12,"v4-to-v12 migration version wrong");
+                require(store.getReadableDatabase().getVersion()==13,"v4-to-v13 migration version wrong");
                 require(store.stockBalance(material).quantity==1500&&store.stockHistory(material,0,5).size()==1,"v4 stock lost");
                 require(store.recipeBindings(service).get(0).quantityMilli==500&&store.pricing(service).tiers.get(0).rateCentavos==250,"v4 recipe/pricing lost");
                 require(store.pendingStock(material)==null,"unexpected migrated pending request");
@@ -1172,16 +1174,18 @@ public final class NativeQuoteSmoke extends Instrumentation {
                         CheckoutJournal.stage(db,unresolved);CashierJournal.link(db,pendingCheckout,shift);
                     }
                 }
-                if(former==11)DrawerJournal.upgrade(db);
+                if(former>=11)DrawerJournal.upgrade(db);
+                if(former>=12)RefundJournal.upgrade(db);
                 db.setVersion(former);
             }
             try(CatalogStore store=former>=7?CatalogStore.checkoutFixture(context,fixture):new CatalogStore(context,filename)){
-                require(store.getReadableDatabase().getVersion()==12,"v5/v6/v7/v8/v9/v10/v12 migration failed");
+                require(store.getReadableDatabase().getVersion()==13,"v5/v6/v7/v8/v9/v10/v12 migration failed");
                 require(store.stockBalance(material).quantity==1500&&store.stockHistory(material,0,10).size()==1,"v5 stock changed");
                 require(store.pendingStock(material)!=null&&store.pendingStock(material).id.equals(pending),"v5 pending stock lost");
                 require(store.get(material).centavos==199,"v5 catalog changed");
                 require(trainingCount(store,"SELECT COUNT(*) FROM cashier_admin_events")== (former>=10?1:0),"migration changed administrative audit");
                 require(trainingCount(store,"SELECT COUNT(*) FROM cashier_refund_links")==0,"migration invented refund links");
+                require(trainingCount(store,"SELECT COUNT(*) FROM cashier_recurring_versions")==0&&trainingCount(store,"SELECT COUNT(*) FROM cashier_recurring_occurrences")==0,"migration invented recurring expenses");
                 require(trainingCount(store,"SELECT COUNT(*) FROM cashier_drawer_requests")==0&&trainingCount(store,"SELECT COUNT(*) FROM cashier_drawer_effects")==0,"migration invented drawer activity");
                 require(trainingCount(store,"SELECT COUNT(*) FROM cashier_drawer_legacy_sales")== (former>=7?1:0),"migration legacy sale provenance wrong");
                 if(former>=7){
@@ -1287,6 +1291,45 @@ public final class NativeQuoteSmoke extends Instrumentation {
         }finally{
             java.util.Arrays.fill(owner,'\0');java.util.Arrays.fill(staff,'\0');java.util.Arrays.fill(wrong,'\0');java.util.Arrays.fill(replacement,'\0');context.deleteDatabase(filename);
         }
+    }
+
+    private void verifyRecurringExpense(){
+        android.content.Context context=getTargetContext();String fixture=stockId(),filename="checkout-fixture-"+fixture+".db";
+        char[] pass="Synthetic-Recurring-Owner-01".toCharArray(),staff="Synthetic-Recurring-Cashier-01".toCharArray();
+        String schedule=stockId(),shift=stockId(),first=stockId(),retry=stockId();
+        try(CatalogStore store=CatalogStore.checkoutFixture(context,fixture)){
+            store.bootstrapDemoFixtureOwner("recurring-owner",pass);
+            String owner=store.signInFixture("recurring-owner",pass);
+            store.createFixtureCashier(owner,"recurring-cashier",staff);
+            String cashier=store.signInFixture("recurring-cashier",staff);
+            String today=RecurringMath.today(System.currentTimeMillis());
+            RecurringMath.Cadence monthly=RecurringMath.Cadence.MONTHLY;
+            rejectStock(()->store.saveFixtureRecurringDefinition(cashier,schedule,0,"Synthetic Rent","Rent",200,monthly,today,true));
+            RecurringJournal.Definition d=store.saveFixtureRecurringDefinition(owner,schedule,0,"Synthetic Rent","Rent",200,monthly,today,true);
+            require(d.revision==1&&d.nextIndex==0&&d.nextDue.equals(today),"schedule initial review");
+            require(store.saveFixtureRecurringDefinition(owner,schedule,0,"Synthetic Rent","Rent",200,monthly,today,true).revision==1,"schedule retry duplicated version");
+            store.openFixtureShift(owner,shift,1000);
+            rejectStock(()->store.authorizedFixtureRecurringDefinitions(cashier,0,9));
+            rejectStock(()->store.stageFixtureRecurringExpense(owner,shift,first,schedule,1,1,today,200,"Rent","Synthetic scheduled expense",1000));
+            RecurringJournal.Occurrence pending=store.stageFixtureRecurringExpense(owner,shift,first,schedule,1,0,today,200,"Rent","Synthetic scheduled expense",1000);
+            require(pending.drawer.state.equals("PENDING")&&store.expectedFixtureCash(owner,shift)==1000,"schedule stage moved cash");
+            require(store.stageFixtureRecurringExpense(owner,shift,first,schedule,1,0,today,200,"Rent","Synthetic scheduled expense",1000).drawer.id.equals(first),"exact occurrence replay");
+            rejectStock(()->store.resolveFixtureDrawer(owner,first,true,null));
+            rejectStock(()->store.authorizedFixtureDrawer(owner,first));
+            rejectStock(()->store.closeFixtureShift(owner,shift,1000));
+            store.resolveFixtureRecurringExpense(owner,first,false,"Synthetic cancellation");
+            require(store.authorizedFixtureRecurringDefinitions(owner,0,9).get(0).nextIndex==0,"cancel advanced due");
+            store.stageFixtureRecurringExpense(owner,shift,retry,schedule,1,0,today,200,"Rent","Synthetic retry",1000);
+            store.resolveFixtureRecurringExpense(owner,retry,true,null);store.resolveFixtureRecurringExpense(owner,retry,true,null);
+            require(store.expectedFixtureCash(owner,shift)==800,"recurring effect duplicate or missing");
+            RecurringJournal.Definition next=store.authorizedFixtureRecurringDefinitions(owner,0,9).get(0);
+            require(next.nextIndex==1&&next.nextDue.equals(RecurringMath.due(today,monthly,1)),"next due wrong");
+            require(store.authorizedFixtureRecurringHistory(owner,0,9).size()==2&&store.authorizedFixtureDrawerHistory(owner,0,9).isEmpty(),"linked expense history duplicated");
+            require(store.authorizedFixtureSalesReport(owner,new ReportMath.Range(0,Long.MAX_VALUE)).totals.expenses.longValueExact()==200,"recurring expense report wrong");
+            store.saveFixtureRecurringDefinition(owner,schedule,1,"Synthetic Rent","Rent",200,monthly,next.nextDue,false);
+            require(!store.authorizedFixtureRecurringDefinitions(owner,0,9).get(0).active,"archive missing");
+            require(store.closeFixtureShift(owner,shift,800).variance==0,"recurring close wrong");
+        }finally{java.util.Arrays.fill(pass,'\0');java.util.Arrays.fill(staff,'\0');context.deleteDatabase(filename);}
     }
 
     private void verifyDrawerLedger(){
@@ -2049,7 +2092,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             }
             java.util.List<PricingMath.Tier> tiers=java.util.Arrays.asList(new PricingMath.Tier(2000,200),new PricingMath.Tier(1000,250));
             try(CatalogStore store=new CatalogStore(context,filename)){
-                require(store.getReadableDatabase().getVersion()==12,"v3-to-v12 migration version wrong");
+                require(store.getReadableDatabase().getVersion()==13,"v3-to-v13 migration version wrong");
                 require(store.pricing(service).revision==0&&!store.pricing(service).needsAdvancedQuote(),"legacy default changed");
                 require(store.recipeRevision(service)==1&&store.stockBalance(material).quantity==1500,"migration changed recipe or stock");
                 PricingProfile saved=store.savePricing(service,1,0,PricingMath.Method.PER_PAGE,true,tiers);

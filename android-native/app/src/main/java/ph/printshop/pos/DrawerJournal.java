@@ -99,6 +99,7 @@ final class DrawerJournal {
         Request prior=read(db,id);
         if(prior!=null){
             if(RefundJournal.linked(db,id))throw new IllegalStateException("Use receipt compensation review");
+            if(RecurringJournal.linked(db,id))throw new IllegalStateException("Use recurring expense review");
             requireRequest(db,actor,id);prior.verify(shift,kind,amount,label,note,before);return prior;
         }
         CashierJournal.requireShift(db,actor,shift,true);requireNoPending(db,shift);requireNoCheckout(db,shift);
@@ -110,11 +111,17 @@ final class DrawerJournal {
     }
     static Request resolve(SQLiteDatabase db,CashierJournal.Principal actor,String id,boolean apply,String reason,long now){
         if(RefundJournal.linked(db,id))throw new IllegalStateException("Use receipt compensation review");
+        if(RecurringJournal.linked(db,id))throw new IllegalStateException("Use recurring expense review");
         return resolveInternal(db,actor,id,apply,reason,now);
     }
     static Request resolveLinked(SQLiteDatabase db,CashierJournal.Principal actor,String id,boolean apply,String reason,long now){
         CashierSecurity.requireOwner(actor.role);
         if(!RefundJournal.linked(db,id))throw new IllegalStateException("Receipt compensation unavailable");
+        return resolveInternal(db,actor,id,apply,reason,now);
+    }
+    static Request resolveRecurring(SQLiteDatabase db,CashierJournal.Principal actor,String id,boolean apply,String reason,long now){
+        CashierSecurity.requireOwner(actor.role);
+        if(!RecurringJournal.linked(db,id))throw new IllegalStateException("Recurring expense occurrence unavailable");
         return resolveInternal(db,actor,id,apply,reason,now);
     }
     private static Request resolveInternal(SQLiteDatabase db,CashierJournal.Principal actor,String id,boolean apply,String reason,long now){
@@ -137,7 +144,7 @@ final class DrawerJournal {
         if(offset<0||limit<1||limit>51)throw new IllegalArgumentException("Invalid drawer history page");
         List<Request> result=new ArrayList<>();
         // Own shift history only; no credential/session data.
-        try(Cursor c=db.rawQuery("SELECT "+COLUMNS+" FROM cashier_drawer_requests WHERE operator_id=? AND NOT EXISTS(SELECT 1 FROM cashier_refund_links l WHERE l.drawer_id=cashier_drawer_requests.id) ORDER BY created_ms DESC,id DESC LIMIT ? OFFSET ?",
+        try(Cursor c=db.rawQuery("SELECT "+COLUMNS+" FROM cashier_drawer_requests WHERE operator_id=? AND NOT EXISTS(SELECT 1 FROM cashier_refund_links l WHERE l.drawer_id=cashier_drawer_requests.id) AND NOT EXISTS(SELECT 1 FROM cashier_recurring_occurrences o WHERE o.drawer_id=cashier_drawer_requests.id) ORDER BY created_ms DESC,id DESC LIMIT ? OFFSET ?",
             new String[]{actor.id,Integer.toString(limit),Integer.toString(offset)})){
             while(c.moveToNext())result.add(new Request(c));
         }
