@@ -6,6 +6,7 @@ android {
         applicationId 'ph.printshop.pos.preview'
         minSdk 26
         targetSdk 34
+        testInstrumentationRunner 'ph.printshop.pos.NativeQuoteSmoke'
         versionCode 1
         versionName '0.1.0-foundation'
     }
