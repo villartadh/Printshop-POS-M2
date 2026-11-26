@@ -203,6 +203,7 @@ try {
     await click('Recall');
     await click(/Receive payment/);
     const tender=page.getByRole('dialog').getByLabel(/Amount Tendered/);
+    await page.waitForFunction(()=>{const field=document.querySelector('input[id^="inp_amount_tendered"]');return field instanceof HTMLInputElement&&field.value==='20.00';});
     await tender.fill('10');
     assert.equal(await tender.inputValue(),'10');
     await click('Complete Payment');

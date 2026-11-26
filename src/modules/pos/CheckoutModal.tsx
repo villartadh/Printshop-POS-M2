@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useLayoutEffect, useState } from 'react';
 import { CheckCircle2, CreditCard, Plus, Trash2 } from 'lucide-react';
 import { useApp } from '../../context/AppContext.tsx';
 import { formatCurrency } from '../../shared/pricingEngine.ts';
@@ -36,7 +36,8 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const [submitting, setSubmitting] = useState(false);
   const [submitError,setSubmitError]=useState('');
 
-  useEffect(() => {
+  // Initialize the controlled fields before the dialog becomes interactive.
+  useLayoutEffect(() => {
     if (open) {
       setSelectedMethodId(enabledMethods[0]?.id || 'cash');
       setTenderAmount(totalAmount.toFixed(taxCurr.decimalPlaces));
