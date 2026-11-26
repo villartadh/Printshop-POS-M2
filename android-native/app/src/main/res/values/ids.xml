@@ -15,4 +15,11 @@
     <item name="recipe_usage" type="id"/>
     <item name="recipe_save" type="id"/>
     <item name="recipe_remove" type="id"/>
+    <item name="pricing_method" type="id"/>
+    <item name="pricing_pages" type="id"/>
+    <item name="pricing_threshold" type="id"/>
+    <item name="pricing_rate" type="id"/>
+    <item name="pricing_add" type="id"/>
+    <item name="pricing_save" type="id"/>
+    <item name="pricing_reload" type="id"/>
 </resources>
