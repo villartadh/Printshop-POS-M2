@@ -76,7 +76,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "pricing settings and document quote"; verifyPricingScreen(screen);
             phase = "measured quote"; verifyMeasuredQuote(screen);
             phase = "native cashier training UI"; verifyCashierTrainingScreen(screen);
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\n");
+            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\n");
             result = Activity.RESULT_OK;
         } catch (Throwable error) {
             evidence.putString("stream", failureDetails(phase, error));
@@ -718,6 +718,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
     }
 
     private void verifySalesReportTrainingUI(Activity activity,String fixtureId,String owner,String ownerPass){
+        String inspect=null,expectedReceipt=null;
         try(CatalogStore fixture=CatalogStore.checkoutFixture(getTargetContext(),fixtureId)){
             char[] pass=ownerPass.toCharArray(),staff="Synthetic-Catalog-Cashier-01".toCharArray();
             try{
@@ -730,6 +731,18 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 require(report.totals.cashIn.longValueExact()==500&&report.totals.cashOut.longValueExact()==200&&report.totals.movement().longValueExact()==475,"report other cash movement");
                 require(report.services.size()==2&&report.closedVariance.longValueExact()==-100,"report service or reconciliation");
                 rejectStock(()->fixture.authorizedFixtureSalesReport(cashier,range));
+                java.util.List<ReportJournal.Event> all=fixture.authorizedFixtureReportEvents(token,range,0,9);
+                require(all.size()==7&&fixture.authorizedFixtureReportEvents(token,range,3,3).get(0).id.equals(all.get(3).id),"report event count/pagination");
+                require(all.stream().filter(e->"REFUND".equals(e.kind)&&e.receiptId!=null).count()==1&&all.stream().filter(e->"VOID".equals(e.kind)&&e.receiptId!=null).count()==1,"report compensation provenance");
+                rejectStock(()->fixture.authorizedFixtureReportEvents(cashier,range,0,9));
+                ReportJournal.Report monthly=fixture.authorizedFixtureSalesReport(token,ReportMath.Period.MONTH);
+                java.math.BigInteger chartNet=java.math.BigInteger.ZERO;
+                for(ReportMath.Bucket bucket:monthly.chart.buckets)chartNet=chartNet.add(bucket.totals.net());
+                require(chartNet.equals(monthly.totals.net()),"chart and report snapshot mismatch");
+                for(ReportJournal.Event e:fixture.authorizedFixtureReportEvents(token,monthly.range,0,9)){
+                    if("VOID".equals(e.kind)){inspect="Inspect Void "+e.id;expectedReceipt=e.receiptId;break;}
+                }
+
                 fixture.signOutFixture(token);fixture.signOutFixture(cashier);
             }finally{java.util.Arrays.fill(pass,'\0');java.util.Arrays.fill(staff,'\0');}
         }
@@ -739,6 +752,20 @@ public final class NativeQuoteSmoke extends Instrumentation {
         trainingClick(activity,R.id.cashier_report_week);awaitText(activity,"Report period: WEEK","week report");
         trainingClick(activity,R.id.cashier_report_month);awaitText(activity,"Report period: MONTH","month report");
         awaitText(activity,"Closed shift reconciliation (whole shifts closed in period)","reconciliation screen");
+        trainingClick(activity,R.id.cashier_report_chart);awaitText(activity,"Training net sales chart","chart screen");
+        runOnMainChecked(()->require(activity.findViewById(R.id.cashier_catalog_previous)==null&&activity.findViewById(R.id.cashier_catalog_next)!=null,"chart first-page navigation"));
+        trainingClick(activity,R.id.cashier_catalog_next);
+        runOnMainChecked(()->require(activity.findViewById(R.id.cashier_catalog_previous)!=null,"chart second-page navigation"));
+        trainingClick(activity,R.id.cashier_report_return);awaitText(activity,"Report period: MONTH","chart report return");
+        trainingClick(activity,R.id.cashier_report_events);awaitText(activity,"Training report transactions","report history screen");
+        runOnMainChecked(()->require(activity.findViewById(R.id.cashier_catalog_previous)==null&&activity.findViewById(R.id.cashier_catalog_next)==null,"report history unnecessary pagination"));
+        if(inspect!=null){
+            trainingSelect(activity,inspect);awaitText(activity,"Training report transaction","report detail missing");
+            awaitText(activity,"Original receipt: "+expectedReceipt,"report detail original receipt missing");
+            trainingClick(activity,R.id.cashier_report_events);awaitText(activity,"Training report transactions","report detail return");
+        }
+        trainingClick(activity,R.id.cashier_report_return);awaitText(activity,"Report period: MONTH","event report return");
+
         trainingClick(activity,R.id.cashier_back);awaitText(activity,"No open shift","report return");
         trainingClick(activity,R.id.cashier_lock);awaitText(activity,"Training sign in","report owner signout");
         trainingLogin(activity,"catalog-cashier","Synthetic-Catalog-Cashier-01");awaitText(activity,"No open shift","report cashier login");

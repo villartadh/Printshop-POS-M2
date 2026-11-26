@@ -3,6 +3,7 @@ import drawer_journal_schema_test as prior
 from drawer_journal_schema_test import *
 source=(root/"ReportJournal.java").read_text()
 events=re.search(r'String EVENTS="([^"]+)"',source).group(1)
+event_page=events+re.search(r'String EVENT_PAGE=EVENTS\+"([^"]+)"',source).group(1)
 closes=re.search(r'String CLOSES="([^"]+)"',source).group(1)
 count=prior.checks
 with sqlite3.connect(":memory:") as db:
@@ -48,6 +49,16 @@ with sqlite3.connect(":memory:") as db:
     check(totals(0,100)=={"SALE":800,"CASH_IN":100,"REFUND":200,"VOID":300,"EXPENSE":100,"CASH_OUT":100},"total exact gross and cash components")
     rows=report(0,100)
     check(len(rows)==7 and len({r[5] for r in rows})==7,"one source event each")
+    pages=[db.execute(event_page,(0,100,0,100,3,offset)).fetchall() for offset in (0,3,6,9)]
+    check([r for page in pages for r in page]==sorted(rows,key=lambda r:(-r[4],r[0],r[5])),"stable event pages no gap/overlap")
+    check(len(pages[-1])==0,"no extra page")
+    lookup={r[5]:r for r in rows}
+    check(lookup["sale-a"][6:]==("original","staff","sale-a",None),"original sale event provenance")
+    check(lookup["partial"][6:]==("open","owner","sale-a","Synthetic drawer reason"),"refund event provenance")
+    check(lookup["void"][6:]==("open","owner","sale-b","Synthetic drawer reason"),"void event provenance")
+    check(lookup["withdraw"][6:]==("open","owner",None,"Synthetic drawer reason"),"ordinary drawer event has no original receipt")
+    check(db.execute(event_page,(8,10,8,10,9,0)).fetchall()==[lookup["void"],lookup["partial"]],"event drilldown date boundary")
+
     check(all(r[2:4]==("service","Synthetic service") for r in rows if r[0] in ("SALE","REFUND","VOID")),"immutable service attribution")
     check(all(r[2] is None and r[3] is None for r in rows if r[0] in ("CASH_IN","CASH_OUT","EXPENSE")),"no service allocation to adjustments")
     check(db.execute(closes,(0,20)).fetchall()==[],"close boundary exclusive")
@@ -64,4 +75,7 @@ with sqlite3.connect(":memory:") as db:
         stage(db,f"out-{i}",sid="large",kind="CASH_OUT",category=None,amount=MAX,before=MAX,at=22);resolve(db,f"out-{i}",at=23)
     check(totals(21,24)=={"CASH_IN":MAX*930,"CASH_OUT":MAX*930} and MAX*930>2**63-1,"large gross exact without SQL SUM")
     check(cash(db,"large")==0,"large chain unchanged")
+    first=db.execute(event_page,(21,24,21,24,9,0)).fetchall()
+    second=db.execute(event_page,(21,24,21,24,9,8)).fetchall()
+    check(first[8]==second[0] and len(set(r[5] for r in first+second))==17,"lookahead tie ordering")
 print(f"Report journal actual SQLite: {prior.checks-count} checks PASS")

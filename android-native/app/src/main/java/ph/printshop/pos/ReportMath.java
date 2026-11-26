@@ -46,6 +46,46 @@ final class ReportMath {
         BigInteger net(){return gross.subtract(refunds).subtract(voids);}
         BigInteger movement(){return net().subtract(expenses).add(cashIn).subtract(cashOut);}
     }
+    static final class Bucket {
+        final long start,end;
+        final Totals totals=new Totals();
+        Bucket(long start,long end){this.start=start;this.end=end;}
+    }
+    static final class Series {
+        final java.util.List<Bucket> buckets=new java.util.ArrayList<>();
+        final Range range;
+        Series(Period period,Range range){
+            Range canonical=ReportMath.range(period,range.start);
+            if(canonical.start!=range.start||canonical.end!=range.end)throw new IllegalArgumentException("Invalid chart range");
+            this.range=range;
+            Calendar c=new GregorianCalendar(TimeZone.getTimeZone("Asia/Manila"));
+            c.setTimeInMillis(range.start);
+            while(c.getTimeInMillis()<range.end){
+                long start=c.getTimeInMillis();
+                c.add(period==Period.DAY?Calendar.HOUR_OF_DAY:Calendar.DAY_OF_MONTH,1);
+                buckets.add(new Bucket(start,Math.min(c.getTimeInMillis(),range.end)));
+                if(buckets.size()>31)throw new IllegalArgumentException("Invalid chart length");
+            }
+        }
+        void add(String kind,long amount,long at){
+            if(at<range.start||at>=range.end)throw new IllegalArgumentException("Chart event outside range");
+            if(!"SALE".equals(kind)&&!"REFUND".equals(kind)&&!"VOID".equals(kind))return;
+            for(Bucket bucket:buckets)if(at>=bucket.start&&at<bucket.end){bucket.totals.add(kind,amount);return;}
+            throw new IllegalStateException("Chart bucket unavailable");
+        }
+        BigInteger maxAbs(){
+            BigInteger max=BigInteger.ZERO;
+            for(Bucket b:buckets)max=max.max(b.totals.net().abs());
+            return max;
+        }
+    }
+    /** Signed thousandths of half chart width; never overflow or conceal nonzero values. */
+    static int bar(BigInteger net,BigInteger max){
+        if(max.signum()<0||net.abs().compareTo(max)>0)throw new IllegalArgumentException("Invalid chart scale");
+        if(net.signum()==0)return 0;
+        int absolute=net.abs().multiply(BigInteger.valueOf(1000)).divide(max).intValueExact();
+        return net.signum()*Math.max(1,absolute);
+    }
     static String display(BigInteger centavos){
         BigInteger[] parts=centavos.abs().divideAndRemainder(BigInteger.valueOf(100));
         return "PHP "+(centavos.signum()<0?"-":"")+parts[0]+"."+(parts[1].intValue()<10?"0":"")+parts[1];

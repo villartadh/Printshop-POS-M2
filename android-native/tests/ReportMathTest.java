@@ -36,6 +36,29 @@ class ReportMathTest {
         try{negative.add("SALE",0);throw new AssertionError("zero accepted");}catch(IllegalArgumentException expected){checks++;}
         try{negative.add("CANCELLED",100);throw new AssertionError("cancelled accepted");}catch(IllegalArgumentException expected){checks++;}
         try{new ReportMath.Range(20,20);throw new AssertionError("empty range");}catch(IllegalArgumentException expected){checks++;}
+        ReportMath.Range day=ReportMath.range(ReportMath.Period.DAY,ms("2026-11-27T00:00:00Z"));
+        ReportMath.Series series=new ReportMath.Series(ReportMath.Period.DAY,day);
+        check(series.buckets.size()==24,"24 hourly buckets");
+        series.add("SALE",100,day.start);series.add("REFUND",300,day.start+3600000);
+        series.add("VOID",100,day.end-1);series.add("CASH_IN",999,day.start);
+        check(series.buckets.get(0).totals.net().intValueExact()==100,"start inclusion and cash-in excluded");
+        check(series.buckets.get(1).totals.net().intValueExact()==-300,"next hour exact");
+        check(series.buckets.get(23).totals.net().intValueExact()==-100,"end minus one");
+        check(series.maxAbs().intValueExact()==300,"shared signed scale");
+        check(ReportMath.bar(BigInteger.valueOf(100),series.maxAbs())==333,"positive bar");
+        check(ReportMath.bar(BigInteger.valueOf(-300),series.maxAbs())==-1000,"negative full scale");
+        check(ReportMath.bar(BigInteger.ZERO,BigInteger.ZERO)==0,"zero scale");
+        check(ReportMath.bar(BigInteger.ONE,BigInteger.TEN.pow(100))==1,"minimum nonzero visible");
+        check(ReportMath.bar(BigInteger.ONE.negate(),BigInteger.TEN.pow(100))==-1,"negative min visible");
+        try{series.add("SALE",1,day.end);throw new AssertionError("end accepted");}catch(IllegalArgumentException expected){checks++;}
+        try{ReportMath.bar(BigInteger.TEN,BigInteger.ONE);throw new AssertionError("scale accepted");}catch(IllegalArgumentException expected){checks++;}
+        ReportMath.Range week=ReportMath.range(ReportMath.Period.WEEK,day.start);
+        check(new ReportMath.Series(ReportMath.Period.WEEK,week).buckets.size()==7,"weekly chart");
+        ReportMath.Range leap=ReportMath.range(ReportMath.Period.MONTH,ms("2024-02-29T12:00:00Z"));
+        check(new ReportMath.Series(ReportMath.Period.MONTH,leap).buckets.size()==29,"leap chart");
+        ReportMath.Range month=ReportMath.range(ReportMath.Period.MONTH,ms("2026-12-31T12:00:00Z"));
+        check(new ReportMath.Series(ReportMath.Period.MONTH,month).buckets.size()==31,"31 day chart");
+        try{new ReportMath.Series(ReportMath.Period.DAY,new ReportMath.Range(day.start,day.end-1));throw new AssertionError("noncanonical chart accepted");}catch(IllegalArgumentException expected){checks++;}
         System.out.println("ReportMath: "+checks+" checks PASS");
     }
 }

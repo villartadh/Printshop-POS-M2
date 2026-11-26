@@ -593,6 +593,12 @@ public final class CatalogStore extends SQLiteOpenHelper {
     ReportJournal.Report authorizedFixtureSalesReport(String token,ReportMath.Range range){
         return fixtureTransaction(db->ReportJournal.read(db,requireFixtureOwner(db,token),range));
     }
+    ReportJournal.Report authorizedFixtureSalesReport(String token,ReportMath.Period period){
+        return fixtureTransaction(db->ReportJournal.read(db,requireFixtureOwner(db,token),ReportMath.range(period,System.currentTimeMillis()),period));
+    }
+    List<ReportJournal.Event> authorizedFixtureReportEvents(String token,ReportMath.Range range,int offset,int limit){
+        return fixtureTransaction(db->ReportJournal.events(db,requireFixtureOwner(db,token),range,offset,limit));
+    }
     List<RefundJournal.Receipt> authorizedFixtureRefundReceipts(String token,int offset,int limit){
         return fixtureTransaction(db->RefundJournal.receipts(db,requireFixtureOwner(db,token),offset,limit));
     }

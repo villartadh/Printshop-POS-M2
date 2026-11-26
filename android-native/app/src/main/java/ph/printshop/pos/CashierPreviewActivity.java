@@ -423,7 +423,7 @@ public final class CashierPreviewActivity extends Activity {
         });
     }
     private void showReportPeriod(ReportMath.Period period){
-        submit(()->store.authorizedFixtureSalesReport(session(),ReportMath.range(period,System.currentTimeMillis())),v->showSalesReport(period,(ReportJournal.Report)v,0));
+        submit(()->store.authorizedFixtureSalesReport(session(),period),v->showSalesReport(period,(ReportJournal.Report)v,0));
     }
     private static String reportMoney(java.math.BigInteger amount){return ReportMath.display(amount);}
     private void showSalesReport(ReportMath.Period period,ReportJournal.Report report,int offset){
@@ -444,6 +444,8 @@ public final class CashierPreviewActivity extends Activity {
         label("Closed shift reconciliation (whole shifts closed in period)");
         label("Closed shifts: "+report.closedShifts);label("Expected: "+reportMoney(report.closedExpected));
         label("Counted: "+reportMoney(report.closedCounted));label("Variance: "+reportMoney(report.closedVariance));
+        button("Net sales chart",R.id.cashier_report_chart,()->showReportChart(period,report,0));
+        button("Report transactions",R.id.cashier_report_events,()->showReportEvents(period,report,0));
         label("By service (original sold name)",20,Color.rgb(27,39,58));
         if(report.services.isEmpty())label("No sales or compensation in this period");
         for(int i=offset;i<Math.min(offset+8,report.services.size());i++){
@@ -453,6 +455,72 @@ public final class CashierPreviewActivity extends Activity {
         }
         catalogPages(offset,offset+8<report.services.size(),()->showSalesReport(period,report,offset-8),()->showSalesReport(period,report,offset+8));
         button("Refresh report",R.id.cashier_sales_report,()->showReportPeriod(period));back();
+    }
+    private static final class ReportBar extends View {
+        private final int signed;
+        private final android.graphics.Paint paint=new android.graphics.Paint();
+        ReportBar(android.content.Context context,int signed){super(context);this.signed=signed;setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);}
+        @Override protected void onDraw(android.graphics.Canvas canvas){
+            super.onDraw(canvas);
+            float center=getWidth()/2f,top=3f,bottom=Math.max(top,getHeight()-3f);
+            paint.setColor(Color.rgb(233,237,242));canvas.drawRect(0,top,getWidth(),bottom,paint);
+            paint.setColor(Color.rgb(95,105,115));canvas.drawRect(center-1,0,center+1,getHeight(),paint);
+            if(signed!=0){
+                float edge=center+center*(signed/1000f);
+                if(Math.abs(edge-center)<1f)edge=center+Math.signum(signed);
+                paint.setColor(signed<0?Color.rgb(170,57,45):Color.rgb(31,125,105));
+                canvas.drawRect(Math.min(center,edge),top,Math.max(center,edge),bottom,paint);
+            }
+        }
+    }
+    private void showReportChart(ReportMath.Period period,ReportJournal.Report report,int offset){
+        mode="report-chart";screen("Training net sales chart","Philippine shop time · Negative values extend left, positive right. All pages share the same scale. Amounts below are exact.");
+        ReportMath.Series series=report.chart;
+        if(series==null){label("Chart unavailable for this range");back();return;}
+        java.math.BigInteger max=series.maxAbs();
+        label("Scale on either side: "+reportMoney(max));label("Period net: "+reportMoney(report.totals.net()));
+        java.text.SimpleDateFormat date=new java.text.SimpleDateFormat(period==ReportMath.Period.DAY?"HH:mm":"MMM dd, EEE",java.util.Locale.ROOT);
+        date.setTimeZone(java.util.TimeZone.getTimeZone("Asia/Manila"));
+        for(int i=offset;i<Math.min(offset+8,series.buckets.size());i++){
+            ReportMath.Bucket bucket=series.buckets.get(i);
+            label(date.format(new java.util.Date(bucket.start))+" · Net "+reportMoney(bucket.totals.net()));
+            page.addView(new ReportBar(this,ReportMath.bar(bucket.totals.net(),max)),new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,dp(20)));
+            label("Gross "+reportMoney(bucket.totals.gross)+" · Refund "+reportMoney(bucket.totals.refunds)+" · Void "+reportMoney(bucket.totals.voids));
+        }
+        catalogPages(offset,offset+8<series.buckets.size(),()->showReportChart(period,report,offset-8),()->showReportChart(period,report,offset+8));
+        button("Back to report",R.id.cashier_report_return,()->showSalesReport(period,report,0));back();
+    }
+    private static String eventLabel(String kind){
+        switch(kind){case "SALE":return "Sale";case "REFUND":return "Refund";case "VOID":return "Void";case "EXPENSE":return "Expense";case "CASH_IN":return "Other cash in";case "CASH_OUT":return "Other cash out";default:return "Unknown";}
+    }
+    private static String eventDate(long at){
+        java.text.SimpleDateFormat date=new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss",java.util.Locale.ROOT);
+        date.setTimeZone(java.util.TimeZone.getTimeZone("Asia/Manila"));return date.format(new java.util.Date(at));
+    }
+    private void showReportEvents(ReportMath.Period period,ReportJournal.Report report,int offset){
+        submit(()->store.authorizedFixtureReportEvents(session(),report.range,offset,9),v->{
+            @SuppressWarnings("unchecked") List<ReportJournal.Event> events=(List<ReportJournal.Event>)v;
+            mode="report-events";screen("Training report transactions","Applied events only · newest first. Live history for the selected report dates; refresh the report to reconcile newly recorded activity.");
+            if(events.isEmpty())label("No applied transactions on this page");
+            for(int i=0;i<Math.min(8,events.size());i++){
+                ReportJournal.Event event=events.get(i);
+                label(eventDate(event.recordedMs)+" · "+eventLabel(event.kind)+" · "+QuoteMath.display(event.amount));
+                if(event.serviceName!=null)label(event.serviceName);
+                button("Inspect "+eventLabel(event.kind)+" "+event.id,0,()->showReportEvent(period,report,offset,event));
+            }
+            catalogPages(offset,events.size()>8,()->showReportEvents(period,report,offset-8),()->showReportEvents(period,report,offset+8));
+            button("Back to report",R.id.cashier_report_return,()->showSalesReport(period,report,0));back();
+        });
+    }
+    private void showReportEvent(ReportMath.Period period,ReportJournal.Report report,int offset,ReportJournal.Event event){
+        mode="report-event";screen("Training report transaction","Read-only original applied event. No actual cash or fiscal document.");
+        label(eventLabel(event.kind)+" · "+QuoteMath.display(event.amount));label("Recorded: "+eventDate(event.recordedMs));
+        label("Event: "+event.id);label("Shift: "+event.shiftId);label("Operator: "+event.operatorId);
+        if(event.receiptId!=null)label("Original receipt: "+event.receiptId);
+        if(event.serviceName!=null)label("Original service: "+event.serviceName+" · "+event.serviceId);
+        if(event.reason!=null)label("Reason: "+event.reason);
+        button("Back to transactions",R.id.cashier_report_events,()->showReportEvents(period,report,offset));
+        button("Back to report",R.id.cashier_report_return,()->showSalesReport(period,report,0));back();
     }
     private static String refundLabel(RefundJournal.Kind kind){return kind==RefundJournal.Kind.VOID?"Void":"Refund";}
     private void showRefundReceipts(int offset){

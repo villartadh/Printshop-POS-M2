@@ -144,4 +144,7 @@
     <item type="id" name="cashier_report_day"/>
     <item type="id" name="cashier_report_week"/>
     <item type="id" name="cashier_report_month"/>
+    <item type="id" name="cashier_report_chart"/>
+    <item type="id" name="cashier_report_events"/>
+    <item type="id" name="cashier_report_return"/>
 </resources>
