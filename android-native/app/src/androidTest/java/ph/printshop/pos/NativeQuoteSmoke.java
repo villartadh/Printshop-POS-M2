@@ -62,6 +62,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "v8 staff audit migration"; verifyCheckoutMigration(8);
             phase = "v9 administrative audit migration"; verifyCheckoutMigration(9);
             phase = "v10 drawer migration"; verifyCheckoutMigration(10);
+            phase = "v11 refund migration"; verifyCheckoutMigration(11);
             phase = "durable atomic checkout fixture"; verifyDurableCheckout();
             phase = "cashier authorization and shift fixture"; verifyCashierAuthShift();
             phase = "audited credential lifecycle"; verifyCredentialLifecycle();
@@ -862,7 +863,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 db.setVersion(4);
             }
             try(CatalogStore store=new CatalogStore(context,filename)){
-                require(store.getReadableDatabase().getVersion()==11,"v4-to-v11 migration version wrong");
+                require(store.getReadableDatabase().getVersion()==12,"v4-to-v12 migration version wrong");
                 require(store.stockBalance(material).quantity==1500&&store.stockHistory(material,0,5).size()==1,"v4 stock lost");
                 require(store.recipeBindings(service).get(0).quantityMilli==500&&store.pricing(service).tiers.get(0).rateCentavos==250,"v4 recipe/pricing lost");
                 require(store.pendingStock(material)==null,"unexpected migrated pending request");
@@ -1049,14 +1050,16 @@ public final class NativeQuoteSmoke extends Instrumentation {
                         CheckoutJournal.stage(db,unresolved);CashierJournal.link(db,pendingCheckout,shift);
                     }
                 }
+                if(former==11)DrawerJournal.upgrade(db);
                 db.setVersion(former);
             }
             try(CatalogStore store=former>=7?CatalogStore.checkoutFixture(context,fixture):new CatalogStore(context,filename)){
-                require(store.getReadableDatabase().getVersion()==11,"v5/v6/v7/v8/v9/v10 migration failed");
+                require(store.getReadableDatabase().getVersion()==12,"v5/v6/v7/v8/v9/v10/v12 migration failed");
                 require(store.stockBalance(material).quantity==1500&&store.stockHistory(material,0,10).size()==1,"v5 stock changed");
                 require(store.pendingStock(material)!=null&&store.pendingStock(material).id.equals(pending),"v5 pending stock lost");
                 require(store.get(material).centavos==199,"v5 catalog changed");
                 require(trainingCount(store,"SELECT COUNT(*) FROM cashier_admin_events")== (former>=10?1:0),"migration changed administrative audit");
+                require(trainingCount(store,"SELECT COUNT(*) FROM cashier_refund_links")==0,"migration invented refund links");
                 require(trainingCount(store,"SELECT COUNT(*) FROM cashier_drawer_requests")==0&&trainingCount(store,"SELECT COUNT(*) FROM cashier_drawer_effects")==0,"migration invented drawer activity");
                 require(trainingCount(store,"SELECT COUNT(*) FROM cashier_drawer_legacy_sales")== (former>=7?1:0),"migration legacy sale provenance wrong");
                 if(former>=7){
@@ -1255,6 +1258,30 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 require(trainingCount(reopened,"SELECT COUNT(*) FROM cashier_drawer_effects")==5,"incorrect final cash effects");
                 require(trainingCount(reopened,"SELECT COUNT(*) FROM cashier_drawer_requests WHERE state='CANCELLED'")==1,"cancelled audit missing");
                 require(trainingCount(reopened,"SELECT COUNT(*) FROM checkout_sales")==1&&reopened.stockBalance(plan.materials.get(0).materialId).quantity==49000,"final sale or material wrong");
+                String refundShift=stockId(),refund=stockId(),second=stockId();
+                reopened.openFixtureShift(token,refundShift,500);
+                RefundJournal.Review originalReceipt=reopened.reviewFixtureRefund(token,plan.requestId);
+                require(originalReceipt.originalPaid==250&&originalReceipt.remaining()==250,"receipt compensation review wrong");
+                rejectStock(()->reopened.reviewFixtureRefund(cashier,plan.requestId));
+                rejectStock(()->reopened.stageFixtureRefund(token,refundShift,refund,plan.requestId,RefundJournal.Kind.VOID,250,0,100,"Synthetic invalid void",500));
+                RefundJournal.Request compensation=reopened.stageFixtureRefund(token,refundShift,refund,plan.requestId,RefundJournal.Kind.REFUND,250,0,100,"Synthetic partial refund",500);
+                require(compensation.drawer.after==400&&compensation.drawer.state.equals("PENDING"),"refund review wrong");
+                require(reopened.stageFixtureRefund(token,refundShift,refund,plan.requestId,RefundJournal.Kind.REFUND,250,0,100,"Synthetic partial refund",500).drawer.id.equals(refund),"refund stage replay wrong");
+                rejectStock(()->reopened.resolveFixtureDrawer(token,refund,true,null));
+                rejectStock(()->reopened.stageFixtureDrawer(token,refundShift,refund,out,100,null,"Synthetic partial refund",500));
+                rejectStock(()->reopened.resolveFixtureRefund(cashier,refund,true,null));
+                rejectStock(()->reopened.closeFixtureShift(token,refundShift,500));
+                require(reopened.authorizedFixtureRefund(token,refund).checkoutId.equals(plan.requestId),"refund recovery wrong");
+                reopened.resolveFixtureRefund(token,refund,true,null);
+                reopened.resolveFixtureRefund(token,refund,true,null);
+                require(reopened.expectedFixtureCash(token,refundShift)==400&&reopened.reviewFixtureRefund(token,plan.requestId).remaining()==150,"refund apply or replay wrong");
+                rejectStock(()->reopened.stageFixtureRefund(token,refundShift,second,plan.requestId,RefundJournal.Kind.REFUND,250,0,100,"Synthetic stale review",400));
+                reopened.stageFixtureRefund(token,refundShift,second,plan.requestId,RefundJournal.Kind.REFUND,250,100,150,"Synthetic final review",400);
+                reopened.resolveFixtureRefund(token,second,false,"Synthetic cancellation");
+                require(reopened.expectedFixtureCash(token,refundShift)==400&&reopened.reviewFixtureRefund(token,plan.requestId).remaining()==150,"cancel changed cash or cap");
+                require(trainingCount(reopened,"SELECT COUNT(*) FROM checkout_sales")==1&&reopened.stockBalance(plan.materials.get(0).materialId).quantity==49000,"refund changed original history");
+                require(reopened.closeFixtureShift(token,refundShift,400).variance==0,"refund close wrong");
+
             }
         }finally{java.util.Arrays.fill(owner,'\0');java.util.Arrays.fill(staff,'\0');java.util.Arrays.fill(next,'\0');context.deleteDatabase(filename);}
     }
@@ -1894,7 +1921,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             }
             java.util.List<PricingMath.Tier> tiers=java.util.Arrays.asList(new PricingMath.Tier(2000,200),new PricingMath.Tier(1000,250));
             try(CatalogStore store=new CatalogStore(context,filename)){
-                require(store.getReadableDatabase().getVersion()==11,"v3-to-v11 migration version wrong");
+                require(store.getReadableDatabase().getVersion()==12,"v3-to-v12 migration version wrong");
                 require(store.pricing(service).revision==0&&!store.pricing(service).needsAdvancedQuote(),"legacy default changed");
                 require(store.recipeRevision(service)==1&&store.stockBalance(material).quantity==1500,"migration changed recipe or stock");
                 PricingProfile saved=store.savePricing(service,1,0,PricingMath.Method.PER_PAGE,true,tiers);

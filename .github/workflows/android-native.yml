@@ -49,6 +49,7 @@ jobs:
           python3 android-native/tests/admin_journal_schema_test.py
           python3 android-native/tests/catalog_page_query_test.py
           python3 android-native/tests/drawer_journal_schema_test.py
+          python3 android-native/tests/refund_journal_schema_test.py
       - name: Provision Android SDK
         uses: android-actions/setup-android@v4.0.3
         with:

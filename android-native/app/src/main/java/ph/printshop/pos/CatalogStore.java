@@ -14,7 +14,7 @@ public final class CatalogStore extends SQLiteOpenHelper {
     public CatalogStore(Context context) { this(context, "preview-catalog.db"); }
     CatalogStore(Context context, String filename) { this(context,filename,false); }
     private CatalogStore(Context context,String filename,boolean fixtureCheckoutWrites) {
-        super(context,filename,null,11);this.fixtureCheckoutWrites=fixtureCheckoutWrites;
+        super(context,filename,null,12);this.fixtureCheckoutWrites=fixtureCheckoutWrites;
     }
     /** No production/ordinary preview API can record sales or consume stock through checkout.
      * Only a separately identified synthetic fixture database opts in to transaction experiments.
@@ -61,6 +61,7 @@ public final class CatalogStore extends SQLiteOpenHelper {
         StaffJournal.upgrade(db);
         AdminJournal.upgrade(db);
         DrawerJournal.upgrade(db);
+        RefundJournal.upgrade(db);
     }
     private static void createStockLedger(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE stock_movements (request_id TEXT PRIMARY KEY NOT NULL, material_id TEXT NOT NULL REFERENCES catalog(id), catalog_revision INTEGER NOT NULL CHECK(catalog_revision>=1), stock_revision INTEGER NOT NULL CHECK(stock_revision>=1), unit TEXT NOT NULL, reason TEXT NOT NULL, delta INTEGER NOT NULL CHECK(delta BETWEEN -999999999999 AND 999999999999 AND delta<>0), before_quantity INTEGER NOT NULL CHECK(before_quantity BETWEEN 0 AND 999999999999), after_quantity INTEGER NOT NULL CHECK(after_quantity BETWEEN 0 AND 999999999999 AND after_quantity=before_quantity+delta), created_ms INTEGER NOT NULL, UNIQUE(material_id,stock_revision))");
@@ -81,7 +82,7 @@ public final class CatalogStore extends SQLiteOpenHelper {
         db.execSQL("CREATE TRIGGER stock_request_resolution BEFORE UPDATE ON stock_requests WHEN OLD.state<>'PENDING' OR NEW.state NOT IN ('APPLIED','CANCELLED') OR NEW.request_id IS NOT OLD.request_id OR NEW.material_id IS NOT OLD.material_id OR NEW.catalog_revision IS NOT OLD.catalog_revision OR NEW.expected_stock_revision IS NOT OLD.expected_stock_revision OR NEW.delta IS NOT OLD.delta OR NEW.reason IS NOT OLD.reason OR NEW.created_ms IS NOT OLD.created_ms OR (NEW.state='APPLIED' AND NOT EXISTS (SELECT 1 FROM stock_movements m WHERE m.request_id=OLD.request_id AND m.material_id=OLD.material_id AND m.catalog_revision=OLD.catalog_revision AND m.stock_revision=OLD.expected_stock_revision+1 AND m.delta=OLD.delta AND m.reason=OLD.reason)) OR (NEW.state='CANCELLED' AND EXISTS (SELECT 1 FROM stock_movements m WHERE m.request_id=OLD.request_id)) BEGIN SELECT RAISE(ABORT,'Invalid stock request transition'); END");
     }
     @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-        if (newVersion == 11 && oldVersion >= 1 && oldVersion <= 10) {
+        if (newVersion == 12 && oldVersion >= 1 && oldVersion <= 11) {
             if (oldVersion < 2) createStockLedger(db);
             if (oldVersion < 3) createRecipeSchema(db);
             if (oldVersion < 4) createPricingSchema(db);
@@ -91,7 +92,8 @@ public final class CatalogStore extends SQLiteOpenHelper {
             if(oldVersion<8) CredentialJournal.upgrade(db);
             if(oldVersion<9) StaffJournal.upgrade(db);
             if(oldVersion<10) AdminJournal.upgrade(db);
-            DrawerJournal.upgrade(db); return;
+            if(oldVersion<11) DrawerJournal.upgrade(db);
+            RefundJournal.upgrade(db); return;
         }
         throw new IllegalStateException("No migration path; existing catalog preserved");
     }
@@ -579,10 +581,26 @@ public final class CatalogStore extends SQLiteOpenHelper {
         });
     }
     DrawerJournal.Request authorizedFixtureDrawer(String token,String id){
-        return fixtureTransaction(db->DrawerJournal.requireRequest(db,CashierJournal.requireSession(db,token,System.currentTimeMillis()),id));
+        return fixtureTransaction(db->{
+            CashierJournal.Principal actor=CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            if(RefundJournal.linked(db,id))throw new IllegalStateException("Use receipt compensation review");
+            return DrawerJournal.requireRequest(db,actor,id);
+        });
     }
     List<DrawerJournal.Request> authorizedFixtureDrawerHistory(String token,int offset,int limit){
         return fixtureTransaction(db->DrawerJournal.history(db,CashierJournal.requireSession(db,token,System.currentTimeMillis()),offset,limit));
+    }
+    RefundJournal.Review reviewFixtureRefund(String token,String checkoutId){
+        return fixtureTransaction(db->RefundJournal.review(db,requireFixtureOwner(db,token),checkoutId));
+    }
+    RefundJournal.Request stageFixtureRefund(String token,String shiftId,String id,String checkoutId,RefundJournal.Kind kind,long originalPaid,long priorPaid,long amount,String reason,long before){
+        return fixtureTransaction(db->RefundJournal.stage(db,requireFixtureOwner(db,token),shiftId,id,checkoutId,kind,originalPaid,priorPaid,amount,reason,before,System.currentTimeMillis()));
+    }
+    RefundJournal.Request authorizedFixtureRefund(String token,String id){
+        return fixtureTransaction(db->RefundJournal.read(db,requireFixtureOwner(db,token),id));
+    }
+    RefundJournal.Request resolveFixtureRefund(String token,String id,boolean apply,String cancelReason){
+        return fixtureTransaction(db->RefundJournal.resolve(db,requireFixtureOwner(db,token),id,apply,cancelReason,System.currentTimeMillis()));
     }
     long expectedFixtureCash(String token,String shiftId){
         return fixtureTransaction(db->CashierJournal.expected(db,CashierJournal.requireShift(db,CashierJournal.requireSession(db,token,System.currentTimeMillis()),shiftId,false)));
