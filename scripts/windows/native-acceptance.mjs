@@ -20,13 +20,14 @@ const home=path.join(local,'Printshop POS'), data=path.join(home,'data');
 const credentials={username:'windows-acceptance',fullName:'Synthetic Windows Test',password:randomUUID()};
 const version=root=>JSON.parse(fs.readFileSync(path.join(root,'RELEASE-MANIFEST.json'))).version;
 const oldVersion=version(oldRelease), newVersion=version(newRelease);
-if(!((oldVersion==='0.9.4'&&newVersion==='0.9.5')||(oldVersion==='0.9.5'&&newVersion==='0.9.6')))throw Error('Expected an approved consecutive baseline and candidate pair (0.9.4/0.9.5 or 0.9.5/0.9.6).');
+const pairs=new Set(['0.9.4/0.9.5','0.9.5/0.9.6','0.9.5/0.9.7','0.9.6/0.9.7']);
+if(!pairs.has(oldVersion+'/'+newVersion))throw Error('Unsupported baseline/candidate pair. Use 0.9.5 or 0.9.6 with 0.9.7.');
 fs.mkdirSync(evidence);
 const env={...Object.fromEntries(Object.entries(process.env).filter(([key])=>
   /^(SYSTEMROOT|WINDIR|PATH|COMSPEC|TEMP|TMP|USERPROFILE|APPDATA|PROGRAMFILES|PROGRAMFILES\(X86\)|PROGRAMDATA)$/i.test(key))),
   LOCALAPPDATA:local,POS_NO_BROWSER:'1'};
 const base='http://127.0.0.1:3000';
-const report={version:newVersion,platform:os.platform(),windowsRelease:os.release(),arch:os.arch(),checks:[]};
+const report={baseline:oldVersion,version:newVersion,scope:'Disposable native Windows desktop; synthetic records only',platform:os.platform(),windowsRelease:os.release(),arch:os.arch(),checks:[]};
 let cmd, exited, browser, originalScale;
 const check=async(name,action)=>{
   const item={name,status:'FAIL'};
@@ -102,7 +103,8 @@ try {
       db.close();
       console.log(JSON.stringify(out));
     `],{cwd:newRelease,env,encoding:'utf8',timeout:10000}));
-    assert.equal(result.node,'v22.23.5');
+    const [major,minor]=result.node.slice(1).split('.').map(Number);
+    assert.equal(major,22);assert.ok(minor>=12,'Bundled runtime requires Node 22.12+');
     assert.equal(result.modules,'127');
     assert.equal(result.platform,'win32');
     assert.equal(result.arch,'x64');
