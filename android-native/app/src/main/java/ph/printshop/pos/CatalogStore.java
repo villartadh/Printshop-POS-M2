@@ -11,7 +11,7 @@ import java.util.List;
 /** App-private preview catalog. No cross-platform import or sales. */
 public final class CatalogStore extends SQLiteOpenHelper {
     public CatalogStore(Context context) { this(context, "preview-catalog.db"); }
-    CatalogStore(Context context, String filename) { super(context, filename, null, 2); }
+    CatalogStore(Context context, String filename) { super(context, filename, null, 3); }
     @Override public void onConfigure(SQLiteDatabase db) {
         super.onConfigure(db);
         db.setForeignKeyConstraintsEnabled(true);
@@ -20,12 +20,20 @@ public final class CatalogStore extends SQLiteOpenHelper {
         db.execSQL("CREATE TABLE catalog (id TEXT PRIMARY KEY NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('SERVICE','MATERIAL')), name TEXT NOT NULL, unit TEXT NOT NULL, centavos INTEGER NOT NULL CHECK(centavos BETWEEN 0 AND 99999999999), revision INTEGER NOT NULL CHECK(revision >= 1), archived INTEGER NOT NULL CHECK(archived IN (0,1)))");
         db.execSQL("CREATE TABLE catalog_history (id TEXT NOT NULL REFERENCES catalog(id), revision INTEGER NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL, unit TEXT NOT NULL, centavos INTEGER NOT NULL, archived INTEGER NOT NULL, action TEXT NOT NULL CHECK(action IN ('CREATE','EDIT','ARCHIVE','RESTORE')), PRIMARY KEY(id,revision))");
         createStockLedger(db);
+        createRecipeSchema(db);
     }
     private static void createStockLedger(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE stock_movements (request_id TEXT PRIMARY KEY NOT NULL, material_id TEXT NOT NULL REFERENCES catalog(id), catalog_revision INTEGER NOT NULL CHECK(catalog_revision>=1), stock_revision INTEGER NOT NULL CHECK(stock_revision>=1), unit TEXT NOT NULL, reason TEXT NOT NULL, delta INTEGER NOT NULL CHECK(delta BETWEEN -999999999999 AND 999999999999 AND delta<>0), before_quantity INTEGER NOT NULL CHECK(before_quantity BETWEEN 0 AND 999999999999), after_quantity INTEGER NOT NULL CHECK(after_quantity BETWEEN 0 AND 999999999999 AND after_quantity=before_quantity+delta), created_ms INTEGER NOT NULL, UNIQUE(material_id,stock_revision))");
     }
+    private static void createRecipeSchema(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE service_materials (service_id TEXT NOT NULL REFERENCES catalog(id), material_id TEXT NOT NULL REFERENCES catalog(id), quantity_milli INTEGER NOT NULL CHECK(quantity_milli BETWEEN 1 AND 999999999999), unit TEXT NOT NULL, PRIMARY KEY(service_id,material_id))");
+        db.execSQL("CREATE TABLE recipe_history (service_id TEXT NOT NULL REFERENCES catalog(id), revision INTEGER NOT NULL CHECK(revision>=1), material_id TEXT NOT NULL REFERENCES catalog(id), quantity_milli INTEGER NOT NULL CHECK(quantity_milli BETWEEN 0 AND 999999999999), unit TEXT NOT NULL, material_revision INTEGER NOT NULL, service_revision INTEGER NOT NULL, created_ms INTEGER NOT NULL, PRIMARY KEY(service_id,revision))");
+    }
     @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-        if (oldVersion == 1 && newVersion == 2) { createStockLedger(db); return; }
+        if (newVersion == 3 && (oldVersion == 1 || oldVersion == 2)) {
+            if (oldVersion == 1) createStockLedger(db);
+            createRecipeSchema(db); return;
+        }
         throw new IllegalStateException("No migration path; existing catalog preserved");
     }
     public CatalogEntry create(CatalogEntry.Kind kind, String name, String unit, String price) {
@@ -56,6 +64,8 @@ public final class CatalogStore extends SQLiteOpenHelper {
             if (current.kind == CatalogEntry.Kind.MATERIAL) {
                 StockMath.Balance stock = stockBalance(db, id);
                 if (stock.revision > 0 && !current.unit.equals(next.unit)) throw new IllegalStateException("Material unit cannot change after stock movement history exists");
+                if (!current.unit.equals(next.unit) && hasReference(db,"recipe_history",id)) throw new IllegalStateException("Material unit cannot change after recipe history exists");
+                if (next.archived && hasReference(db,"service_materials",id)) throw new IllegalStateException("Remove material from linked service recipes before archiving");
                 if (next.archived && stock.quantity != 0) throw new IllegalStateException("Reduce material stock to zero with a reason before archiving");
             }
             int rows = db.update("catalog", values(next), "id=? AND revision=?", new String[]{id, Long.toString(expectedRevision)});
@@ -64,6 +74,76 @@ public final class CatalogStore extends SQLiteOpenHelper {
             db.setTransactionSuccessful();
             return next;
         } finally { db.endTransaction(); }
+    }
+    private static boolean hasReference(SQLiteDatabase db,String table,String materialId) {
+        try(Cursor c=db.query(table,new String[]{"material_id"},"material_id=?",new String[]{materialId},null,null,null,"1")) {return c.moveToFirst();}
+    }
+    private static long recipeRevision(SQLiteDatabase db,String serviceId) {
+        try(Cursor c=db.rawQuery("SELECT COALESCE(MAX(revision),0) FROM recipe_history WHERE service_id=?",new String[]{serviceId})) {
+            if(!c.moveToFirst())throw new IllegalStateException("Cannot read recipe revision");
+            return c.getLong(0);
+        }
+    }
+    public long recipeRevision(String serviceId) {
+        SQLiteDatabase db=getReadableDatabase();
+        if(read(db,serviceId).kind!=CatalogEntry.Kind.SERVICE)throw new IllegalArgumentException("Not a service");
+        return recipeRevision(db,serviceId);
+    }
+    public long setMaterialUsage(String serviceId,long serviceRevision,String materialId,long materialRevision,long expectedRecipeRevision,long quantityMilli) {
+        if(quantityMilli<0||quantityMilli>StockMath.MAX)throw new IllegalArgumentException("Invalid recipe quantity");
+        SQLiteDatabase db=getWritableDatabase();
+        db.beginTransaction();
+        try {
+            CatalogEntry service=read(db,serviceId), material=read(db,materialId);
+            if(service.kind!=CatalogEntry.Kind.SERVICE||material.kind!=CatalogEntry.Kind.MATERIAL||service.archived||material.archived)
+                throw new IllegalStateException("Only active services and materials may be linked");
+            if(service.revision!=serviceRevision||material.revision!=materialRevision||recipeRevision(db,serviceId)!=expectedRecipeRevision)
+                throw new IllegalStateException("Catalog or recipe changed; reload before editing");
+            String[] pair={serviceId,materialId};
+            long prior=0;
+            try(Cursor c=db.query("service_materials",new String[]{"quantity_milli"},"service_id=? AND material_id=?",pair,null,null,null)) {
+                if(c.moveToFirst())prior=c.getLong(0);
+            }
+            if(prior==quantityMilli)throw new IllegalArgumentException("No recipe change");
+            if(prior==0 && quantityMilli>0) {
+                try(Cursor c=db.rawQuery("SELECT COUNT(*) FROM service_materials WHERE service_id=?",new String[]{serviceId})) {
+                    if(!c.moveToFirst()||c.getInt(0)>=100)throw new IllegalArgumentException("Maximum 100 material bindings");
+                }
+            }
+            if(quantityMilli==0) {
+                if(db.delete("service_materials","service_id=? AND material_id=?",pair)!=1)throw new IllegalStateException("Recipe changed");
+            } else {
+                ContentValues binding=new ContentValues();
+                binding.put("service_id",serviceId);binding.put("material_id",materialId);binding.put("quantity_milli",quantityMilli);binding.put("unit",material.unit);
+                if(prior==0)db.insertOrThrow("service_materials",null,binding);
+                else if(db.update("service_materials",binding,"service_id=? AND material_id=?",pair)!=1)throw new IllegalStateException("Recipe changed");
+            }
+            long revision=Math.addExact(expectedRecipeRevision,1);
+            ContentValues log=new ContentValues();
+            log.put("service_id",serviceId);log.put("material_id",materialId);log.put("revision",revision);log.put("quantity_milli",quantityMilli);log.put("unit",material.unit);
+            log.put("material_revision",materialRevision);log.put("service_revision",serviceRevision);log.put("created_ms",System.currentTimeMillis());
+            db.insertOrThrow("recipe_history",null,log);
+            db.setTransactionSuccessful();return revision;
+        } finally {db.endTransaction();}
+    }
+    public MaterialCost.Estimate estimateMaterials(String serviceId,int quantity) {
+        SQLiteDatabase db=getWritableDatabase();
+        db.beginTransactionNonExclusive();
+        try {
+            CatalogEntry service=read(db,serviceId);
+            if(service.kind!=CatalogEntry.Kind.SERVICE||service.archived)throw new IllegalArgumentException("Select an active service");
+            List<MaterialCost.Component> components=new ArrayList<>();
+            try(Cursor c=db.query("service_materials",new String[]{"material_id","quantity_milli","unit"},"service_id=?",new String[]{serviceId},null,null,"material_id")) {
+                while(c.moveToNext()) {
+                    CatalogEntry material=read(db,c.getString(0));
+                    if(material.archived||material.kind!=CatalogEntry.Kind.MATERIAL||!material.unit.equals(c.getString(2)))
+                        throw new IllegalStateException("Recipe contains unavailable material");
+                    components.add(new MaterialCost.Component(material.centavos,c.getLong(1),stockBalance(db,material.id).quantity));
+                }
+            }
+            MaterialCost.Estimate result=MaterialCost.estimate(components,quantity);
+            db.setTransactionSuccessful();return result;
+        } finally {db.endTransaction();}
     }
     public StockMath.Balance stockBalance(String id) {
         SQLiteDatabase db = getReadableDatabase();

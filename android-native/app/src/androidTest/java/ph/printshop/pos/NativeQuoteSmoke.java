@@ -51,7 +51,8 @@ public final class NativeQuoteSmoke extends Instrumentation {
             verifyCatalogScreen(screen);
             verifyStockLedger();
             verifyStockScreen();
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\n");
+            verifyMaterials();
+            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_MATERIAL_COST_PASS\n");
             finish(Activity.RESULT_OK, evidence);
         } catch (Throwable error) {
             evidence.putString("stream", "NATIVE_QUOTE_SMOKE_FAIL: " + error + "\n");
@@ -62,6 +63,45 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 runOnMainSync(screen::finish);
             }
         }
+    }
+    private void verifyMaterials() {
+        android.content.Context context=getTargetContext();
+        String filename="recipe-migration-"+java.util.UUID.randomUUID()+".db";
+        String service=java.util.UUID.randomUUID().toString(), material=java.util.UUID.randomUUID().toString();
+        try {
+            try(android.database.sqlite.SQLiteDatabase db=context.openOrCreateDatabase(filename,0,null)) {
+        db.execSQL("CREATE TABLE catalog (id TEXT PRIMARY KEY NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('SERVICE','MATERIAL')), name TEXT NOT NULL, unit TEXT NOT NULL, centavos INTEGER NOT NULL CHECK(centavos BETWEEN 0 AND 99999999999), revision INTEGER NOT NULL CHECK(revision >= 1), archived INTEGER NOT NULL CHECK(archived IN (0,1)))");
+        db.execSQL("CREATE TABLE catalog_history (id TEXT NOT NULL REFERENCES catalog(id), revision INTEGER NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL, unit TEXT NOT NULL, centavos INTEGER NOT NULL, archived INTEGER NOT NULL, action TEXT NOT NULL CHECK(action IN ('CREATE','EDIT','ARCHIVE','RESTORE')), PRIMARY KEY(id,revision))");
+        db.execSQL("CREATE TABLE stock_movements (request_id TEXT PRIMARY KEY NOT NULL, material_id TEXT NOT NULL REFERENCES catalog(id), catalog_revision INTEGER NOT NULL CHECK(catalog_revision>=1), stock_revision INTEGER NOT NULL CHECK(stock_revision>=1), unit TEXT NOT NULL, reason TEXT NOT NULL, delta INTEGER NOT NULL CHECK(delta BETWEEN -999999999999 AND 999999999999 AND delta<>0), before_quantity INTEGER NOT NULL CHECK(before_quantity BETWEEN 0 AND 999999999999), after_quantity INTEGER NOT NULL CHECK(after_quantity BETWEEN 0 AND 999999999999 AND after_quantity=before_quantity+delta), created_ms INTEGER NOT NULL, UNIQUE(material_id,stock_revision))");
+                db.execSQL("INSERT INTO catalog VALUES(?,?,?,?,?,?,?)",new Object[]{service,"SERVICE","Synthetic print","page",500,1,0});
+                db.execSQL("INSERT INTO catalog VALUES(?,?,?,?,?,?,?)",new Object[]{material,"MATERIAL","Synthetic paper","sheet",199,1,0});
+                db.execSQL("INSERT INTO catalog_history VALUES(?,?,?,?,?,?,?,?)",new Object[]{service,1,"SERVICE","Synthetic print","page",500,0,"CREATE"});
+                db.execSQL("INSERT INTO catalog_history VALUES(?,?,?,?,?,?,?,?)",new Object[]{material,1,"MATERIAL","Synthetic paper","sheet",199,0,"CREATE"});
+                db.setVersion(2);
+            }
+            try(CatalogStore store=new CatalogStore(context,filename)) {
+                require(store.get(service).centavos==500&&store.recipeRevision(service)==0,"v2 migration changed service");
+                require(store.setMaterialUsage(service,1,material,1,0,500)==1,"recipe revision wrong");
+                rejectStock(()->store.archive(material,1,true));
+                rejectStock(()->store.edit(material,1,"Synthetic paper","ream","1.99"));
+                MaterialCost.Estimate first=store.estimateMaterials(service,3);
+                require(first.costCentavos==299&&!first.stockSufficient,"unstocked cost estimate wrong");
+                store.moveStock(java.util.UUID.randomUUID().toString(),material,1,0,1500,"Synthetic stock");
+                require(store.estimateMaterials(service,3).stockSufficient,"exact stock availability wrong");
+                store.edit(material,1,"Synthetic paper","sheet","2.99");
+                require(store.estimateMaterials(service,3).costCentavos==449,"current material cost not reflected");
+                require(store.get(service).centavos==500&&store.stockBalance(material).quantity==1500,"estimate mutated sale price or stock");
+                rejectStock(()->store.setMaterialUsage(service,1,material,2,0,1000));
+                require(store.setMaterialUsage(service,1,material,2,1,0)==2,"recipe removal wrong");
+                require(store.estimateMaterials(service,3).costCentavos==0,"removed recipe still charged");
+            }
+            try(CatalogStore reopened=new CatalogStore(context,filename)) {
+                require(reopened.recipeRevision(service)==2&&reopened.stockBalance(material).quantity==1500,"recipe/stock persistence wrong");
+                try(android.database.Cursor c=reopened.getReadableDatabase().rawQuery("SELECT count(*) FROM recipe_history WHERE service_id=?",new String[]{service})){
+                    require(c.moveToFirst()&&c.getInt(0)==2,"recipe history altered");
+                }
+            }
+        } finally {context.deleteDatabase(filename);}
     }
     private void verifyStockScreen() {
         android.content.Context context=getTargetContext();
