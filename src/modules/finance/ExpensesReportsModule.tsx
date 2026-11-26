@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Download, Plus, Printer, Trash2 } from 'lucide-react';
 import { useApp } from '../../context/AppContext.tsx';
 import { formatCurrency } from '../../shared/pricingEngine.ts';
@@ -26,6 +26,7 @@ export const ExpensesReportsModule: React.FC = () => {
     createExpense,
     deleteExpense,
     session,
+    notify,
   } = useApp();
   const taxCurr = settings.taxAndCurrency;
   const canDelete = session?.user.role === 'admin' || session?.user.role === 'manager';
@@ -38,6 +39,9 @@ export const ExpensesReportsModule: React.FC = () => {
   );
   const [dateTo, setDateTo] = useState(businessDate());
   const [addExpenseOpen, setAddExpenseOpen] = useState(false);
+  const expenseSubmitting=useRef(false);
+  const [savingExpense,setSavingExpense]=useState(false);
+  const [expenseError,setExpenseError]=useState('');
 
   // Expense form
   const [expCategory, setExpCategory] = useState<ExpenseRecord['category']>('printing_materials');
@@ -310,7 +314,13 @@ export const ExpensesReportsModule: React.FC = () => {
                   canDelete ? (
                     <button
                       type="button"
-                      onClick={() => void deleteExpense(e.id)}
+                      aria-label={'Void expense '+e.description}
+                      onClick={async () => {
+                        const reason=window.prompt('Void this expense? The original record will be retained. Enter reason:');
+                        if(!reason?.trim())return;
+                        try{await deleteExpense(e.id,reason.trim());}
+                        catch(error){notify(error instanceof Error?error.message:'Expense void could not be confirmed. Refresh the report before retrying.','error');}
+                      }}
                       className="p-1.5 text-[#DC2626] hover:bg-slate-100 dark:hover:bg-slate-800 rounded cursor-pointer"
                     >
                       <Trash2 className="w-4 h-4" />
@@ -406,24 +416,20 @@ export const ExpensesReportsModule: React.FC = () => {
       {/* Add Expense Modal */}
       <Modal
         open={addExpenseOpen}
-        onClose={() => setAddExpenseOpen(false)}
+        onClose={() => {if(!expenseSubmitting.current)setAddExpenseOpen(false);}}
         title="Record Operating Expense"
         maxWidth="sm"
       >
         <form
           onSubmit={async (e) => {
             e.preventDefault();
-            await createExpense({
-              category: expCategory,
-              description: expDesc,
-              amount: Number(expAmount) || 0,
-              vendor: expVendor,
-              expenseDate: expDate,
-            });
-            setExpDesc('');
-            setExpAmount('');
-            setExpVendor('');
-            setAddExpenseOpen(false);
+            if(expenseSubmitting.current)return;
+            expenseSubmitting.current=true;setSavingExpense(true);setExpenseError('');
+            try{
+              await createExpense({category:expCategory,description:expDesc,amount:Number(expAmount),vendor:expVendor,expenseDate:expDate});
+              setExpDesc('');setExpAmount('');setExpVendor('');setAddExpenseOpen(false);
+            }catch(error){setExpenseError((error instanceof Error?error.message:'Expense submission failed.')+' Refresh the report before repeating an unconfirmed expense.');}
+            finally{expenseSubmitting.current=false;setSavingExpense(false);}
           }}
           className="space-y-3"
         >
@@ -452,7 +458,8 @@ export const ExpensesReportsModule: React.FC = () => {
             <Input
               label={`Amount (${taxCurr.currencySymbol})`}
               type="number"
-              min="1"
+              min="0.01"
+              max="1000000000"
               step="0.01"
               value={expAmount}
               onChange={(e) => setExpAmount(e.target.value)}
@@ -467,11 +474,12 @@ export const ExpensesReportsModule: React.FC = () => {
             />
           </div>
           <Input label="Vendor" value={expVendor} onChange={(e) => setExpVendor(e.target.value)} />
+          {expenseError&&<p role="alert" className="text-sm text-[var(--pos-error)]">{expenseError}</p>}
           <div className="flex justify-end gap-2 pt-2">
-            <Button variant="secondary" type="button" onClick={() => setAddExpenseOpen(false)}>
+            <Button variant="secondary" type="button" disabled={savingExpense} onClick={() => setAddExpenseOpen(false)}>
               Cancel
             </Button>
-            <Button type="submit">Save Expense</Button>
+            <Button type="submit" loading={savingExpense}>Save Expense</Button>
           </div>
         </form>
       </Modal>

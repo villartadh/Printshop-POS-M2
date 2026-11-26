@@ -588,7 +588,7 @@ apiRouter.get('/bootstrap', requireAuth, (req:AuthenticatedRequest, res) => {
   ).map(mapPrintJobRow);
 
   const expenses = (
-    db.prepare('SELECT * FROM expenses ORDER BY expense_date DESC, created_at DESC LIMIT 200').all() as Array<
+    db.prepare('SELECT * FROM expenses WHERE voided_at IS NULL ORDER BY expense_date DESC, created_at DESC LIMIT 200').all() as Array<
       Record<string, unknown>
     >
   ).map((e) => ({
@@ -673,7 +673,7 @@ apiRouter.get('/reports/finance', requireAuth, (req, res) => {
   const end = new Date(Date.parse(to+'T00:00:00+08:00') + 86400000).toISOString();
   const result = db.transaction(() => {
     const transactions = (db.prepare("SELECT * FROM transactions WHERE type = 'sale' AND created_at >= ? AND created_at < ? ORDER BY created_at DESC, id DESC").all(start,end) as Record<string,unknown>[]).map(mapTransactionRow);
-    const expenses = (db.prepare('SELECT * FROM expenses WHERE expense_date >= ? AND expense_date <= ? ORDER BY expense_date DESC, created_at DESC').all(from,to) as Record<string,unknown>[]).map(e=>({
+    const expenses = (db.prepare('SELECT * FROM expenses WHERE voided_at IS NULL AND expense_date >= ? AND expense_date <= ? ORDER BY expense_date DESC, created_at DESC').all(from,to) as Record<string,unknown>[]).map(e=>({
       id:String(e.id), category:e.category as ExpenseRecord['category'], description:String(e.description),
       amount:Number(e.amount)||0, vendor:String(e.vendor||''), recordedBy:String(e.recorded_by),
       expenseDate:String(e.expense_date), isDemo:e.is_demo===1, createdAt:String(e.created_at),
@@ -1980,15 +1980,15 @@ apiRouter.post('/customers/:id/pay-balance', requireAuth, (req: AuthenticatedReq
 
 apiRouter.post('/expenses', requireAuth, (req: AuthenticatedRequest, res) => {
   const e = (req.body ?? {}) as Partial<ExpenseRecord>;
-  const amount = Number(e.amount);
+  const amount = e.amount;
   const categories = ['electricity','ink_toner','printing_materials','maintenance','equipment','labor','rent','other'];
-  if (typeof e.description !== 'string' || !e.description.trim() || !Number.isFinite(amount) || amount <= 0 ||
-      (typeof e.amount !== 'number' && typeof e.amount !== 'string') ||
+  if (typeof e.description !== 'string' || !e.description.trim() || e.description.trim().length > 500 ||
+      !isLedgerMoney(amount) || amount <= 0 ||
       (e.category !== undefined && !categories.includes(e.category)) ||
-      (e.vendor !== undefined && typeof e.vendor !== 'string')) {
-    return res.status(400).json({ error: 'Valid description, category and finite positive amount are required.' });
+      (e.vendor !== undefined && (typeof e.vendor !== 'string' || e.vendor.trim().length > 500))) {
+    return res.status(400).json({ error: 'Valid description, category and positive numeric centavo amount required (maximum 500 characters per text field).' });
   }
-  const id = genId('exp');
+  const id = genId('exp'), actor=req.authUser!;
   const now = new Date().toISOString();
   const businessDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(now));
   const expenseDate = e.expenseDate ?? businessDate;
@@ -1996,30 +1996,16 @@ apiRouter.post('/expenses', requireAuth, (req: AuthenticatedRequest, res) => {
       !Number.isFinite(Date.parse(expenseDate)) || new Date(expenseDate).toISOString().slice(0,10) !== expenseDate) {
     return res.status(400).json({ error: 'Valid expense date is required (YYYY-MM-DD).' });
   }
-  db.prepare(`
-    INSERT INTO expenses (id, category, description, amount, vendor, recorded_by, expense_date, is_demo, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)
-  `).run(
-    id,
-    e.category || 'other',
-    e.description,
-    Number(e.amount),
-    e.vendor || '',
-    req.authUser!.fullName,
-    expenseDate,
-    now,
-  );
-  res.status(201).json({
-    id,
-    category: e.category || 'other',
-    description: e.description,
-    amount: Number(e.amount),
-    vendor: e.vendor || '',
-    recordedBy: req.authUser!.fullName,
-    expenseDate,
-    isDemo: false,
-    createdAt: now,
-  });
+  const record={id,category:e.category||'other',description:e.description.trim(),amount:fromCents(cents(amount)),vendor:e.vendor?.trim()||'',recordedBy:actor.fullName,expenseDate,isDemo:false,createdAt:now};
+  db.transaction(()=>{
+    db.prepare(`
+      INSERT INTO expenses (id, category, description, amount, vendor, recorded_by, expense_date, is_demo, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)
+    `).run(record.id,record.category,record.description,record.amount,record.vendor,record.recordedBy,record.expenseDate,record.createdAt);
+    writeAuditLog(actor.id,actor.fullName,'EXPENSE_RECORDED','expense',id,'Recorded operating expense: '+record.category+', amount '+record.amount);
+  })();
+  res.setHeader('Cache-Control','no-store');
+  res.status(201).json(record);
 });
 
 apiRouter.delete(
@@ -2027,17 +2013,22 @@ apiRouter.delete(
   requireAuth,
   requireRole(['admin', 'manager']),
   (req: AuthenticatedRequest, res) => {
-    const id = String(req.params.id);
-    const removed = db.transaction(() => {
-      const expense = db.prepare('SELECT amount, category FROM expenses WHERE id = ?').get(id) as { amount: number; category: string } | undefined;
-      if (!expense) return false;
-      db.prepare('DELETE FROM expenses WHERE id = ?').run(id);
-      writeAuditLog(req.authUser!.id, req.authUser!.fullName, 'EXPENSE_DELETED', 'expense', id,
-        `Deleted expense: ${expense.category}, amount ${expense.amount}`);
-      return true;
+    const id=String(req.params.id), actor=req.authUser!, reason=req.body?.reason;
+    if(typeof reason!=='string'||!reason.trim()||reason.trim().length>500)
+      return res.status(400).json({error:'A void reason of 1–500 characters is required.'});
+    const result=db.transaction(()=>{
+      const expense=db.prepare('SELECT amount,category,voided_at,voided_by,void_reason FROM expenses WHERE id=?').get(id) as {amount:number;category:string;voided_at:string|null;voided_by:string;void_reason:string}|undefined;
+      if(!expense)return {status:404,body:{error:'Expense not found.'}};
+      if(expense.voided_at){
+        if(expense.voided_by===actor.id&&expense.void_reason===reason.trim())return {status:200,body:{ok:true,duplicate:true}};
+        return {status:409,body:{error:'Expense already voided; original record and reason preserved.'}};
+      }
+      db.prepare('UPDATE expenses SET voided_at=?,voided_by=?,void_reason=? WHERE id=?').run(new Date().toISOString(),actor.id,reason.trim(),id);
+      writeAuditLog(actor.id,actor.fullName,'EXPENSE_VOIDED','expense',id,'Voided expense: '+expense.category+', amount '+expense.amount+'; '+reason.trim());
+      return {status:200,body:{ok:true,duplicate:false}};
     })();
-    if (!removed) return res.status(404).json({ error: 'Expense not found.' });
-    res.json({ ok: true });
+    res.setHeader('Cache-Control','no-store');
+    res.status(result.status).json(result.body);
   },
 );
 

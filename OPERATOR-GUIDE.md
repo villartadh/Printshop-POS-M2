@@ -67,3 +67,6 @@ From a locked source workspace with Node 22, run `node scripts/ledger-review.mjs
 
 ### Business review export privacy (schema 1.2.0)
 The administrator-only JSON export retains business configuration, customers, sales, stock, shifts, expenses, reversals, collections and audit records. It excludes authentication data, internal mutation request/response records, replay identities and per-user notification acknowledgment state. Those remain in the complete SQLite backup. JSON is not a restorable backup or anonymized dataset; protect it as confidential financial and personal data. The HTTP response is marked no-store. Older JSON consumers must account for the schema change.
+
+### Expense correction
+Record positive numeric amounts to centavo precision. Administrators and managers void mistakes with a reason rather than deleting the original record. Active financial reports omit voided expenses; the original amount, identity, date, void actor/time/reason and audit event remain in the database and private review export. This is a pilot correction, not an authorized fiscal adjustment. Legacy expenses deleted before this change cannot be reconstructed. If an expense submission is unconfirmed, review existing records before repeating it; create replay protection is not yet implemented.

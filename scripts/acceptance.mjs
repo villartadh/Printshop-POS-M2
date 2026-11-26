@@ -99,9 +99,9 @@ async function main(){
     assert.notEqual(restored.updatedAt,saved.updatedAt);
     assert.deepEqual(restored.branding,original.branding);
   });
-  await check('expense validation, Philippine business date and deletion audit', async () => {
+  await check('expense centavo validation, Philippine business date and immutable void audit', async () => {
     const fixture={description:'Synthetic expense',category:'other',amount:25};
-    for (const invalid of [{amount:'Infinity'},{amount:-1},{amount:0},{amount:true},{description:' '},{category:'invalid'},{vendor:42},{expenseDate:'2026-02-30'},{expenseDate:'not-a-date'}]) {
+    for (const invalid of [{amount:'Infinity'},{amount:'25'},{amount:0.001},{amount:1000000001},{amount:-1},{amount:0},{amount:true},{description:' '},{category:'invalid'},{vendor:42},{expenseDate:'2026-02-30'},{expenseDate:'not-a-date'}]) {
       await write('/expenses',{...fixture,...invalid},400);
     }
     const date=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Manila',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
@@ -110,11 +110,24 @@ async function main(){
     assert.ok([before,date()].includes(expense.expenseDate));
     assert.equal(expense.amount,25);
     assert.ok((await state()).expenses.some(e=>e.id===expense.id));
-    await write('/expenses/'+expense.id,undefined,200,'DELETE');
-    await write('/expenses/'+expense.id,undefined,404,'DELETE');
+    await write('/expenses/'+expense.id,{},400,'DELETE');
+    const reason='Synthetic duplicate invoice correction';
+    assert.equal((await write('/expenses/'+expense.id,{reason},200,'DELETE')).duplicate,false);
+    assert.equal((await write('/expenses/'+expense.id,{reason},200,'DELETE')).duplicate,true);
+    await write('/expenses/'+expense.id,{reason:'different reason'},409,'DELETE');
     const data=await state();
     assert.ok(!data.expenses.some(e=>e.id===expense.id));
-    assert.ok(data.auditLogs.some(log=>log.entityId===expense.id&&log.action==='EXPENSE_DELETED'));
+    assert.equal(data.auditLogs.filter(log=>log.entityId===expense.id&&log.action==='EXPENSE_VOIDED').length,1);
+    assert.ok(data.auditLogs.some(log=>log.entityId===expense.id&&log.action==='EXPENSE_RECORDED'));
+    const report=verifyResponse(await request('/api/reports/finance?from='+expense.expenseDate+'&to='+expense.expenseDate,{auth:true}),200);
+    assert.ok(!report.expenses.some(e=>e.id===expense.id));
+    const db=new DatabaseSync(path.join(sandbox,'data','printshop-pos.db'),{readOnly:true});
+    try{
+      const row=db.prepare('SELECT * FROM expenses WHERE id=?').get(expense.id);
+      assert.equal(row.amount,25);assert.equal(row.description,fixture.description);assert.equal(row.void_reason,reason);assert.ok(row.voided_at&&row.voided_by);
+    }finally{db.close();}
+    const tiny=await write('/expenses',{...fixture,amount:0.01});assert.equal(tiny.amount,0.01);
+    await write('/expenses/'+tiny.id,{reason},200,'DELETE');
   });
   await check('synthetic catalog and customer setup', async () => {
     const category = await write('/categories',{name:'Acceptance Services'});

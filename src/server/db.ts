@@ -316,6 +316,10 @@ const requiredTriggers=['inventory_alert_insert','inventory_alert_transition'];
     }
   };
 
+  // Additive migration: preserve all existing expense rows, including legacy backups.
+  ensureColumn('expenses', 'voided_at', 'TEXT');
+  ensureColumn('expenses', 'voided_by', "TEXT NOT NULL DEFAULT ''");
+  ensureColumn('expenses', 'void_reason', "TEXT NOT NULL DEFAULT ''");
   ensureColumn('transactions', 'receipt_snapshot_json', 'TEXT');
   ensureColumn('inventory_items', 'barcode', "TEXT NOT NULL DEFAULT ''");
   ensureColumn('inventory_items', 'category_id', "TEXT NOT NULL DEFAULT ''");

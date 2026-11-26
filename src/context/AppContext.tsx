@@ -204,7 +204,7 @@ interface AppContextValue {
   createCustomer: (customer: Partial<Customer>) => Promise<Customer>;
   collectCustomerBalance: (record: PendingBalanceCollection) => Promise<void>;
   createExpense: (expense: Partial<ExpenseRecord>) => Promise<void>;
-  deleteExpense: (id: string) => Promise<void>;
+  deleteExpense: (id: string, reason: string) => Promise<void>;
   startShift: (openingCash: number) => Promise<void>;
   recordCashMovement: (record:PendingDrawerMovement) => Promise<void>;
   closeShift: (shiftId: string, actualCash: number, reconciliationNote: string) => Promise<void>;
@@ -950,10 +950,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     notify('Expense recorded.', 'success');
   };
 
-  const deleteExpense = async (id: string) => {
-    await apiRequest(`/api/expenses/${id}`, { method: 'DELETE' });
+  const deleteExpense = async (id: string, reason: string) => {
+    await apiRequest(`/api/expenses/${encodeURIComponent(id)}`, { method: 'DELETE', body: JSON.stringify({reason}) });
     setExpenses((prev) => prev.filter((e) => e.id !== id));
-    notify('Expense removed.', 'info');
+    notify('Expense voided; original record retained.', 'info');
   };
 
   const startShift = async (openingCash: number) => {
