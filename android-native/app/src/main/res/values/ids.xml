@@ -70,4 +70,9 @@
     <item name="cashier_inventory_back" type="id"/>
     <item name="cashier_inventory_apply" type="id"/>
     <item name="cashier_inventory_cancel" type="id"/>
+    <item name="cashier_manage_staff" type="id"/>
+    <item name="cashier_staff_refresh" type="id"/>
+    <item name="cashier_disable_reason" type="id"/>
+    <item name="cashier_disable_pass" type="id"/>
+    <item name="cashier_disable_confirm" type="id"/>
 </resources>

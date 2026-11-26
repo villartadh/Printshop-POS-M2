@@ -120,14 +120,36 @@ final class CashierJournal {
         if(db.update("cashier_sessions",v,"token_hash=? AND revoked_ms IS NULL",new String[]{CashierSecurity.tokenHash(token)})!=1)
             throw new IllegalStateException("Session changed");
     }
-    static void disableCashier(SQLiteDatabase db,Principal owner,String id){
-        if(owner.role!=CashierSecurity.Role.OWNER)throw new IllegalStateException("Owner authorization required");
+    static final class StaffSummary {
+        final String id,username,disableReason;
+        final long revision;
+        final boolean active,openShift;
+        StaffSummary(String id,String name,long rev,boolean active,boolean openShift,String reason){
+            this.id=id;username=name;revision=rev;this.active=active;this.openShift=openShift;disableReason=reason;
+        }
+    }
+    /** No passwords, hashes, salts or tokens are returned to the owner UI. */
+    static java.util.List<StaffSummary> staff(SQLiteDatabase db,Principal owner){
+        CashierSecurity.requireOwner(owner.role);
+        java.util.List<StaffSummary> rows=new java.util.ArrayList<>();
+        try(Cursor c=db.rawQuery("SELECT a.id,a.username,a.revision,a.active,EXISTS(SELECT 1 FROM cashier_shifts s WHERE s.operator_id=a.id AND s.state='OPEN'),e.reason FROM cashier_accounts a LEFT JOIN cashier_disable_events e ON e.account_id=a.id WHERE a.role='CASHIER' ORDER BY a.active DESC,a.username,a.id",null)){
+            while(c.moveToNext())rows.add(new StaffSummary(c.getString(0),c.getString(1),c.getLong(2),c.getInt(3)==1,c.getInt(4)==1,c.isNull(5)?null:c.getString(5)));
+        }
+        return rows;
+    }
+    /** Session and reauthentication required in the transaction; failed proof persists lockout. */
+    static boolean disableCashier(SQLiteDatabase db,Principal owner,String id,long expectedRevision,char[] current,String reason,long now){
+        CashierSecurity.requireOwner(owner.role);
+        String note=StockMath.reason(reason);
         Account a=account(db,"id",id);
         if(a==null||!a.active||a.principal.role!=CashierSecurity.Role.CASHIER)throw new IllegalStateException("Active cashier required");
-        if(exists(db,"SELECT 1 FROM cashier_shifts WHERE operator_id=? AND state='OPEN'",new String[]{id}))
+        if(a.principal.revision!=expectedRevision)throw new IllegalStateException("Cashier account changed; reload before disabling");
+        if(exists(db,"SELECT 1 FROM cashier_shifts WHERE operator_id=? AND state='OPEN'",new String[]{id})||
+            exists(db,"SELECT 1 FROM cashier_shift_checkouts l JOIN checkout_requests r ON r.request_id=l.request_id WHERE l.operator_id=? AND r.state='PENDING'",new String[]{id}))
             throw new IllegalStateException("Close the cashier shift before disabling the account");
-        ContentValues v=new ContentValues();v.put("active",0);v.put("revision",Math.addExact(a.principal.revision,1));
-        if(db.update("cashier_accounts",v,"id=? AND active=1",new String[]{id})!=1)throw new IllegalStateException("Account changed");
+        if(!confirmCredential(db,account(db,"id",owner.id),owner,current,now))return false;
+        StaffJournal.disable(db,owner,a.principal,note,now);
+        return true;
     }
 
     /** Verify the active operator's current credential; denial is returned to commit lockout state.

@@ -119,7 +119,9 @@ public final class CashierPreviewActivity extends Activity {
             case "Insufficient stock or quantity limit exceeded.":return "Insufficient training stock.";
             case "Username unavailable":return "Training username unavailable.";
             case "Credential confirmation denied":return "Credential confirmation denied. Check your current synthetic passphrase or wait for lockout.";
-            case "Active cashier required":return "Select an active training cashier. The owner account cannot be reset.";
+            case "Active cashier required":return "Select an active training cashier. The owner account is protected.";
+            case "Close the cashier shift before disabling the account":return "Close the cashier's open shift and resolve pending checkouts before disabling.";
+            case "Cashier account changed; reload before disabling":return message;
             case "Choose a different synthetic passphrase":return message;
             case "Use 3–32 letters, digits, dots, underscores or hyphens":return message;
             case "Choose a password with 12–128 characters":return message;
@@ -250,6 +252,7 @@ public final class CashierPreviewActivity extends Activity {
         button("Change my training passphrase",R.id.cashier_change_pass,()->showCredentialChange(false));
         if(d.actor.role==CashierSecurity.Role.OWNER){
             button("Create training cashier",R.id.cashier_add_staff,this::showStaff);
+            button("Manage training cashiers",R.id.cashier_manage_staff,this::showManageStaff);
             button("Training inventory",R.id.cashier_inventory,this::showInventory);
             button("Reset training cashier passphrase",R.id.cashier_reset_pass,()->showCredentialChange(true));
         }
@@ -262,6 +265,38 @@ public final class CashierPreviewActivity extends Activity {
             String user=name.getText().toString();char[] pass=takePassword(secret);
             if(!submit(()->{try{return store.createFixtureCashier(session(),user,pass);}finally{Arrays.fill(pass,'\0');}},v->refreshDashboard()))Arrays.fill(pass,'\0');
         });back();
+    }
+
+    private void showManageStaff(){
+        submit(()->store.authorizedFixtureStaff(session()),v->{
+            mode="manage-staff";screen("Manage training cashiers","Owner-only access. Disabled accounts remain in the historical audit; no training records are deleted.");
+            @SuppressWarnings("unchecked") List<CashierJournal.StaffSummary> staff=(List<CashierJournal.StaffSummary>)v;
+            if(staff.isEmpty())label("No training cashiers");
+            for(CashierJournal.StaffSummary person:staff){
+                label(person.username+" · "+(!person.active?"Disabled":person.openShift?"Open shift — cannot disable":"Active"));
+                if(person.active&&!person.openShift)button("Disable "+person.username,0,()->showDisableStaff(person));
+                if(!person.active)label(person.disableReason==null?"Legacy disabled account — no v9 disable event":"Reason: "+person.disableReason);
+            }
+            button("Refresh cashier list",R.id.cashier_staff_refresh,this::showManageStaff);
+            back();
+        });
+    }
+    private void showDisableStaff(CashierJournal.StaffSummary target){
+        mode="disable-staff";
+        screen("Confirm permanent training disable","Account: "+target.username+". This prevents all future sign-ins, revokes existing sessions and preserves all existing shifts, receipts and audit records. There is no reactivation in this training version.");
+        EditText reason=field("Synthetic reason (do not include private information)",R.id.cashier_disable_reason,InputType.TYPE_CLASS_TEXT,160,null);
+        EditText password=credentialField("Current owner synthetic passphrase",R.id.cashier_disable_pass);
+        button("Permanently disable training cashier",R.id.cashier_disable_confirm,()->{
+            String note=reason.getText().toString();char[] proof=takePassword(password);
+            if(!submit(()->{
+                try{store.disableFixtureCashier(session(),target.id,target.revision,proof,note);return null;}
+                finally{Arrays.fill(proof,'\0');}
+            },v->{
+                mode="staff-disabled";screen("Training cashier disabled",target.username+" cannot sign in. Historical records remain intact.");
+                button("Return to cashier management",R.id.cashier_staff_refresh,this::showManageStaff);back();
+            }))Arrays.fill(proof,'\0');
+        });
+        button("Return to cashier management",R.id.cashier_staff_refresh,this::showManageStaff);back();
     }
 
     private void showInventory(){
