@@ -321,6 +321,21 @@ async function main(){
     assert.equal((await state()).inventory.find(i=>i.id===costItem.id).quantityOnHand,160);
     verifyResponse(await request('/api/transactions/'+paid.id+'/refund',
       {method:'POST',body:{reason:'Forbidden'},headers}),403);
+    const saved=(await write('/transactions',makeOrder('held',0))).transaction;
+    verifyResponse(await request('/api/transactions/'+saved.id+'/held',{method:'DELETE',headers}),403);
+    assert.ok((await state()).transactions.some(t=>t.id===saved.id));
+    await write('/transactions/'+saved.id+'/held',undefined,200,'DELETE');
+    assert.ok((await state()).auditLogs.some(a=>a.action==='HELD_ORDER_DELETED'&&a.entityId===saved.id));
+    await write('/transactions/'+paid.id+'/held',undefined,409,'DELETE');
+    const customerUrl='/api/customers';
+    for(const body of [{name:'Forbidden VIP',group:'vip'},{name:'Forbidden Discount',discountPercent:50}])verifyResponse(await request(customerUrl,{method:'POST',headers,body}),403);
+    for(const body of [{name:'Invalid Group',group:'bad'},{name:'Invalid Discount',discountPercent:101},{name:'Invalid Discount Type',discountPercent:'10'},{name:'Invalid Points',loyaltyPoints:100},{name:123}])await write('/customers',body,400);
+    const regular=verifyResponse(await request(customerUrl,{method:'POST',headers,body:{name:'Cashier Regular Customer'}}),201);
+    assert.equal(regular.group,'regular');assert.equal(regular.discountPercent,0);assert.equal(regular.loyaltyPoints,0);
+    const privileged=await write('/customers',{name:'Manager Approved Customer',group:'vip',discountPercent:10});
+    assert.equal(privileged.discountPercent,10);
+    assert.deepEqual(userRows.filter(u=>u.id!==cashier.user.id).map(u=>u.email),userRows.filter(u=>u.id!==cashier.user.id).map(()=>''));
+    assert.deepEqual(verifyResponse(await request('/api/bootstrap',{headers}),200).auditLogs,[]);
   });
   await check('complete financial history beyond bootstrap caps and Manila midnight boundary',async()=>{
     const db=new DatabaseSync(path.join(sandbox,'data','printshop-pos.db'));

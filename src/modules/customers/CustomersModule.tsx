@@ -31,6 +31,7 @@ export const CustomersModule: React.FC = () => {
   const [collectionError,setCollectionError]=useState('');
   const paymentLock=useRef(false);
   const owner=session?.user.id;
+  const canSetDiscount=session?.user.role==='admin'||session?.user.role==='manager';
   useEffect(()=>{
     let cancelled=false;
     setStorageReady(false);setPending(null);setCollectionError('');
@@ -81,8 +82,8 @@ export const CustomersModule: React.FC = () => {
       phone,
       email,
       address,
-      group,
-      discountPercent: Number(discountPercent) || 0,
+      group:canSetDiscount?group:'regular',
+      discountPercent:canSetDiscount?Number(discountPercent)||0:0,
       notes,
     });
     setName('');
@@ -310,7 +311,8 @@ export const CustomersModule: React.FC = () => {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Select
               label="Customer Group"
-              value={group}
+              disabled={!canSetDiscount}
+              value={canSetDiscount?group:"regular"}
               onChange={(e) => setGroup(e.target.value as CustomerGroup)}
               options={[
                 { value: 'regular', label: 'Regular' },
@@ -322,10 +324,11 @@ export const CustomersModule: React.FC = () => {
             />
             <Input
               label="Default Discount (%)"
+              disabled={!canSetDiscount}
               type="number"
               min="0"
               max="100"
-              value={discountPercent}
+              value={canSetDiscount?discountPercent:"0"}
               onChange={(e) => setDiscountPercent(e.target.value)}
             />
           </div>

@@ -2,6 +2,9 @@
 
 Target: v0.9.6 consolidated software pilot, not a production release. Preserve main, baseline/v0.9.5, and the original Printshop-POS repo. Use develop only; inspect current head and both CI runs before advancing. Make cohesive atomic changes, with tests and evidence; never bypass failing gates.
 
+## Verified at c375ca7
+112 regression tests, 32 API scenarios, 14 browser workflows; CI 45728179085 and 45728172352 passed. Drawer recovery accepted. Targeted authorization fixes submitted: cashier held-order deletion ownership, deletion audit, validated customer data and privileged discounts, limited staff email and audit log exposure. Shared order recall remains available across authorized terminals. Full role/data minimization and backup completeness still require review.
+
 ## Verified at 58602b0
 112 regression tests, 32 API scenarios, 13 browser workflows; CI 45727403146 and 45727394780 passed. Centavo precision accepted. Durable cash drawer movement references, atomic audit and recovery UI submitted; new browser recovery test. Pending local adjustment blocks same-operator drawer changes and closure; other terminals remain independent. Next: security/authorization and backup completeness audit.
 

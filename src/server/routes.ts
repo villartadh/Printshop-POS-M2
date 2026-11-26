@@ -507,7 +507,7 @@ apiRouter.patch('/auth/users/:id', requireAuth, requireRole(['admin']), (req: Au
 
 // ---------- BOOTSTRAP ----------
 
-apiRouter.get('/bootstrap', requireAuth, (_req, res) => {
+apiRouter.get('/bootstrap', requireAuth, (req:AuthenticatedRequest, res) => {
   const settingsRow = db.prepare('SELECT value_json FROM app_settings WHERE key = ?').get('app_settings') as
     | { value_json: string }
     | undefined;
@@ -656,8 +656,8 @@ apiRouter.get('/bootstrap', requireAuth, (_req, res) => {
     printJobs,
     expenses,
     shifts,
-    users,
-    auditLogs,
+    users:req.authUser!.role==='admin'?users:users.map(u=>u.id===req.authUser!.id?u:{...u,email:''}),
+    auditLogs:['admin','manager'].includes(req.authUser!.role)?auditLogs:[],
     serverTime: new Date().toISOString(),
   });
 });
@@ -1120,8 +1120,18 @@ apiRouter.post('/transactions', requireAuth, (req: AuthenticatedRequest, res) =>
 });
 
 apiRouter.delete('/transactions/:id/held', requireAuth, (req: AuthenticatedRequest, res) => {
-  db.prepare("DELETE FROM transactions WHERE id = ? AND type = 'held' AND NOT EXISTS (SELECT 1 FROM order_conversions WHERE source_id=transactions.id)").run(String(req.params.id));
-  res.json({ ok: true });
+  const actor=req.authUser!,id=String(req.params.id);
+  db.transaction(()=>{
+    const fail=(message:string,statusCode:number):never=>{throw Object.assign(new Error(message),{statusCode});};
+    const record=db.prepare("SELECT cashier_id,type,receipt_number FROM transactions WHERE id=?").get(id) as {cashier_id:string;type:string;receipt_number:string}|undefined;
+    if(!record)return;
+    if(record.type!=='held')return fail('Only held orders may be deleted.',409);
+    if(record.cashier_id!==actor.id&&!['admin','manager'].includes(actor.role))return fail('Only the original cashier or a manager may delete this held order.',403);
+    if(db.prepare('SELECT 1 FROM order_conversions WHERE source_id=?').get(id))return fail('Converted orders cannot be deleted.',409);
+    db.prepare('DELETE FROM transactions WHERE id=?').run(id);
+    writeAuditLog(actor.id,actor.fullName,'HELD_ORDER_DELETED','transaction',id,`Deleted held order ${record.receipt_number}`);
+  })();
+  res.json({ok:true});
 });
 
 for (const action of ['void', 'refund'] as const) {
@@ -1902,10 +1912,13 @@ apiRouter.post('/inventory/:id/adjust', requireAuth, (req: AuthenticatedRequest,
 // ---------- CUSTOMERS ----------
 
 apiRouter.post('/customers', requireAuth, (req: AuthenticatedRequest, res) => {
-  const c = req.body as Partial<Customer>;
-  if (!c.name || !String(c.name).trim()) {
-    return res.status(400).json({ error: 'Customer name is required.' });
-  }
+  const c=(req.body??{}) as Partial<Customer>;
+  if(typeof c.name!=='string'||!c.name.trim()||c.name.trim().length>200||['phone','email','address','notes'].some(k=>{
+    const value=c[k as keyof Customer];return value!==undefined&&(typeof value!=='string'||value.length>2000);
+  }))return res.status(400).json({error:'Valid customer name and contact details are required.'});
+  const group=c.group??'regular',discount=c.discountPercent??0;
+  if(!['regular','vip','corporate','student','reseller'].includes(group)||typeof discount!=='number'||!Number.isFinite(discount)||discount<0||discount>100||(c.loyaltyPoints!==undefined&&c.loyaltyPoints!==0))return res.status(400).json({error:'Invalid customer group, discount or opening loyalty points.'});
+  if(!['admin','manager'].includes(req.authUser!.role)&&(group!=='regular'||discount!==0))return res.status(403).json({error:'Only managers may assign customer groups and discounts.'});
   const id = genId('cust');
   const now = new Date().toISOString();
   db.prepare(`
@@ -1919,9 +1932,9 @@ apiRouter.post('/customers', requireAuth, (req: AuthenticatedRequest, res) => {
     c.phone || '',
     c.email || '',
     c.address || '',
-    c.group || 'regular',
-    Number(c.discountPercent) || 0,
-    Number(c.loyaltyPoints) || 0,
+    group,
+    discount,
+    0,
     c.notes || '',
     now,
   );
@@ -1931,9 +1944,9 @@ apiRouter.post('/customers', requireAuth, (req: AuthenticatedRequest, res) => {
     phone: c.phone || '',
     email: c.email || '',
     address: c.address || '',
-    group: c.group || 'regular',
-    discountPercent: Number(c.discountPercent) || 0,
-    loyaltyPoints: Number(c.loyaltyPoints) || 0,
+    group,
+    discountPercent:discount,
+    loyaltyPoints:0,
     outstandingBalance: 0,
     totalSpent: 0,
     notes: c.notes || '',
