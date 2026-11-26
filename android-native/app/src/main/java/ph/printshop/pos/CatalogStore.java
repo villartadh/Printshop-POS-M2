@@ -11,7 +11,7 @@ import java.util.List;
 /** App-private preview catalog. No cross-platform import or sales. */
 public final class CatalogStore extends SQLiteOpenHelper {
     public CatalogStore(Context context) { this(context, "preview-catalog.db"); }
-    CatalogStore(Context context, String filename) { super(context, filename, null, 3); }
+    CatalogStore(Context context, String filename) { super(context, filename, null, 4); }
     @Override public void onConfigure(SQLiteDatabase db) {
         super.onConfigure(db);
         db.setForeignKeyConstraintsEnabled(true);
@@ -21,6 +21,7 @@ public final class CatalogStore extends SQLiteOpenHelper {
         db.execSQL("CREATE TABLE catalog_history (id TEXT NOT NULL REFERENCES catalog(id), revision INTEGER NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL, unit TEXT NOT NULL, centavos INTEGER NOT NULL, archived INTEGER NOT NULL, action TEXT NOT NULL CHECK(action IN ('CREATE','EDIT','ARCHIVE','RESTORE')), PRIMARY KEY(id,revision))");
         createStockLedger(db);
         createRecipeSchema(db);
+        createPricingSchema(db);
     }
     private static void createStockLedger(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE stock_movements (request_id TEXT PRIMARY KEY NOT NULL, material_id TEXT NOT NULL REFERENCES catalog(id), catalog_revision INTEGER NOT NULL CHECK(catalog_revision>=1), stock_revision INTEGER NOT NULL CHECK(stock_revision>=1), unit TEXT NOT NULL, reason TEXT NOT NULL, delta INTEGER NOT NULL CHECK(delta BETWEEN -999999999999 AND 999999999999 AND delta<>0), before_quantity INTEGER NOT NULL CHECK(before_quantity BETWEEN 0 AND 999999999999), after_quantity INTEGER NOT NULL CHECK(after_quantity BETWEEN 0 AND 999999999999 AND after_quantity=before_quantity+delta), created_ms INTEGER NOT NULL, UNIQUE(material_id,stock_revision))");
@@ -29,12 +30,65 @@ public final class CatalogStore extends SQLiteOpenHelper {
         db.execSQL("CREATE TABLE service_materials (service_id TEXT NOT NULL REFERENCES catalog(id), material_id TEXT NOT NULL REFERENCES catalog(id), quantity_milli INTEGER NOT NULL CHECK(quantity_milli BETWEEN 1 AND 999999999999), unit TEXT NOT NULL, PRIMARY KEY(service_id,material_id))");
         db.execSQL("CREATE TABLE recipe_history (service_id TEXT NOT NULL REFERENCES catalog(id), revision INTEGER NOT NULL CHECK(revision>=1), material_id TEXT NOT NULL REFERENCES catalog(id), quantity_milli INTEGER NOT NULL CHECK(quantity_milli BETWEEN 0 AND 999999999999), unit TEXT NOT NULL, material_revision INTEGER NOT NULL, service_revision INTEGER NOT NULL, created_ms INTEGER NOT NULL, PRIMARY KEY(service_id,revision))");
     }
+    private static void createPricingSchema(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE pricing_profile_versions (service_id TEXT NOT NULL REFERENCES catalog(id), revision INTEGER NOT NULL CHECK(revision>=1), method TEXT NOT NULL CHECK(method IN ('FIXED','PER_UNIT','PER_PAGE','PER_COPY','PER_SHEET','PER_SQFT','PER_LINEAR_FT','PER_METER','TIERED_BULK')), pages_copies INTEGER NOT NULL CHECK(pages_copies IN (0,1) AND (pages_copies=0 OR method IN ('PER_PAGE','PER_COPY','PER_SHEET'))), service_revision INTEGER NOT NULL CHECK(service_revision>=1), catalog_unit TEXT NOT NULL, created_ms INTEGER NOT NULL, PRIMARY KEY(service_id,revision))");
+        db.execSQL("CREATE TABLE pricing_tier_versions (service_id TEXT NOT NULL, profile_revision INTEGER NOT NULL, threshold_hundredths INTEGER NOT NULL CHECK(threshold_hundredths BETWEEN 1 AND 10000000), rate_centavos INTEGER NOT NULL CHECK(rate_centavos BETWEEN 0 AND 99999999999), PRIMARY KEY(service_id,profile_revision,threshold_hundredths), FOREIGN KEY(service_id,profile_revision) REFERENCES pricing_profile_versions(service_id,revision))");
+    }
     @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-        if (newVersion == 3 && (oldVersion == 1 || oldVersion == 2)) {
-            if (oldVersion == 1) createStockLedger(db);
-            createRecipeSchema(db); return;
+        if (newVersion == 4 && oldVersion >= 1 && oldVersion <= 3) {
+            if (oldVersion < 2) createStockLedger(db);
+            if (oldVersion < 3) createRecipeSchema(db);
+            createPricingSchema(db); return;
         }
         throw new IllegalStateException("No migration path; existing catalog preserved");
+    }
+    private static PricingProfile readPricing(SQLiteDatabase db,String serviceId) {
+        long revision;
+        PricingMath.Method method;
+        boolean pages;
+        try (Cursor c=db.query("pricing_profile_versions",new String[]{"revision","method","pages_copies"},"service_id=?",new String[]{serviceId},null,null,"revision DESC","1")) {
+            if(!c.moveToFirst())return PricingProfile.defaults();
+            revision=c.getLong(0);method=PricingMath.Method.valueOf(c.getString(1));pages=c.getInt(2)==1;
+        }
+        List<PricingMath.Tier> tiers=new ArrayList<>();
+        try(Cursor c=db.query("pricing_tier_versions",new String[]{"threshold_hundredths","rate_centavos"},"service_id=? AND profile_revision=?",new String[]{serviceId,Long.toString(revision)},null,null,"threshold_hundredths")) {
+            while(c.moveToNext())tiers.add(new PricingMath.Tier(c.getLong(0),c.getLong(1)));
+        }
+        return new PricingProfile(revision,method,pages,tiers);
+    }
+    /** Immutable snapshots make an earlier configured rate reproducible without changing catalog price history. */
+    public PricingProfile pricing(String serviceId) {
+        SQLiteDatabase db=getReadableDatabase();
+        if(read(db,serviceId).kind!=CatalogEntry.Kind.SERVICE)throw new IllegalArgumentException("Not a service");
+        return readPricing(db,serviceId);
+    }
+    public PricingProfile savePricing(String serviceId,long serviceRevision,long expectedPricingRevision,
+                                      PricingMath.Method method,boolean pagesAndCopies,List<PricingMath.Tier> tiers) {
+        PricingProfile next=new PricingProfile(Math.addExact(expectedPricingRevision,1),method,pagesAndCopies,tiers);
+        if(expectedPricingRevision<0)throw new IllegalArgumentException("Invalid expected pricing revision");
+        SQLiteDatabase db=getWritableDatabase();
+        db.beginTransaction();
+        try {
+            CatalogEntry service=read(db,serviceId);
+            if(service.kind!=CatalogEntry.Kind.SERVICE||service.archived)throw new IllegalStateException("Select an active service");
+            PricingProfile prior=readPricing(db,serviceId);
+            if(service.revision!=serviceRevision||prior.revision!=expectedPricingRevision)
+                throw new IllegalStateException("Service or pricing changed; reload before editing");
+            if(prior.sameConfiguration(next))throw new IllegalArgumentException("No pricing change");
+            ContentValues profile=new ContentValues();
+            profile.put("service_id",serviceId);profile.put("revision",next.revision);
+            profile.put("method",next.method.name());profile.put("pages_copies",next.pagesAndCopies?1:0);
+            profile.put("service_revision",serviceRevision);profile.put("catalog_unit",service.unit);
+            profile.put("created_ms",System.currentTimeMillis());
+            db.insertOrThrow("pricing_profile_versions",null,profile);
+            for(PricingMath.Tier tier:next.tiers){
+                ContentValues row=new ContentValues();
+                row.put("service_id",serviceId);row.put("profile_revision",next.revision);
+                row.put("threshold_hundredths",tier.minQuantityHundredths);row.put("rate_centavos",tier.rateCentavos);
+                db.insertOrThrow("pricing_tier_versions",null,row);
+            }
+            db.setTransactionSuccessful();return next;
+        } finally {db.endTransaction();}
     }
     public CatalogEntry create(CatalogEntry.Kind kind, String name, String unit, String price) {
         CatalogEntry entry = CatalogEntry.create(kind, name, unit, price);
@@ -68,6 +122,9 @@ public final class CatalogStore extends SQLiteOpenHelper {
                 if (next.archived && hasReference(db,"service_materials",id)) throw new IllegalStateException("Remove material from linked service recipes before archiving");
                 if (next.archived && stock.quantity != 0) throw new IllegalStateException("Reduce material stock to zero with a reason before archiving");
             }
+            if (current.kind == CatalogEntry.Kind.SERVICE && !current.unit.equals(next.unit)
+                    && (recipeRevision(db,id)>0 || readPricing(db,id).revision>0))
+                throw new IllegalStateException("Service unit cannot change after material or pricing history exists; create a new service");
             int rows = db.update("catalog", values(next), "id=? AND revision=?", new String[]{id, Long.toString(expectedRevision)});
             if (rows != 1) throw new IllegalStateException("Catalog entry changed; reload before editing");
             history(db, next, action);
