@@ -47,7 +47,7 @@ public final class PricingProfile {
         }
         return true;
     }
-    /** Until advanced quote inputs are connected, prevent silently quoting with the wrong billing basis. */
+    /** Whether the quote needs advanced method/quantity controls and an explicit recipe usage basis. */
     public boolean needsAdvancedQuote() {
         return (method != PricingMath.Method.PER_UNIT && method != PricingMath.Method.FIXED) ||
             pagesAndCopies || !tiers.isEmpty();
