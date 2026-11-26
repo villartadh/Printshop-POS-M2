@@ -1,5 +1,7 @@
 # Printshop POS 0.9.7 expanded acceptance candidate
 
+**Continuing development? Start with [HANDOFF-README.md](HANDOFF-README.md), then read the latest [development queue checkpoint](DEVELOPMENT_QUEUE.md).**
+
 Use the separately staged Windows x64 distribution for installation and the [operator guide](OPERATOR-GUIDE.md) for setup, backups and device checks. The software acceptance checks use synthetic data. Windows, actual devices, a physical printer and BIR review require independent acceptance.
 
 On a source checkout, use Node 22.12+ in the 22 series and run `node validate.mjs` for the locked installation, regression suite, type check, production build and API acceptance. Use `npm run acceptance:https` with OpenSSL, and `npm run acceptance:browser` with Playwright Chromium or an explicit `CHROMIUM_PATH`.
