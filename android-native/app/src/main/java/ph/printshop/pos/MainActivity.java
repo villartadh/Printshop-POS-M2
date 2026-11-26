@@ -34,14 +34,14 @@ public final class MainActivity extends Activity {
         label(root, "Native Android foundation · offline quote calculator", 16);
         label(root, "PREVIEW ONLY — NOT A SALE OR TAX DOCUMENT", 14);
         Button catalog = new Button(this);
-        catalog.setId(1004);
+        catalog.setId(R.id.open_catalog);
         catalog.setText("Open service and material catalog");
         catalog.setMinHeight(dp(48));
         root.addView(catalog);
         catalog.setOnClickListener(v -> startActivityForResult(new Intent(this, CatalogActivity.class), 41));
-        price = field(root, "Unit price (PHP)", 1001, true);
-        quantity = field(root, "Quantity", 1002, false);
-        received = field(root, "Amount received (optional)", 1003, true);
+        price = field(root, "Unit price (PHP)", R.id.quote_price, true);
+        quantity = field(root, "Quantity", R.id.quote_quantity, false);
+        received = field(root, "Amount received (optional)", R.id.quote_received, true);
         total = label(root, "Total —", 24);
         change = label(root, "Change —", 20);
         TextWatcher watcher = new TextWatcher() {
