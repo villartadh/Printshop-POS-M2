@@ -56,8 +56,9 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "material costing"; verifyMaterials();
             phase = "recipe and quote screen"; verifyRecipeScreen(screen);
             phase = "pricing store migration"; verifyPricingStore();
-            phase = "pricing settings screen"; verifyPricingScreen(screen);
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\n");
+            phase = "pricing settings and document quote"; verifyPricingScreen(screen);
+            phase = "measured quote"; verifyMeasuredQuote(screen);
+            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\n");
             result = Activity.RESULT_OK;
         } catch (Throwable error) {
             evidence.putString("stream", failureDetails(phase, error));
@@ -395,6 +396,17 @@ public final class NativeQuoteSmoke extends Instrumentation {
     private static void require(boolean ok, String description) {
         if (!ok) throw new AssertionError(description);
     }
+    private void awaitText(Activity activity,String expected,String failure) {
+        long deadline=android.os.SystemClock.elapsedRealtime()+10000;
+        java.util.concurrent.atomic.AtomicBoolean found=new java.util.concurrent.atomic.AtomicBoolean();
+        do{
+            waitForIdleSync();
+            runOnMainChecked(()->found.set(hasText(activity.getWindow().getDecorView(),expected)));
+            if(found.get())return;
+            android.os.SystemClock.sleep(50);
+        }while(android.os.SystemClock.elapsedRealtime()<deadline);
+        throw new AssertionError(failure+": "+expected);
+    }
     private void verifyPricingStore() {
         android.content.Context context=getTargetContext();
         String filename="pricing-v3-migration-"+java.util.UUID.randomUUID()+".db";
@@ -457,6 +469,9 @@ public final class NativeQuoteSmoke extends Instrumentation {
         android.content.Context context=getTargetContext();
         try(CatalogStore store=new CatalogStore(context)){
             CatalogEntry service=store.create(CatalogEntry.Kind.SERVICE,"Synthetic pricing configuration","page","3.00");
+            CatalogEntry paper=store.create(CatalogEntry.Kind.MATERIAL,"Synthetic pricing paper","sheet","1.99");
+            store.moveStock(java.util.UUID.randomUUID().toString(),paper.id,paper.revision,0,2500,"Synthetic receipt");
+            store.setMaterialUsage(service.id,service.revision,paper.id,paper.revision,0,500);
             Activity catalog=null,editor=null;
             ActivityMonitor cm=addMonitor(CatalogActivity.class.getName(),null,false);
             ActivityMonitor pm=addMonitor(PricingSettingsActivity.class.getName(),null,false);
@@ -503,27 +518,119 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 });
                 PricingProfile saved=store.pricing(service.id);
                 require(saved.revision==1&&saved.method==PricingMath.Method.PER_PAGE&&saved.pagesAndCopies&&saved.tiers.size()==1&&saved.tiers.get(0).rateCentavos==225,"editor profile not persisted");
-                runOnMainChecked(form::finish);waitForIdleSync();
+                runOnMainChecked(form::finish);
+                awaitText(shown,"Pricing: Per page · 1 tier(s)","catalog pricing summary not refreshed");
+                runOnMainChecked(shown::finish);
+                awaitText(screen,"Total — pricing settings changed; reselect service","stale legacy quote not blocked");
+                runOnMainChecked(()->((EditText)screen.findViewById(R.id.quote_price)).setText("9.00"));
+                removeMonitor(cm);cm=addMonitor(CatalogActivity.class.getName(),null,false);
+                runOnMainChecked(()->screen.findViewById(R.id.open_catalog).performClick());
+                catalog=waitForMonitorWithTimeout(cm,10000);
+                require(catalog!=null,"configured document service catalog did not reopen");
+                final Activity configured=catalog;
                 runOnMainChecked(()->{
-                    View root=shown.getWindow().getDecorView();
-                    require(hasText(root,"Pricing: Per page · 1 tier(s)"),"catalog pricing summary not refreshed");
-                    require(findText(root,"Use in quotation")==null,"advanced profile incorrectly offered legacy quote");
+                    View select=findText(configured.getWindow().getDecorView(),"Use in quotation");
+                    require(select!=null&&select.performClick(),"advanced profile selection failed");
                 });
-                runOnMainChecked(shown::finish);waitForIdleSync();
+                awaitServiceSelection(screen,"3.00",service.name);
                 runOnMainChecked(()->{
                     View root=screen.getWindow().getDecorView();
-                    require(hasText(root,"Total — advanced quotation controls pending"),"stale legacy quote not blocked");
+                    EditText pageCount=screen.findViewById(R.id.quote_pages),copyCount=screen.findViewById(R.id.quote_copies);
+                    require(pageCount.isShown()&&copyCount.isShown()&&!screen.findViewById(R.id.quote_quantity).isShown(),"incorrect document quantity controls");
+                    pageCount.setText("5");copyCount.setText("2");
+                    require(hasText(root,"Billable: 10 units · Rate: PHP 2.25 · Bulk tiers apply"),"document bulk threshold incorrect");
+                    require(hasText(root,"Total: PHP 22.50"),"document quote total incorrect");
+                    require(hasText(root,"Material cost — choose usage basis"),"material basis not explicit");
+                    ((android.widget.Spinner)screen.findViewById(R.id.quote_material_basis)).setSelection(1);
+                });
+                awaitText(screen,"Material cost: PHP 9.95 · Insufficient stock","billed document material estimate incorrect");
+                runOnMainChecked(()->((android.widget.Spinner)screen.findViewById(R.id.quote_material_basis)).setSelection(2));
+                awaitText(screen,"Material cost: PHP 1.99 · Stock sufficient","produced-copy material basis incorrect");
+                runOnMainChecked(()->{
+                    View root=screen.getWindow().getDecorView();
+                    ((EditText)screen.findViewById(R.id.quote_price)).setText("6.00");
+                    require(hasText(root,"Total: PHP 22.50"),"bulk tier not applied to edited base rate");
+                    ((EditText)screen.findViewById(R.id.quote_pages)).setText("4");
+                    require(hasText(root,"Total: PHP 48.00"),"below-tier base rate incorrect");
                     View clear=findText(root,"Clear service link");
-                    require(clear!=null&&clear.performClick(),"clear stale service unavailable");
+                    require(clear!=null&&clear.performClick(),"clear service unavailable");
                     ((EditText)screen.findViewById(R.id.quote_quantity)).setText("2");
-                    require(hasText(root,"Total: PHP 6.00"),"manual quote altered by profile");
+                    require(hasText(root,"Total: PHP 12.00"),"manual quote altered by profile");
                 });
                 require(store.get(service.id).centavos==300,"pricing settings changed the base catalog price");
+                require(store.stockBalance(paper.id).quantity==2500,"document quoting consumed material");
             }finally{
                 removeMonitor(cm);removeMonitor(pm);
                 if(editor!=null){final Activity form=editor;runOnMainChecked(form::finish);}
                 if(catalog!=null){final Activity shown=catalog;runOnMainChecked(shown::finish);}
+                if(!store.recipeBindings(service.id).isEmpty())
+                    store.setMaterialUsage(service.id,service.revision,paper.id,paper.revision,store.recipeRevision(service.id),0);
+                if(store.stockBalance(paper.id).quantity==2500)
+                    store.moveStock(java.util.UUID.randomUUID().toString(),paper.id,paper.revision,1,-2500,"Synthetic cleanup");
                 store.archive(service.id,service.revision,true);
+                if(store.stockBalance(paper.id).quantity==0)store.archive(paper.id,paper.revision,true);
+            }
+        }
+    }
+    private void verifyMeasuredQuote(Activity screen) {
+        android.content.Context context=getTargetContext();
+        try(CatalogStore store=new CatalogStore(context)){
+            CatalogEntry service=store.create(CatalogEntry.Kind.SERVICE,"Synthetic measured banner","sq ft","25.00");
+            CatalogEntry material=store.create(CatalogEntry.Kind.MATERIAL,"Synthetic banner material","sheet","10.00");
+            store.savePricing(service.id,service.revision,0,PricingMath.Method.PER_SQFT,false,java.util.Collections.emptyList());
+            store.moveStock(java.util.UUID.randomUUID().toString(),material.id,material.revision,0,1249,"Synthetic receipt");
+            store.setMaterialUsage(service.id,service.revision,material.id,material.revision,0,500);
+            Activity catalog=null;
+            ActivityMonitor cm=addMonitor(CatalogActivity.class.getName(),null,false);
+            try{
+                runOnMainChecked(()->screen.findViewById(R.id.open_catalog).performClick());
+                catalog=waitForMonitorWithTimeout(cm,10000);
+                require(catalog!=null,"measured catalog did not open");
+                final Activity shown=catalog;
+                runOnMainChecked(()->{
+                    View select=findText(shown.getWindow().getDecorView(),"Use in quotation");
+                    require(select!=null&&select.performClick(),"measured service selection failed");
+                });
+                awaitServiceSelection(screen,"25.00",service.name);
+                runOnMainChecked(()->{
+                    View root=screen.getWindow().getDecorView();
+                    EditText w=screen.findViewById(R.id.quote_width),h=screen.findViewById(R.id.quote_height);
+                    require(w.isShown()&&h.isShown()&&!screen.findViewById(R.id.quote_pages).isShown(),"dimension controls hidden");
+                    ((EditText)screen.findViewById(R.id.quote_quantity)).setText("1");
+                    w.setText("1.25");h.setText("2");
+                    require(hasText(root,"Billable: 2.5 sq ft · Rate: PHP 25.00"),"measured effective area wrong");
+                    require(hasText(root,"Total: PHP 62.50"),"measured selling price wrong");
+                    require(hasText(root,"Material cost — choose usage basis"),"measured basis not explicit");
+                    ((android.widget.Spinner)screen.findViewById(R.id.quote_material_basis)).setSelection(1);
+                });
+                awaitText(screen,"Material cost: PHP 12.50 · Insufficient stock","fractional shortage was not detected");
+                runOnMainChecked(()->((android.widget.Spinner)screen.findViewById(R.id.quote_material_basis)).setSelection(2));
+                awaitText(screen,"Material cost: PHP 5.00 · Stock sufficient","per-item measured material estimate incorrect");
+                runOnMainChecked(()->{
+                    ((android.widget.Spinner)screen.findViewById(R.id.quote_dimension_unit)).setSelection(1);
+                    ((EditText)screen.findViewById(R.id.quote_width)).setText("30");
+                    ((EditText)screen.findViewById(R.id.quote_height)).setText("12");
+                });
+                awaitText(screen,"Billable: 2.5 sq ft · Rate: PHP 25.00","inch conversion in native quote wrong");
+                runOnMainChecked(()->{
+                    View root=screen.getWindow().getDecorView();
+                    require(hasText(root,"Total: PHP 62.50"),"converted quote total wrong");
+                    ((EditText)screen.findViewById(R.id.quote_width)).setText("0");
+                    require(hasText(root,"Total — enter valid price and quantity"),"invalid dimensions accepted");
+                    require(hasText(root,"Change —"),"stale tender after invalid dimensions");
+                    View clear=findText(root,"Clear service link");
+                    require(clear!=null&&clear.performClick(),"clear measured quote unavailable");
+                });
+                require(store.stockBalance(material.id).quantity==1249&&store.get(service.id).centavos==2500,"measured quote mutated stock or price");
+            }finally{
+                removeMonitor(cm);
+                if(catalog!=null){final Activity shown=catalog;runOnMainChecked(shown::finish);}
+                if(!store.recipeBindings(service.id).isEmpty())
+                    store.setMaterialUsage(service.id,service.revision,material.id,material.revision,store.recipeRevision(service.id),0);
+                if(store.stockBalance(material.id).quantity==1249)
+                    store.moveStock(java.util.UUID.randomUUID().toString(),material.id,material.revision,1,-1249,"Synthetic cleanup");
+                store.archive(service.id,service.revision,true);
+                if(store.stockBalance(material.id).quantity==0)store.archive(material.id,material.revision,true);
             }
         }
     }
