@@ -2,6 +2,9 @@
 
 Target: v0.9.6 consolidated software pilot, not a production release. Preserve main, baseline/v0.9.5, and the original Printshop-POS repo. Use develop only; inspect current head and both CI runs before advancing. Make cohesive atomic changes, with tests and evidence; never bypass failing gates.
 
+## Upgrade acceptance at 07201d2
+Both Ubuntu jobs passed actual baseline upgrade and restore; both Windows jobs failed during server startup (CI 45731210729 and 45731205631). Suspected Node ESM absolute Windows drive-path loader resolution; convert loader to file URL and retain bounded startup stderr with sensitive lines removed. This is a harness repair, not a database migration change. Keep all original migration and restore assertions mandatory. Next: verify both OS gates, then LDC consolidation and release evidence.
+
 ## Verified at 2f6b772
 113 regression tests, 33 API scenarios, 14 browser workflows; CI 45730582869 and 45730574833 passed. Version-aware backup gate accepted. Added CI gate with pinned actual v0.9.5 server and its locked dependencies, synthetic sales, collections, inventory, legacy/current restoration, unchanged historical columns, session secret and current receipt/idempotency evidence. Uses current static build only as server startup prerequisite; tests actual baseline backend, not baseline UI. No real data. Next: resolve upgrade gate then LDC and packaging.
 

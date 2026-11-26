@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {spawn,execFileSync} from 'node:child_process';
 import {createRequire} from 'node:module';
+import {pathToFileURL} from 'node:url';
 import {randomUUID,createHash} from 'node:crypto';
 import {DatabaseSync} from 'node:sqlite';
 import {setTimeout as delay} from 'node:timers/promises';
@@ -25,10 +26,24 @@ const request=async(url,body,status=200,method=body===undefined?'GET':'POST')=>{
 };
 const start=async(source)=>{
  const require=createRequire(path.join(source,'package.json'));
- child=spawn(process.execPath,['--import',require.resolve('tsx'),path.join(source,'scripts/start.ts')],{cwd:sandbox,env:{...acceptanceEnv(port,instance),POS_DATA_DIR:data},stdio:'ignore'});
- exited=new Promise(resolve=>{child.once('exit',resolve);child.once('error',resolve);});
- for(let i=0;i<80;i++){if(child.exitCode!==null||child.signalCode!==null)throw Error('Server exited during upgrade startup');try{assertInstance(await request('/health'),instance);return;}catch{}await delay(200);}
- throw Error('Upgrade health timeout');
+ // Node's ESM --import requires a file URL for absolute Windows drive paths.
+ const loader=pathToFileURL(require.resolve('tsx')).href;
+ const stage=source===baseline?'baseline-v0.9.5':'candidate';
+ let stderr='',spawnError=null;
+ child=spawn(process.execPath,['--import',loader,path.join(source,'scripts/start.ts')],{cwd:sandbox,env:{...acceptanceEnv(port,instance),POS_DATA_DIR:data},stdio:['ignore','ignore','pipe']});
+ child.stderr.setEncoding('utf8');
+ child.stderr.on('data',chunk=>{stderr=(stderr+chunk).slice(-8192);});
+ exited=new Promise(resolve=>{child.once('close',resolve);child.once('error',error=>{spawnError=error;resolve();});});
+ const startupFailure=reason=>{
+   // Synthetic isolated fixture only. Exclude local paths and possible credential/token lines from evidence.
+   const safe=stderr.split(/\r?\n/).filter(line=>!/password|secret|authorization|bearer|token/i.test(line)).join('\n').split(sandbox).join('[sandbox]').split(root).join('[repo]').slice(-3000);
+   return Error(stage+': '+reason+(safe?'\n'+safe:''));
+ };
+ for(let i=0;i<80;i++){
+   if(spawnError||child.exitCode!==null||child.signalCode!==null){await exited;throw startupFailure(spawnError?.code||'Server exited during upgrade startup ('+child.exitCode+')');}
+   try{assertInstance(await request('/health'),instance);return;}catch{}await delay(200);
+ }
+ throw startupFailure('Upgrade health timeout');
 };
 const stop=async()=>{if(!child)return;const p=child;if(p.exitCode===null&&p.signalCode===null)p.kill();const timer=setTimeout(()=>p.kill('SIGKILL'),5000);try{await exited;}finally{clearTimeout(timer);child=null;}};
 const inspect=(file,fn)=>{const db=new DatabaseSync(file,{readOnly:true});try{return fn(db);}finally{db.close();}};
