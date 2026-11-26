@@ -1,8 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
-import net from 'node:net';
-import {verifyRelease} from '../install.mjs';
+import {verifyWindowsPackage,requireFreePort} from './native-preflight.mjs';
 import path from 'node:path';
 import {execFileSync,spawn} from 'node:child_process';
 import {once} from 'node:events';
@@ -23,13 +22,8 @@ const version=root=>JSON.parse(fs.readFileSync(path.join(root,'RELEASE-MANIFEST.
 const oldVersion=version(oldRelease), newVersion=version(newRelease);
 const pairs=new Set(['0.9.4/0.9.5','0.9.5/0.9.6','0.9.5/0.9.7','0.9.6/0.9.7']);
 if(!pairs.has(oldVersion+'/'+newVersion))throw Error('Unsupported baseline/candidate pair. Use 0.9.5 or 0.9.6 with 0.9.7.');
-for(const root of [oldRelease,newRelease]) {
-  const manifest=JSON.parse(fs.readFileSync(path.join(root,'RELEASE-MANIFEST.json'),'utf8'));
-  verifyRelease(root,manifest);
-  for(const file of ['runtime/node.exe','INSTALL.cmd','RUN-POS.cmd','STOP-POS.cmd','UNINSTALL.cmd','SUPPORT.cmd']) {
-    if(!Object.hasOwn(manifest.files,file)) throw Error('Package missing manifest-covered '+file);
-  }
-}
+verifyWindowsPackage(oldRelease,[oldVersion]);
+verifyWindowsPackage(newRelease,[newVersion]);
 fs.mkdirSync(evidence);
 const sandbox=fs.mkdtempSync(path.join(os.tmpdir(),'pos-native-'));
 const local=path.join(sandbox,'LocalAppData');
@@ -64,14 +58,6 @@ const untilOffline=async()=>{
     await wait(100);
   }
   throw Error('POS remains active.');
-};
-const requireFreePort=async()=>{
-  const probe=net.createServer();
-  await new Promise((resolve,reject)=>{
-    probe.once('error',reject);
-    probe.listen({host:'127.0.0.1',port:3000,exclusive:true},resolve);
-  });
-  await new Promise((resolve,reject)=>probe.close(error=>error?reject(error):resolve()));
 };
 const start=async(root)=>{
   await requireFreePort();
