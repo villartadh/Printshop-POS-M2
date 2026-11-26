@@ -92,14 +92,14 @@ This policy supersedes any older wording that requires a separate branch for eve
 
 ## Immediate next action — 2026-11-26
 
-Always read the latest DEVELOPMENT_QUEUE.md and compare actual branches, PRs and CI. The v0.9.7 expanded software candidate and baseline are protected. Native preview is separate from production.
+Read AGENTS.md on develop and the latest DEVELOPMENT_QUEUE.md. Owner-approved develop-first policy is canonical; no new branch for routine work.
 
-1. Service-material editor #9 passed full gates and integrated at develop `cbb5f0f99b0f259d2a350cd7deb8f00cd9baf44b`. Inspect fresh integrated Android 45777503538 and software 45777503573.
-2. Pricing math #10 passed Android 45776608192, reconciled a concurrent README edit without changing source, head `885514bba0e9d0090ebd1c2360de532e7253f8ae`. Check Windows/Linux 45777644474 and Android 45777644497; merge only when all required gates pass.
-3. Native pricing settings branch `feature/native-android-pricing-settings`: additive schema v4, append-only preference/tier snapshots, optimistic revisions, native editor; 21 local profile and 27 local SQLite fixture checks passed. Android CI must verify v3→v4 migration and actual native settings flow. Require NATIVE_PRICING_STORE_PASS and NATIVE_PRICING_SETTINGS_PASS along with every prior marker and exact terminal success code. Retarget to develop only after parent accepted, re-run full gates. See android-native/PRICING_SETTINGS.md.
-4. Build advanced quote input fields and exact fractional material estimation next. Advanced service selection and stale legacy quote output currently intentionally blocked; replace this only when the actual method, page/copy/dimension inputs, bulk rate and explicit material basis are supported. Then durable pending stock recovery, checkout, receipt, authentication and remaining native parity.
-5. Use JDK 17, Gradle 8.9, Android SDK 35/build-tools 34.0.0, API 34 disposable emulator. Run `gradle -p android-native --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug` and the exact instrumentation command in `.github/workflows/android-native.yml`. Use synthetic data only; no real shop database. Physical devices, printing and official BIR acceptance remain separate.
- 
+1. Reconcile develop policy commit `538fd9c01a7f6fc52aa9ead20afd9baa7835d982`, PR #10 head `8c0125a3d9665474d9c57ec05af4a4b97aa5f691`, and PR #11. Develop runs 45778769018/45778769005 and #10 45778553217/45778551074 had repeated failures without job steps or retrievable logs; actual application outcome unverified. Recheck current runner status and rerun only failed jobs when diagnostics/runner availability returns. Never merge unverified work. #10 Windows job passed; earlier source pricing CI passed but does not certify latest head.
+2. PR #11 was reconciled without a new branch at b3339acf35c640c8ff1619e2ca6d655ba0f82482; prior native settings run 45777985403 passed. Related advanced quote UI, profile-revision fence, exact fractional material estimate with explicit billable versus produced-item basis, and installed test changes are now on this same major feature branch. 126 local pure-Java checks passed; Android SDK absent locally. Verify all markers including NATIVE_ADVANCED_QUOTE_PASS, actual emulator and full software regression. Test with synthetic fixtures exclusively.
+3. When #10 exact current full gates and fresh integrated develop pass, merge to develop, retarget #11 and require new full gates. Preserve prior evidence and use existing branch until verified; merge promptly. Routine subsequent changes on develop. Do not promote main or delete protected branches.
+4. Next development: durable pending stock movement recovery, then native audited checkout/receipts/authentication, and remaining pricing parity (attributes/formula/fees/tax/rounding). No real shop data. Physical-device/kiosk/printer and BIR acceptance remain separate.
+5. Actual Android gate: JDK17, Gradle8.9, SDK35/build-tools34.0.0, API34 disposable emulator, `gradle -p android-native --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug`, installed instrumentation as in workflow. No unexecuted acceptance or production claims.
+
 
 ## Protected contracts and release limits
 
