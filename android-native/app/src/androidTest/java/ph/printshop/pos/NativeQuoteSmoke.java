@@ -56,12 +56,14 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "durable stock recovery"; verifyStockRecovery();
             phase = "durable stock screen"; verifyStockRecoveryScreen();
             phase = "checkout read-only confirmation plan"; verifyCheckoutConfirmationPlan();
+            phase = "v5 checkout migration"; verifyCheckoutV5Migration();
+            phase = "durable atomic checkout fixture"; verifyDurableCheckout();
             phase = "material costing"; verifyMaterials();
             phase = "recipe and quote screen"; verifyRecipeScreen(screen);
             phase = "pricing store migration"; verifyPricingStore();
             phase = "pricing settings and document quote"; verifyPricingScreen(screen);
             phase = "measured quote"; verifyMeasuredQuote(screen);
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\n");
+            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\n");
             result = Activity.RESULT_OK;
         } catch (Throwable error) {
             evidence.putString("stream", failureDetails(phase, error));
@@ -289,7 +291,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 db.setVersion(4);
             }
             try(CatalogStore store=new CatalogStore(context,filename)){
-                require(store.getReadableDatabase().getVersion()==5,"v4-to-v5 migration version wrong");
+                require(store.getReadableDatabase().getVersion()==6,"v4-to-v6 migration version wrong");
                 require(store.stockBalance(material).quantity==1500&&store.stockHistory(material,0,5).size()==1,"v4 stock lost");
                 require(store.recipeBindings(service).get(0).quantityMilli==500&&store.pricing(service).tiers.get(0).rateCentavos==250,"v4 recipe/pricing lost");
                 require(store.pendingStock(material)==null,"unexpected migrated pending request");
@@ -397,6 +399,147 @@ public final class NativeQuoteSmoke extends Instrumentation {
             require(store.stockBalance(paper.id).revision==3&&store.stockBalance(paper.id).quantity==5000,"checkout plan mutated ledger");
             try(android.database.Cursor c=store.getReadableDatabase().rawQuery("SELECT COUNT(*) FROM stock_requests WHERE request_id=?",new String[]{request})){
                 require(c.moveToFirst()&&c.getInt(0)==0,"checkout proposal created stock request");
+            }
+        }finally{context.deleteDatabase(filename);}
+    }
+
+    private static long checkoutCount(CatalogStore store,String table,String id){
+        try(android.database.Cursor c=store.getReadableDatabase().rawQuery("SELECT COUNT(*) FROM "+table+" WHERE request_id=?",new String[]{id})){
+            require(c.moveToFirst(),"checkout count unavailable");return c.getLong(0);
+        }
+    }
+    private void verifyCheckoutV5Migration(){
+        android.content.Context context=getTargetContext();
+        String filename="checkout-v5-"+stockId()+".db",material=stockId(),pending=stockId();
+        try{
+            try(android.database.sqlite.SQLiteDatabase db=context.openOrCreateDatabase(filename,0,null)){
+                db.execSQL("CREATE TABLE catalog (id TEXT PRIMARY KEY NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('SERVICE','MATERIAL')), name TEXT NOT NULL, unit TEXT NOT NULL, centavos INTEGER NOT NULL CHECK(centavos BETWEEN 0 AND 99999999999), revision INTEGER NOT NULL CHECK(revision >= 1), archived INTEGER NOT NULL CHECK(archived IN (0,1)))");
+                db.execSQL("CREATE TABLE catalog_history (id TEXT NOT NULL REFERENCES catalog(id), revision INTEGER NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL, unit TEXT NOT NULL, centavos INTEGER NOT NULL, archived INTEGER NOT NULL, action TEXT NOT NULL CHECK(action IN ('CREATE','EDIT','ARCHIVE','RESTORE')), PRIMARY KEY(id,revision))");
+                db.execSQL("CREATE TABLE stock_movements (request_id TEXT PRIMARY KEY NOT NULL, material_id TEXT NOT NULL REFERENCES catalog(id), catalog_revision INTEGER NOT NULL CHECK(catalog_revision>=1), stock_revision INTEGER NOT NULL CHECK(stock_revision>=1), unit TEXT NOT NULL, reason TEXT NOT NULL, delta INTEGER NOT NULL CHECK(delta BETWEEN -999999999999 AND 999999999999 AND delta<>0), before_quantity INTEGER NOT NULL CHECK(before_quantity BETWEEN 0 AND 999999999999), after_quantity INTEGER NOT NULL CHECK(after_quantity BETWEEN 0 AND 999999999999 AND after_quantity=before_quantity+delta), created_ms INTEGER NOT NULL, UNIQUE(material_id,stock_revision))");
+                db.execSQL("CREATE TABLE service_materials (service_id TEXT NOT NULL REFERENCES catalog(id), material_id TEXT NOT NULL REFERENCES catalog(id), quantity_milli INTEGER NOT NULL CHECK(quantity_milli BETWEEN 1 AND 999999999999), unit TEXT NOT NULL, PRIMARY KEY(service_id,material_id))");
+                db.execSQL("CREATE TABLE recipe_history (service_id TEXT NOT NULL REFERENCES catalog(id), revision INTEGER NOT NULL CHECK(revision>=1), material_id TEXT NOT NULL REFERENCES catalog(id), quantity_milli INTEGER NOT NULL CHECK(quantity_milli BETWEEN 0 AND 999999999999), unit TEXT NOT NULL, material_revision INTEGER NOT NULL, service_revision INTEGER NOT NULL, created_ms INTEGER NOT NULL, PRIMARY KEY(service_id,revision))");
+                db.execSQL("CREATE TABLE pricing_profile_versions (service_id TEXT NOT NULL REFERENCES catalog(id), revision INTEGER NOT NULL CHECK(revision>=1), method TEXT NOT NULL CHECK(method IN ('FIXED','PER_UNIT','PER_PAGE','PER_COPY','PER_SHEET','PER_SQFT','PER_LINEAR_FT','PER_METER','TIERED_BULK')), pages_copies INTEGER NOT NULL CHECK(pages_copies IN (0,1) AND (pages_copies=0 OR method IN ('PER_PAGE','PER_COPY','PER_SHEET'))), service_revision INTEGER NOT NULL CHECK(service_revision>=1), catalog_unit TEXT NOT NULL, created_ms INTEGER NOT NULL, PRIMARY KEY(service_id,revision))");
+                db.execSQL("CREATE TABLE pricing_tier_versions (service_id TEXT NOT NULL, profile_revision INTEGER NOT NULL, threshold_hundredths INTEGER NOT NULL CHECK(threshold_hundredths BETWEEN 1 AND 10000000), rate_centavos INTEGER NOT NULL CHECK(rate_centavos BETWEEN 0 AND 99999999999), PRIMARY KEY(service_id,profile_revision,threshold_hundredths), FOREIGN KEY(service_id,profile_revision) REFERENCES pricing_profile_versions(service_id,revision))");
+                db.execSQL("CREATE TABLE stock_requests (request_id TEXT PRIMARY KEY NOT NULL, material_id TEXT NOT NULL REFERENCES catalog(id), catalog_revision INTEGER NOT NULL CHECK(catalog_revision>=1), expected_stock_revision INTEGER NOT NULL CHECK(expected_stock_revision>=0 AND expected_stock_revision<9223372036854775807), delta INTEGER NOT NULL CHECK(delta BETWEEN -999999999999 AND 999999999999 AND delta<>0), reason TEXT NOT NULL CHECK(length(reason) BETWEEN 1 AND 160), created_ms INTEGER NOT NULL, state TEXT NOT NULL CHECK(state IN ('PENDING','APPLIED','CANCELLED')), resolved_ms INTEGER, CHECK((state='PENDING' AND resolved_ms IS NULL) OR (state<>'PENDING' AND resolved_ms IS NOT NULL)))");
+                db.execSQL("CREATE UNIQUE INDEX one_pending_stock_request ON stock_requests(material_id) WHERE state='PENDING'");
+                db.execSQL("CREATE TRIGGER stock_request_no_delete BEFORE DELETE ON stock_requests BEGIN SELECT RAISE(ABORT,'Stock request audit cannot be deleted'); END");
+                db.execSQL("CREATE TRIGGER stock_request_initial_state BEFORE INSERT ON stock_requests WHEN NEW.state<>'PENDING' BEGIN SELECT RAISE(ABORT,'Stock request must begin pending'); END");
+                db.execSQL("CREATE TRIGGER stock_request_resolution BEFORE UPDATE ON stock_requests WHEN OLD.state<>'PENDING' OR NEW.state NOT IN ('APPLIED','CANCELLED') OR NEW.request_id IS NOT OLD.request_id OR NEW.material_id IS NOT OLD.material_id OR NEW.catalog_revision IS NOT OLD.catalog_revision OR NEW.expected_stock_revision IS NOT OLD.expected_stock_revision OR NEW.delta IS NOT OLD.delta OR NEW.reason IS NOT OLD.reason OR NEW.created_ms IS NOT OLD.created_ms OR (NEW.state='APPLIED' AND NOT EXISTS (SELECT 1 FROM stock_movements m WHERE m.request_id=OLD.request_id AND m.material_id=OLD.material_id AND m.catalog_revision=OLD.catalog_revision AND m.stock_revision=OLD.expected_stock_revision+1 AND m.delta=OLD.delta AND m.reason=OLD.reason)) OR (NEW.state='CANCELLED' AND EXISTS (SELECT 1 FROM stock_movements m WHERE m.request_id=OLD.request_id)) BEGIN SELECT RAISE(ABORT,'Invalid stock request transition'); END");
+                db.execSQL("INSERT INTO catalog VALUES(?,?,?,?,?,?,?)",new Object[]{material,"MATERIAL","Synthetic old paper","sheet",199,1,0});
+                db.execSQL("INSERT INTO catalog_history VALUES(?,?,?,?,?,?,?,?)",new Object[]{material,1,"MATERIAL","Synthetic old paper","sheet",199,0,"CREATE"});
+                db.execSQL("INSERT INTO stock_movements VALUES(?,?,?,?,?,?,?,?,?,?)",new Object[]{stockId(),material,1,1,"sheet","Synthetic old receipt",1500,0,1500,1});
+                db.execSQL("INSERT INTO stock_requests VALUES(?,?,?,?,?,?,?,?,?)",new Object[]{pending,material,1,1,-500,"Synthetic pending",1,"PENDING",null});
+                db.setVersion(5);
+            }
+            try(CatalogStore store=new CatalogStore(context,filename)){
+                require(store.getReadableDatabase().getVersion()==6,"v5 migration failed");
+                require(store.stockBalance(material).quantity==1500&&store.stockHistory(material,0,10).size()==1,"v5 stock changed");
+                require(store.pendingStock(material)!=null&&store.pendingStock(material).id.equals(pending),"v5 pending stock lost");
+                require(store.get(material).centavos==199,"v5 catalog changed");
+                require(store.applyStagedStock(pending).quantity==1000,"v5 pending request not recoverable");
+                try(android.database.Cursor c=store.getReadableDatabase().rawQuery("SELECT COUNT(*) FROM checkout_requests",null)){
+                    require(c.moveToFirst()&&c.getInt(0)==0,"migration fabricated checkout");
+                }
+            }
+        }finally{context.deleteDatabase(filename);}
+    }
+    private void verifyDurableCheckout(){
+        android.content.Context context=getTargetContext();
+        String fixture=stockId(),filename="checkout-fixture-"+fixture+".db";
+        String first=stockId(),other=stockId(),second=stockId();
+        String serviceId,paperId,inkId,firstHash,otherHash;
+        CheckoutPlan.Inputs inputs=new CheckoutPlan.Inputs(1,5,2,null,null,null,CheckoutPlan.UsageBasis.BILLABLE_UNIT,2500);
+        try{
+            try(CatalogStore store=CatalogStore.checkoutFixture(context,fixture)){
+                CatalogEntry service=store.create(CatalogEntry.Kind.SERVICE,"Synthetic checkout","page","2.50");
+                CatalogEntry paper=store.create(CatalogEntry.Kind.MATERIAL,"Synthetic paper","sheet","1.99");
+                CatalogEntry ink=store.create(CatalogEntry.Kind.MATERIAL,"Synthetic ink","ml","1.25");
+                serviceId=service.id;paperId=paper.id;inkId=ink.id;
+                store.moveStock(stockId(),paperId,1,0,5000,"Synthetic receipt");
+                store.moveStock(stockId(),inkId,1,0,1000,"Synthetic receipt");
+                store.setMaterialUsage(serviceId,1,paperId,1,0,500);
+                store.setMaterialUsage(serviceId,1,inkId,1,1,100);
+                store.savePricing(serviceId,1,0,PricingMath.Method.PER_PAGE,true,java.util.Collections.singletonList(new PricingMath.Tier(1000,225)));
+                CheckoutPlan.Proposal plan=store.prepareCheckout(first,serviceId,1,1,2,inputs);
+                firstHash=plan.fingerprint();
+                require(store.stageFixtureCheckout(plan).state.equals("PENDING"),"checkout staging wrong");
+                require(store.stageFixtureCheckout(plan).fingerprint.equals(firstHash),"exact stage replay wrong");
+                CheckoutPlan.Proposal mismatch=store.prepareCheckout(first,serviceId,1,1,2,new CheckoutPlan.Inputs(1,5,2,null,null,null,CheckoutPlan.UsageBasis.BILLABLE_UNIT,2600));
+                rejectStock(()->store.stageFixtureCheckout(mismatch));
+                CheckoutPlan.Proposal competitor=store.prepareCheckout(other,serviceId,1,1,2,inputs);
+                otherHash=competitor.fingerprint();store.stageFixtureCheckout(competitor);
+                require(store.pendingFixtureCheckouts(50).size()==2,"pending checkout listing wrong");
+                require(store.stockBalance(paperId).quantity==5000&&store.stockBalance(inkId).quantity==1000,"staging consumed stock");
+                require(checkoutCount(store,"checkout_sales",first)==0&&checkoutCount(store,"checkout_cash",first)==0,"staging recorded payment");
+                rejectStock(()->store.fixtureCheckout(first).previewReceipt());
+                try(CatalogStore blocked=new CatalogStore(context,filename)){
+                    rejectStock(()->blocked.stageFixtureCheckout(plan));
+                    rejectStock(()->blocked.applyFixtureCheckout(first,firstHash));
+                    rejectStock(()->blocked.cancelFixtureCheckout(first,firstHash,"Denied mutation"));
+                }
+            }
+            try(CatalogStore reopened=CatalogStore.checkoutFixture(context,fixture)){
+                require(reopened.fixtureCheckout(first).state.equals("PENDING"),"pending checkout lost after reopening");
+                require(reopened.fixtureCheckout(first).fingerprint.equals(firstHash),"durable fingerprint lost");
+                rejectStock(()->reopened.applyFixtureCheckout(first,"wrong"));
+                reopened.getWritableDatabase().execSQL("CREATE TRIGGER test_checkout_abort BEFORE UPDATE ON checkout_requests WHEN NEW.state='APPLIED' BEGIN SELECT RAISE(ABORT,'synthetic finalization failure'); END");
+                boolean failed=false;
+                try{reopened.applyFixtureCheckout(first,firstHash);}catch(android.database.sqlite.SQLiteException expected){failed=true;}
+                require(failed,"injected checkout fault did not fail");
+                require(reopened.stockBalance(paperId).quantity==5000&&reopened.stockBalance(inkId).quantity==1000,"rollback lost stock");
+                require(reopened.stockHistory(paperId,0,10).size()==1&&reopened.stockHistory(inkId,0,10).size()==1,"rollback left ledger row");
+                require(checkoutCount(reopened,"checkout_sales",first)==0&&checkoutCount(reopened,"checkout_cash",first)==0&&checkoutCount(reopened,"checkout_stock_links",first)==0,"rollback left finance rows");
+                require(reopened.fixtureCheckout(first).state.equals("PENDING"),"rollback lost pending request");
+                reopened.getWritableDatabase().execSQL("DROP TRIGGER test_checkout_abort");
+            }
+            // Separate helper instances, same durable request, race through the real SQLite transaction.
+            java.util.concurrent.CountDownLatch ready=new java.util.concurrent.CountDownLatch(2),go=new java.util.concurrent.CountDownLatch(1);
+            java.util.concurrent.atomic.AtomicReference<Throwable> error=new java.util.concurrent.atomic.AtomicReference<>();
+            Runnable worker=()->{
+                try(CatalogStore store=CatalogStore.checkoutFixture(context,fixture)){
+                    ready.countDown();
+                    if(!go.await(10,java.util.concurrent.TimeUnit.SECONDS))throw new AssertionError("checkout race start timed out");
+                    CheckoutJournal.Record applied=store.applyFixtureCheckout(first,firstHash);
+                    require(applied.state.equals("APPLIED")&&applied.total==2250&&applied.received==2500&&applied.change==250,"concurrent replay result wrong");
+                }catch(Throwable t){error.compareAndSet(null,t);}
+            };
+            Thread a=new Thread(worker,"fixture-checkout-a"),b=new Thread(worker,"fixture-checkout-b");
+            a.setDaemon(true);b.setDaemon(true);a.start();b.start();
+            try{
+                require(ready.await(10,java.util.concurrent.TimeUnit.SECONDS),"checkout race helpers not ready");
+                go.countDown();a.join(15000);b.join(15000);
+            }catch(InterruptedException ex){Thread.currentThread().interrupt();throw new AssertionError(ex);}
+            finally{go.countDown();}
+            require(!a.isAlive()&&!b.isAlive(),"checkout race timed out");
+            if(error.get()!=null)throw new AssertionError("checkout race failed",error.get());
+            try(CatalogStore reopened=CatalogStore.checkoutFixture(context,fixture)){
+                CheckoutJournal.Record applied=reopened.fixtureCheckout(first);
+                require(applied.state.equals("APPLIED")&&applied.total==2250&&applied.materialCost==1120,"checkout recorded totals wrong");
+                require(applied.previewReceipt().contains("SYNTHETIC CHECKOUT RECORD — NOT A TAX DOCUMENT")&&applied.previewReceipt().contains("Change: PHP 2.50"),"synthetic receipt wrong");
+                require(reopened.stockBalance(paperId).quantity==0&&reopened.stockBalance(inkId).quantity==0,"checkout stock debit wrong");
+                require(reopened.stockHistory(paperId,0,10).size()==2&&reopened.stockHistory(inkId,0,10).size()==2,"duplicate checkout movement");
+                require(checkoutCount(reopened,"checkout_sales",first)==1&&checkoutCount(reopened,"checkout_cash",first)==1&&checkoutCount(reopened,"checkout_stock_links",first)==2,"checkout link/cardinality wrong");
+                rejectStock(()->reopened.cancelFixtureCheckout(first,firstHash,"Not allowed"));
+                rejectStock(()->reopened.applyFixtureCheckout(other,otherHash));
+                require(reopened.fixtureCheckout(other).state.equals("PENDING")&&checkoutCount(reopened,"checkout_sales",other)==0,"competing stale checkout recorded");
+                CheckoutJournal.Record cancelled=reopened.cancelFixtureCheckout(other,otherHash,"Synthetic stale proposal");
+                require(cancelled.state.equals("CANCELLED")&&cancelled.cancelReason.equals("Synthetic stale proposal"),"cancellation audit wrong");
+                require(reopened.cancelFixtureCheckout(other,otherHash,"Synthetic stale proposal").state.equals("CANCELLED"),"cancel replay wrong");
+                rejectStock(()->reopened.cancelFixtureCheckout(other,otherHash,"Changed reason"));
+                rejectStock(()->reopened.applyFixtureCheckout(other,otherHash));
+                reopened.moveStock(stockId(),paperId,1,2,5000,"Synthetic replenishment");
+                reopened.moveStock(stockId(),inkId,1,2,1000,"Synthetic replenishment");
+                require(reopened.applyFixtureCheckout(first,firstHash).previewReceipt().equals(applied.previewReceipt()),"history changed after replenishment");
+                require(reopened.stockBalance(paperId).quantity==5000&&reopened.stockBalance(inkId).quantity==1000,"historical replay mutated replenished stock");
+                CheckoutPlan.Proposal fresh=reopened.prepareCheckout(second,serviceId,1,1,2,inputs);
+                reopened.stageFixtureCheckout(fresh);
+                String stockPending=stockId();
+                reopened.stageStock(stockPending,paperId,1,3,-1,"Synthetic pending");
+                rejectStock(()->reopened.applyFixtureCheckout(second,fresh.fingerprint()));
+                require(reopened.fixtureCheckout(second).state.equals("PENDING"),"pending movement lost checkout identity");
+                reopened.cancelStagedStock(stockPending);
+                reopened.cancelFixtureCheckout(second,fresh.fingerprint(),"Synthetic test completed");
+                require(reopened.pendingFixtureCheckouts(50).isEmpty(),"terminal requests remain pending");
             }
         }finally{context.deleteDatabase(filename);}
     }
@@ -573,7 +716,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             }
             java.util.List<PricingMath.Tier> tiers=java.util.Arrays.asList(new PricingMath.Tier(2000,200),new PricingMath.Tier(1000,250));
             try(CatalogStore store=new CatalogStore(context,filename)){
-                require(store.getReadableDatabase().getVersion()==5,"v3-to-v5 migration version wrong");
+                require(store.getReadableDatabase().getVersion()==6,"v3-to-v6 migration version wrong");
                 require(store.pricing(service).revision==0&&!store.pricing(service).needsAdvancedQuote(),"legacy default changed");
                 require(store.recipeRevision(service)==1&&store.stockBalance(material).quantity==1500,"migration changed recipe or stock");
                 PricingProfile saved=store.savePricing(service,1,0,PricingMath.Method.PER_PAGE,true,tiers);

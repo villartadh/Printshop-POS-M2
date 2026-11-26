@@ -8,10 +8,24 @@ import android.database.sqlite.SQLiteOpenHelper;
 import java.util.ArrayList;
 import java.util.List;
 
-/** App-private preview catalog. No cross-platform import or sales. */
+/** App-private preview catalog. Checkout writes are isolated to explicit synthetic fixtures. */
 public final class CatalogStore extends SQLiteOpenHelper {
+    private final boolean fixtureCheckoutWrites;
     public CatalogStore(Context context) { this(context, "preview-catalog.db"); }
-    CatalogStore(Context context, String filename) { super(context, filename, null, 5); }
+    CatalogStore(Context context, String filename) { this(context,filename,false); }
+    private CatalogStore(Context context,String filename,boolean fixtureCheckoutWrites) {
+        super(context,filename,null,6);this.fixtureCheckoutWrites=fixtureCheckoutWrites;
+    }
+    /** No production/ordinary preview API can record sales or consume stock through checkout.
+     * Only a separately identified synthetic fixture database opts in to transaction experiments.
+     */
+    static CatalogStore checkoutFixture(Context context,String fixtureId) {
+        StockMath.validateRequestId(fixtureId);
+        return new CatalogStore(context,"checkout-fixture-"+fixtureId+".db",true);
+    }
+    private void requireCheckoutFixture(){
+        if(!fixtureCheckoutWrites)throw new IllegalStateException("Checkout recording disabled until native authentication and shift acceptance");
+    }
     @Override public void onConfigure(SQLiteDatabase db) {
         super.onConfigure(db);
         db.setForeignKeyConstraintsEnabled(true);
@@ -23,6 +37,7 @@ public final class CatalogStore extends SQLiteOpenHelper {
         createRecipeSchema(db);
         createPricingSchema(db);
         createStockRequests(db);
+        CheckoutJournal.create(db);
     }
     private static void createStockLedger(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE stock_movements (request_id TEXT PRIMARY KEY NOT NULL, material_id TEXT NOT NULL REFERENCES catalog(id), catalog_revision INTEGER NOT NULL CHECK(catalog_revision>=1), stock_revision INTEGER NOT NULL CHECK(stock_revision>=1), unit TEXT NOT NULL, reason TEXT NOT NULL, delta INTEGER NOT NULL CHECK(delta BETWEEN -999999999999 AND 999999999999 AND delta<>0), before_quantity INTEGER NOT NULL CHECK(before_quantity BETWEEN 0 AND 999999999999), after_quantity INTEGER NOT NULL CHECK(after_quantity BETWEEN 0 AND 999999999999 AND after_quantity=before_quantity+delta), created_ms INTEGER NOT NULL, UNIQUE(material_id,stock_revision))");
@@ -43,11 +58,12 @@ public final class CatalogStore extends SQLiteOpenHelper {
         db.execSQL("CREATE TRIGGER stock_request_resolution BEFORE UPDATE ON stock_requests WHEN OLD.state<>'PENDING' OR NEW.state NOT IN ('APPLIED','CANCELLED') OR NEW.request_id IS NOT OLD.request_id OR NEW.material_id IS NOT OLD.material_id OR NEW.catalog_revision IS NOT OLD.catalog_revision OR NEW.expected_stock_revision IS NOT OLD.expected_stock_revision OR NEW.delta IS NOT OLD.delta OR NEW.reason IS NOT OLD.reason OR NEW.created_ms IS NOT OLD.created_ms OR (NEW.state='APPLIED' AND NOT EXISTS (SELECT 1 FROM stock_movements m WHERE m.request_id=OLD.request_id AND m.material_id=OLD.material_id AND m.catalog_revision=OLD.catalog_revision AND m.stock_revision=OLD.expected_stock_revision+1 AND m.delta=OLD.delta AND m.reason=OLD.reason)) OR (NEW.state='CANCELLED' AND EXISTS (SELECT 1 FROM stock_movements m WHERE m.request_id=OLD.request_id)) BEGIN SELECT RAISE(ABORT,'Invalid stock request transition'); END");
     }
     @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-        if (newVersion == 5 && oldVersion >= 1 && oldVersion <= 4) {
+        if (newVersion == 6 && oldVersion >= 1 && oldVersion <= 5) {
             if (oldVersion < 2) createStockLedger(db);
             if (oldVersion < 3) createRecipeSchema(db);
             if (oldVersion < 4) createPricingSchema(db);
-            createStockRequests(db); return;
+            if(oldVersion < 5) createStockRequests(db);
+            CheckoutJournal.create(db); return;
         }
         throw new IllegalStateException("No migration path; existing catalog preserved");
     }
@@ -230,35 +246,110 @@ public final class CatalogStore extends SQLiteOpenHelper {
             db.setTransactionSuccessful();return result;
         } finally {db.endTransaction();}
     }
-    /** Read-only confirmation plan from one consistent database snapshot.
-     * Expected revisions are supplied by the reviewed quotation. No ledger/payment writes.
-     * A future commit operation must perform the same checks inside its write transaction.
-     */
+    /** Read-only confirmation plan from one consistent database snapshot. */
     public CheckoutPlan.Proposal prepareCheckout(String requestId,String serviceId,long expectedServiceRevision,
                                                   long expectedPricingRevision,long expectedRecipeRevision,
                                                   CheckoutPlan.Inputs inputs) {
         SQLiteDatabase db=getWritableDatabase();
         db.beginTransactionNonExclusive();
         try {
-            CatalogEntry service=read(db,serviceId);
-            if(service.kind!=CatalogEntry.Kind.SERVICE||service.archived)
-                throw new IllegalArgumentException("Select an active service");
-            PricingProfile profile=readPricing(db,serviceId);
-            long recipe=recipeRevision(db,serviceId);
-            if(service.revision!=expectedServiceRevision||profile.revision!=expectedPricingRevision||recipe!=expectedRecipeRevision)
-                throw new IllegalStateException("Service, pricing or recipe changed; review a fresh quotation");
-            List<CheckoutPlan.Material> materials=new ArrayList<>();
-            try(Cursor c=db.query("service_materials",new String[]{"material_id","quantity_milli","unit"},
-                                  "service_id=?",new String[]{serviceId},null,null,"material_id")){
-                while(c.moveToNext()){
-                    CatalogEntry material=read(db,c.getString(0));
-                    if(!material.unit.equals(c.getString(2)))throw new IllegalStateException("Recipe unit changed; review before checkout");
-                    StockMath.Balance balance=stockBalance(db,material.id);
-                    materials.add(new CheckoutPlan.Material(material,c.getLong(1),balance.revision,balance.quantity,pendingStock(db,material.id)!=null));
-                }
+            CheckoutPlan.Proposal p=readCheckoutPlan(db,requestId,serviceId,expectedServiceRevision,expectedPricingRevision,expectedRecipeRevision,inputs);
+            db.setTransactionSuccessful();return p;
+        }finally{db.endTransaction();}
+    }
+    private static CheckoutPlan.Proposal readCheckoutPlan(SQLiteDatabase db,String requestId,String serviceId,
+                             long expectedServiceRevision,long expectedPricingRevision,long expectedRecipeRevision,CheckoutPlan.Inputs inputs){
+        CatalogEntry service=read(db,serviceId);
+        if(service.kind!=CatalogEntry.Kind.SERVICE||service.archived)throw new IllegalArgumentException("Select an active service");
+        PricingProfile profile=readPricing(db,serviceId);
+        long recipe=recipeRevision(db,serviceId);
+        if(service.revision!=expectedServiceRevision||profile.revision!=expectedPricingRevision||recipe!=expectedRecipeRevision)
+            throw new IllegalStateException("Service, pricing or recipe changed; review a fresh quotation");
+        List<CheckoutPlan.Material> materials=new ArrayList<>();
+        try(Cursor c=db.query("service_materials",new String[]{"material_id","quantity_milli","unit"},
+                              "service_id=?",new String[]{serviceId},null,null,"material_id")){
+            while(c.moveToNext()){
+                CatalogEntry material=read(db,c.getString(0));
+                if(!material.unit.equals(c.getString(2)))throw new IllegalStateException("Recipe unit changed; review before checkout");
+                StockMath.Balance balance=stockBalance(db,material.id);
+                materials.add(new CheckoutPlan.Material(material,c.getLong(1),balance.revision,balance.quantity,pendingStock(db,material.id)!=null));
             }
-            CheckoutPlan.Proposal proposal=CheckoutPlan.prepare(requestId,service,profile,recipe,inputs,materials);
-            db.setTransactionSuccessful();return proposal;
+        }
+        return CheckoutPlan.prepare(requestId,service,profile,recipe,inputs,materials);
+    }
+    /** Durably stage an immutable, reviewed synthetic checkout before any transaction effects. */
+    CheckoutJournal.Record stageFixtureCheckout(CheckoutPlan.Proposal reviewed) {
+        requireCheckoutFixture();
+        if(reviewed==null)throw new IllegalArgumentException("Checkout proposal required");
+        SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
+        try {
+            CheckoutJournal.Record prior=CheckoutJournal.read(db,reviewed.requestId);
+            if(prior!=null){
+                prior.verifyFingerprint(reviewed.fingerprint());db.setTransactionSuccessful();return prior;
+            }
+            CheckoutPlan.Proposal current=readCheckoutPlan(db,reviewed.requestId,reviewed.serviceId,reviewed.serviceRevision,reviewed.pricingRevision,reviewed.recipeRevision,reviewed.inputs);
+            reviewed.requireSameSnapshot(current);
+            CheckoutJournal.stage(db,current);
+            CheckoutJournal.Record result=CheckoutJournal.read(db,current.requestId);
+            if(result==null)throw new IllegalStateException("Staged checkout unavailable");
+            db.setTransactionSuccessful();return result;
+        }finally{db.endTransaction();}
+    }
+    CheckoutJournal.Record fixtureCheckout(String id){
+        requireCheckoutFixture();StockMath.validateRequestId(id);return CheckoutJournal.read(getReadableDatabase(),id);
+    }
+    List<CheckoutJournal.Record> pendingFixtureCheckouts(int limit){
+        requireCheckoutFixture();return CheckoutJournal.pending(getReadableDatabase(),limit);
+    }
+    /** Atomic sale, cash payment, every inventory movement and terminal request state.
+     * Rebuild the confirmed snapshot in the same write transaction. Exact replay is historical.
+     * No production behavior or real cash collection; the caller can only use fixture databases.
+     */
+    CheckoutJournal.Record applyFixtureCheckout(String id,String fingerprint){
+        requireCheckoutFixture();StockMath.validateRequestId(id);
+        SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
+        try {
+            CheckoutJournal.Record r=CheckoutJournal.read(db,id);
+            if(r==null)throw new IllegalStateException("Unknown checkout request");
+            r.verifyFingerprint(fingerprint);
+            if("CANCELLED".equals(r.state))throw new IllegalStateException("Cancelled checkout cannot be applied");
+            if("APPLIED".equals(r.state)){db.setTransactionSuccessful();return r;}
+            CheckoutPlan.Proposal current=readCheckoutPlan(db,id,r.serviceId,r.serviceRevision,r.pricingRevision,r.recipeRevision,r.inputs);
+            r.verifyFingerprint(current.fingerprint());
+            CheckoutJournal.saleAndCash(db,r);
+            for(CheckoutPlan.Consumption m:current.materials) {
+                // Every movement has a distinct ledger identity, atomically linked to this checkout.
+                String movementId=java.util.UUID.randomUUID().toString();
+                if(readRequest(db,"request_id=?",movementId)!=null)throw new IllegalStateException("Stock operation ID collision");
+                StockMath.Balance result=appendMovement(db,movementId,m.materialId,m.catalogRevision,m.stockRevision,-m.quantityMilli,"Preview checkout "+id);
+                if(result.quantity!=m.afterMilli||result.revision!=m.stockRevision+1)
+                    throw new IllegalStateException("Stock result differs from confirmed snapshot");
+                CheckoutJournal.link(db,id,m.materialId,movementId);
+            }
+            CheckoutJournal.resolve(db,id,"APPLIED",null);
+            CheckoutJournal.Record applied=CheckoutJournal.read(db,id);
+            if(applied==null||!"APPLIED".equals(applied.state))throw new IllegalStateException("Checkout result unavailable");
+            db.setTransactionSuccessful();return applied;
+        }finally{db.endTransaction();}
+    }
+    /** Cancellation is an explicit audit decision for an unrecorded synthetic request only. */
+    CheckoutJournal.Record cancelFixtureCheckout(String id,String fingerprint,String reason){
+        requireCheckoutFixture();StockMath.validateRequestId(id);
+        String note=StockMath.reason(reason);
+        SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
+        try {
+            CheckoutJournal.Record r=CheckoutJournal.read(db,id);
+            if(r==null)throw new IllegalStateException("Unknown checkout request");
+            r.verifyFingerprint(fingerprint);
+            if("APPLIED".equals(r.state))throw new IllegalStateException("Recorded checkout cannot be cancelled");
+            if("CANCELLED".equals(r.state)){
+                if(!note.equals(r.cancelReason))throw new IllegalStateException("Cancellation reason differs from audit");
+                db.setTransactionSuccessful();return r;
+            }
+            CheckoutJournal.resolve(db,id,"CANCELLED",note);
+            CheckoutJournal.Record cancelled=CheckoutJournal.read(db,id);
+            if(cancelled==null||!"CANCELLED".equals(cancelled.state))throw new IllegalStateException("Cancellation confirmation unavailable");
+            db.setTransactionSuccessful();return cancelled;
         }finally{db.endTransaction();}
     }
     public StockMath.Balance stockBalance(String id) {
