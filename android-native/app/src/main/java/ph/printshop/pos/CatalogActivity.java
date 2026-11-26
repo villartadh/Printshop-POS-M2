@@ -87,15 +87,27 @@ public final class CatalogActivity extends Activity {
                     });
                 }
                 if (!entry.archived && entry.kind == CatalogEntry.Kind.SERVICE) {
+                    PricingProfile profile=store.pricing(entry.id);
+                    label(rows,"Pricing: "+PricingProfile.label(profile.method)+" · "+profile.tiers.size()+" tier(s)",15);
+                    button(rows,"Configure service pricing",()->{
+                        Intent intent=new Intent(this,PricingSettingsActivity.class);
+                        intent.putExtra("serviceId",entry.id);
+                        startActivity(intent);
+                    });
                     button(rows, "Configure service materials", () -> {
                         Intent intent=new Intent(this,RecipeActivity.class);
                         intent.putExtra("serviceId",entry.id);
                         startActivity(intent);
                     });
+                    if(profile.needsAdvancedQuote()) {
+                        label(rows,"Advanced quotation controls are not connected yet. Saved settings are preserved.",15);
+                        continue;
+                    }
                     button(rows, "Use in quotation", () -> {
                         try {
                             CatalogEntry current = store.get(entry.id);
                             if (current.archived || current.revision != entry.revision) throw new IllegalStateException("Service changed; reload and select again");
+                            if(store.pricing(current.id).needsAdvancedQuote())throw new IllegalStateException("Advanced quotation controls are not connected yet");
                             Intent result = new Intent();
                             result.putExtra("centavos", current.centavos);
                             result.putExtra("serviceName", current.name);
