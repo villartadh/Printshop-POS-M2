@@ -126,6 +126,20 @@ public final class CatalogStore extends SQLiteOpenHelper {
             db.setTransactionSuccessful();return revision;
         } finally {db.endTransaction();}
     }
+    public static final class RecipeBinding {
+        public final String materialId, unit;
+        public final long quantityMilli;
+        RecipeBinding(String id,String unit,long quantity){this.materialId=id;this.unit=unit;this.quantityMilli=quantity;}
+    }
+    public List<RecipeBinding> recipeBindings(String serviceId) {
+        SQLiteDatabase db=getReadableDatabase();
+        if(read(db,serviceId).kind!=CatalogEntry.Kind.SERVICE)throw new IllegalArgumentException("Not a service");
+        List<RecipeBinding> result=new ArrayList<>();
+        try(Cursor c=db.query("service_materials",new String[]{"material_id","unit","quantity_milli"},"service_id=?",new String[]{serviceId},null,null,"material_id")){
+            while(c.moveToNext())result.add(new RecipeBinding(c.getString(0),c.getString(1),c.getLong(2)));
+        }
+        return result;
+    }
     public MaterialCost.Estimate estimateMaterials(String serviceId,int quantity) {
         SQLiteDatabase db=getWritableDatabase();
         db.beginTransactionNonExclusive();
