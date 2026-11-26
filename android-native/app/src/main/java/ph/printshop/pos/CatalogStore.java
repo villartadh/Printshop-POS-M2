@@ -230,6 +230,37 @@ public final class CatalogStore extends SQLiteOpenHelper {
             db.setTransactionSuccessful();return result;
         } finally {db.endTransaction();}
     }
+    /** Read-only confirmation plan from one consistent database snapshot.
+     * Expected revisions are supplied by the reviewed quotation. No ledger/payment writes.
+     * A future commit operation must perform the same checks inside its write transaction.
+     */
+    public CheckoutPlan.Proposal prepareCheckout(String requestId,String serviceId,long expectedServiceRevision,
+                                                  long expectedPricingRevision,long expectedRecipeRevision,
+                                                  CheckoutPlan.Inputs inputs) {
+        SQLiteDatabase db=getWritableDatabase();
+        db.beginTransactionNonExclusive();
+        try {
+            CatalogEntry service=read(db,serviceId);
+            if(service.kind!=CatalogEntry.Kind.SERVICE||service.archived)
+                throw new IllegalArgumentException("Select an active service");
+            PricingProfile profile=readPricing(db,serviceId);
+            long recipe=recipeRevision(db,serviceId);
+            if(service.revision!=expectedServiceRevision||profile.revision!=expectedPricingRevision||recipe!=expectedRecipeRevision)
+                throw new IllegalStateException("Service, pricing or recipe changed; review a fresh quotation");
+            List<CheckoutPlan.Material> materials=new ArrayList<>();
+            try(Cursor c=db.query("service_materials",new String[]{"material_id","quantity_milli","unit"},
+                                  "service_id=?",new String[]{serviceId},null,null,"material_id")){
+                while(c.moveToNext()){
+                    CatalogEntry material=read(db,c.getString(0));
+                    if(!material.unit.equals(c.getString(2)))throw new IllegalStateException("Recipe unit changed; review before checkout");
+                    StockMath.Balance balance=stockBalance(db,material.id);
+                    materials.add(new CheckoutPlan.Material(material,c.getLong(1),balance.revision,balance.quantity,pendingStock(db,material.id)!=null));
+                }
+            }
+            CheckoutPlan.Proposal proposal=CheckoutPlan.prepare(requestId,service,profile,recipe,inputs,materials);
+            db.setTransactionSuccessful();return proposal;
+        }finally{db.endTransaction();}
+    }
     public StockMath.Balance stockBalance(String id) {
         SQLiteDatabase db = getReadableDatabase();
         if (read(db,id).kind != CatalogEntry.Kind.MATERIAL) throw new IllegalArgumentException("Stock is available only for materials");
