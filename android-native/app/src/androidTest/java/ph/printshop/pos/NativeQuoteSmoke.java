@@ -65,6 +65,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "cashier authorization and shift fixture"; verifyCashierAuthShift();
             phase = "audited credential lifecycle"; verifyCredentialLifecycle();
             phase = "owner-only fixture administration"; verifyOwnerAdministration();
+            phase = "authenticated dynamic catalog selection"; verifyCatalogSelectionAccess();
             phase = "owner-controlled cashier disable"; verifyStaffDisable();
             phase = "material costing"; verifyMaterials();
             phase = "recipe and quote screen"; verifyRecipeScreen(screen);
@@ -72,7 +73,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "pricing settings and document quote"; verifyPricingScreen(screen);
             phase = "measured quote"; verifyMeasuredQuote(screen);
             phase = "native cashier training UI"; verifyCashierTrainingScreen(screen);
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\n");
+            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\n");
             result = Activity.RESULT_OK;
         } catch (Throwable error) {
             evidence.putString("stream", failureDetails(phase, error));
@@ -201,6 +202,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 require(setup.findViewById(R.id.cashier_inventory)==null,"cashier visible owner-only inventory");
                 require(setup.findViewById(R.id.cashier_manage_staff)==null,"cashier visible owner-only staff management");
                 require(setup.findViewById(R.id.cashier_admin_history)==null,"cashier visible owner-only audit");
+                require(setup.findViewById(R.id.cashier_catalog_services)==null&&setup.findViewById(R.id.cashier_catalog_materials)==null,"cashier visible owner catalog controls");
             });
             trainingField(first,R.id.cashier_opening,"10.00");
             trainingClick(first,R.id.cashier_open_shift);
@@ -346,6 +348,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 require(trainingCount(fixture,"SELECT COUNT(*) FROM cashier_disable_events WHERE reason='Synthetic end of training' AND actor_id<>account_id AND prior_revision=3 AND next_revision=4")==1,"UI disable audit absent or wrong revision");
                 require(trainingCount(fixture,"SELECT COUNT(*) FROM cashier_accounts WHERE role='CASHIER' AND active=0 AND revision=4")==1,"UI cashier not disabled");
             }
+            verifyOwnerCatalogWorkflow(second,fixtureId,owner,ownerPass);
             try(CatalogStore ordinary=new CatalogStore(context)){
                 java.util.List<CatalogEntry> after=ordinary.list(true);
                 require(before.size()==after.size(),"ordinary catalog changed");
@@ -359,6 +362,212 @@ public final class NativeQuoteSmoke extends Instrumentation {
             if(first!=null){final Activity a=first;runOnMainChecked(a::finish);}
             if(second!=null){final Activity a=second;runOnMainChecked(a::finish);}
             removeMonitor(monitor);
+        }
+    }
+
+    private void trainingSpinner(Activity activity,int id,int position){
+        runOnMainChecked(()->{
+            android.widget.Spinner spinner=activity.findViewById(id);
+            require(spinner!=null&&spinner.isEnabled(),"training selection missing: "+id);
+            spinner.setSelection(position);
+        });waitForIdleSync();
+    }
+    private void verifyOwnerCatalogWorkflow(Activity activity,String fixtureId,String owner,String ownerPass){
+        // Earlier UI workflow has completed and its original financial invariants were checked.
+        trainingLogin(activity,owner,ownerPass);
+        awaitText(activity,"No open shift","owner login for catalog failed");
+        trainingClick(activity,R.id.cashier_catalog_services);
+        awaitText(activity,"Training services","owner services missing");
+        runOnMainChecked(()->require(activity.findViewById(R.id.cashier_catalog_next)==null,"unnecessary page control"));
+        trainingSelect(activity,"Manage Training document print");
+        awaitText(activity,"Training catalog item","seed service detail missing");
+        trainingClick(activity,R.id.cashier_catalog_archive);
+        awaitText(activity,"Confirm training archive","archive confirmation missing");
+        trainingClick(activity,R.id.cashier_catalog_confirm_archive);
+        awaitText(activity,"Training document print · Archived","seed service not archived");
+        trainingClick(activity,R.id.cashier_back);
+        awaitText(activity,"No open shift","archived sole service blocked dashboard");
+        trainingField(activity,R.id.cashier_opening,"0.00");
+        trainingClick(activity,R.id.cashier_open_shift);
+        awaitText(activity,"Shift open · Expected cash: PHP 0.00","owner shift unavailable without service");
+        trainingClick(activity,R.id.cashier_new_checkout);
+        awaitText(activity,"No active training services on this page. Ask an owner to configure or restore a service.","empty catalog checkout failed");
+        trainingClick(activity,R.id.cashier_back);
+        awaitText(activity,"Shift open · Expected cash: PHP 0.00","empty service selection blocked dashboard");
+        trainingClick(activity,R.id.cashier_close_shift);
+        awaitText(activity,"Close training shift","close unavailable without service");
+        trainingField(activity,R.id.cashier_counted,"0.00");
+        trainingClick(activity,R.id.cashier_confirm_close);
+        awaitText(activity,"Variance: PHP 0.00","empty catalog shift mismatch");
+        trainingClick(activity,R.id.cashier_return_home);
+        awaitText(activity,"No open shift","owner shift not closed");
+        trainingClick(activity,R.id.cashier_catalog_services);
+        awaitText(activity,"No active entries on this page","archive filter wrong");
+        trainingClick(activity,R.id.cashier_catalog_filter);
+        awaitText(activity,"Archived records — restore without deleting history.","archived menu missing");
+        trainingSelect(activity,"Manage Training document print");
+        awaitText(activity,"Training document print · Archived","archived item lost");
+        trainingClick(activity,R.id.cashier_catalog_archive);
+        awaitText(activity,"Confirm training restore","restore confirmation missing");
+        trainingClick(activity,R.id.cashier_catalog_confirm_archive);
+        awaitText(activity,"Training document print · Active","restore failed");
+        trainingClick(activity,R.id.cashier_catalog_return);
+        awaitText(activity,"Training services","active catalog reload failed");
+        trainingClick(activity,R.id.cashier_catalog_create);
+        awaitText(activity,"Create training service","create screen missing");
+        trainingField(activity,R.id.cashier_catalog_name,"Synthetic UI advanced");
+        trainingField(activity,R.id.cashier_catalog_unit,"page");
+        trainingField(activity,R.id.cashier_catalog_price,"4.00");
+        trainingClick(activity,R.id.cashier_catalog_save);
+        awaitText(activity,"Synthetic UI advanced · Active","service create failed");
+        trainingClick(activity,R.id.cashier_catalog_edit);
+        awaitText(activity,"Edit training catalog item","edit screen missing");
+        trainingField(activity,R.id.cashier_catalog_name,"Synthetic UI configured");
+        trainingField(activity,R.id.cashier_catalog_price,"4.20");
+        trainingClick(activity,R.id.cashier_catalog_save);
+        awaitText(activity,"Synthetic UI configured · Active","catalog edit failed");
+        trainingClick(activity,R.id.cashier_catalog_pricing);
+        awaitText(activity,"Configure training pricing","pricing screen unavailable");
+        trainingSpinner(activity,R.id.cashier_pricing_method,PricingMath.Method.PER_PAGE.ordinal());
+        runOnMainChecked(()->{
+            android.widget.CheckBox pages=activity.findViewById(R.id.cashier_pricing_pages);
+            require(pages!=null&&pages.isEnabled(),"document mode checkbox disabled");
+            pages.setChecked(true);
+        });
+        trainingField(activity,R.id.cashier_pricing_threshold,"5");
+        trainingField(activity,R.id.cashier_pricing_rate,"3.50");
+        trainingClick(activity,R.id.cashier_pricing_save);
+        awaitText(activity,"Add the entered tier or clear both fields before saving.","unadded tier silently lost");
+        trainingClick(activity,R.id.cashier_pricing_add);
+        awaitText(activity,"Tier added to draft. Save pricing to apply.","tier draft not added");
+        trainingField(activity,R.id.cashier_pricing_threshold,"5.00");
+        trainingField(activity,R.id.cashier_pricing_rate,"3.00");
+        trainingClick(activity,R.id.cashier_pricing_add);
+        awaitText(activity,"Duplicate tier threshold","duplicate tier accepted");
+        trainingField(activity,R.id.cashier_pricing_threshold,"");
+        trainingField(activity,R.id.cashier_pricing_rate,"");
+        trainingClick(activity,R.id.cashier_pricing_remove);
+        awaitText(activity,"Tier removed from draft. Save pricing to apply.","tier removal missing");
+        trainingField(activity,R.id.cashier_pricing_threshold,"5");
+        trainingField(activity,R.id.cashier_pricing_rate,"3.50");
+        trainingClick(activity,R.id.cashier_pricing_add);
+        awaitText(activity,"Tier added to draft. Save pricing to apply.","tier re-add failed");
+        trainingClick(activity,R.id.cashier_pricing_save);
+        awaitText(activity,"Pricing: Per page · revision 1 · 1 tier(s)","pricing not persisted");
+        trainingClick(activity,R.id.cashier_back);
+        awaitText(activity,"No open shift","catalog dashboard unavailable");
+        trainingClick(activity,R.id.cashier_catalog_materials);
+        awaitText(activity,"Training materials","owner materials menu missing");
+        trainingClick(activity,R.id.cashier_catalog_create);
+        awaitText(activity,"Create training material","material add missing");
+        trainingField(activity,R.id.cashier_catalog_name,"Synthetic UI card");
+        trainingField(activity,R.id.cashier_catalog_unit,"sheet");
+        trainingField(activity,R.id.cashier_catalog_price,"1.20");
+        trainingClick(activity,R.id.cashier_catalog_save);
+        awaitText(activity,"Synthetic UI card · Active","material not created");
+        trainingClick(activity,R.id.cashier_catalog_edit);
+        awaitText(activity,"Edit training catalog item","material editor missing");
+        trainingField(activity,R.id.cashier_catalog_name,"Synthetic UI card edited");
+        trainingField(activity,R.id.cashier_catalog_price,"1.30");
+        trainingClick(activity,R.id.cashier_catalog_save);
+        awaitText(activity,"Synthetic UI card edited · Active","material edit failed");
+        trainingClick(activity,R.id.cashier_back);
+        awaitText(activity,"No open shift","material return failed");
+        trainingClick(activity,R.id.cashier_catalog_services);
+        awaitText(activity,"Training services","services missing after material edit");
+        trainingSelect(activity,"Manage Synthetic UI configured");
+        awaitText(activity,"Synthetic UI configured · Active","configured service missing");
+        trainingClick(activity,R.id.cashier_catalog_recipe);
+        awaitText(activity,"Configure training recipe","recipe screen missing");
+        trainingSelect(activity,"Set usage for Synthetic UI card edited");
+        awaitText(activity,"Training material usage","material usage editor missing");
+        trainingField(activity,R.id.cashier_recipe_usage,"0.25");
+        trainingClick(activity,R.id.cashier_recipe_save);
+        awaitText(activity,"Recipe: 1 linked material(s) · revision 1","material usage not linked");
+        trainingClick(activity,R.id.cashier_catalog_recipe);
+        awaitText(activity,"Configure training recipe","recipe reopen failed");
+        trainingSelect(activity,"Set usage for Synthetic UI card edited");
+        awaitText(activity,"Training material usage","recipe removal editor missing");
+        trainingClick(activity,R.id.cashier_recipe_remove);
+        awaitText(activity,"Confirm training recipe removal","remove confirmation missing");
+        trainingClick(activity,R.id.cashier_recipe_confirm_remove);
+        awaitText(activity,"Recipe: 0 linked material(s) · revision 2","material unlink failed");
+        trainingClick(activity,R.id.cashier_catalog_recipe);
+        awaitText(activity,"Configure training recipe","recipe selection missing");
+        trainingSelect(activity,"Set usage for Training paper");
+        awaitText(activity,"Training material usage","paper recipe editor missing");
+        trainingField(activity,R.id.cashier_recipe_usage,"0.5");
+        trainingClick(activity,R.id.cashier_recipe_save);
+        awaitText(activity,"Recipe: 1 linked material(s) · revision 3","paper recipe not saved");
+        trainingClick(activity,R.id.cashier_back);
+        awaitText(activity,"No open shift","recipe return failed");
+        trainingClick(activity,R.id.cashier_catalog_materials);
+        awaitText(activity,"Training materials","materials missing for archive");
+        trainingSelect(activity,"Manage Synthetic UI card edited");
+        awaitText(activity,"Synthetic UI card edited · Active","material detail unavailable");
+        trainingClick(activity,R.id.cashier_catalog_archive);
+        awaitText(activity,"Confirm training archive","material archive missing");
+        trainingClick(activity,R.id.cashier_catalog_confirm_archive);
+        awaitText(activity,"Synthetic UI card edited · Archived","unused material not archived");
+        trainingClick(activity,R.id.cashier_catalog_archive);
+        awaitText(activity,"Confirm training restore","material restore missing");
+        trainingClick(activity,R.id.cashier_catalog_confirm_archive);
+        awaitText(activity,"Synthetic UI card edited · Active","material restore failed");
+        trainingClick(activity,R.id.cashier_back);
+        awaitText(activity,"No open shift","owner dashboard unavailable");
+        trainingClick(activity,R.id.cashier_add_staff);
+        awaitText(activity,"Owner-only creation. No real shop credentials.","cashier creation missing");
+        trainingField(activity,R.id.cashier_username,"catalog-cashier");
+        trainingField(activity,R.id.cashier_password,"Synthetic-Catalog-Cashier-01");
+        trainingClick(activity,R.id.cashier_confirm_staff);
+        awaitText(activity,"No open shift","catalog cashier creation failed");
+        trainingClick(activity,R.id.cashier_lock);
+        awaitText(activity,"Training sign in","owner could not lock");
+        trainingLogin(activity,"catalog-cashier","Synthetic-Catalog-Cashier-01");
+        awaitText(activity,"No open shift","catalog cashier sign-in failed");
+        runOnMainChecked(()->require(activity.findViewById(R.id.cashier_catalog_services)==null&&activity.findViewById(R.id.cashier_catalog_materials)==null,"cashier owner screens visible"));
+        trainingField(activity,R.id.cashier_opening,"0.00");
+        trainingClick(activity,R.id.cashier_open_shift);
+        awaitText(activity,"Shift open · Expected cash: PHP 0.00","new cashier shift failed");
+        trainingClick(activity,R.id.cashier_new_checkout);
+        awaitText(activity,"Choose training service","dynamic service picker missing");
+        trainingSelect(activity,"Choose Synthetic UI configured");
+        awaitText(activity,"New training checkout","configured service checkout missing");
+        runOnMainChecked(()->require(activity.findViewById(R.id.cashier_count)==null&&activity.findViewById(R.id.cashier_checkout_width)==null,"irrelevant fields visible"));
+        trainingField(activity,R.id.cashier_checkout_pages,"3");
+        trainingField(activity,R.id.cashier_checkout_copies,"2");
+        trainingField(activity,R.id.cashier_cash,"25.00");
+        trainingClick(activity,R.id.cashier_review);
+        awaitText(activity,"Choose the material usage basis","missing usage basis accepted");
+        trainingSpinner(activity,R.id.cashier_checkout_basis,CheckoutPlan.UsageBasis.PRODUCED_ITEM.ordinal());
+        trainingClick(activity,R.id.cashier_review);
+        awaitText(activity,"Review training checkout","configured checkout review missing");
+        awaitText(activity,"Proposed use: 1 sheet (Training paper)","wrong produced-item recipe usage");
+        trainingClick(activity,R.id.cashier_stage);
+        awaitText(activity,"Pending training checkout","configured checkout not staged");
+        awaitText(activity,"Total: PHP 21.00","tier total incorrect");
+        trainingClick(activity,R.id.cashier_record);
+        awaitText(activity,"Recorded training receipt","configured checkout not recorded");
+        trainingClick(activity,R.id.cashier_return_home);
+        awaitText(activity,"Shift open · Expected cash: PHP 21.00","configured shift cash mismatch");
+        trainingClick(activity,R.id.cashier_close_shift);
+        awaitText(activity,"Close training shift","configured shift close unavailable");
+        trainingField(activity,R.id.cashier_counted,"21.00");
+        trainingClick(activity,R.id.cashier_confirm_close);
+        awaitText(activity,"Variance: PHP 0.00","configured shift variance");
+        trainingClick(activity,R.id.cashier_return_home);
+        awaitText(activity,"No open shift","configured shift not closed");
+        trainingClick(activity,R.id.cashier_lock);
+        awaitText(activity,"Training sign in","catalog cashier did not sign out");
+        try(CatalogStore fixture=CatalogStore.checkoutFixture(getTargetContext(),fixtureId)){
+            require(trainingCount(fixture,"SELECT COUNT(*) FROM checkout_sales")==2,"configured checkout recorded wrong sale count");
+            require(trainingCount(fixture,"SELECT COUNT(*) FROM checkout_requests WHERE service_name='Synthetic UI configured' AND state='APPLIED' AND total=2100 AND received=2500 AND change_due=400")==1,"configured checkout persisted wrong amounts");
+            require(trainingCount(fixture,"SELECT COUNT(*) FROM stock_movements")==5,"configured checkout stock movement count");
+            require(trainingCount(fixture,"SELECT after_quantity FROM stock_movements ORDER BY stock_revision DESC LIMIT 1")==47000,"configured checkout stock deduction wrong");
+            require(trainingCount(fixture,"SELECT COUNT(*) FROM cashier_admin_events WHERE action='PRICING_SAVE'")==1,"UI pricing audit missing");
+            require(trainingCount(fixture,"SELECT COUNT(*) FROM cashier_admin_events WHERE action='RECIPE_SAVE'")==3,"UI recipe audit mismatch");
+            require(trainingCount(fixture,"SELECT COUNT(*) FROM cashier_admin_events WHERE action LIKE 'CATALOG_%'")==8,"UI catalog audit count mismatch");
+            require(trainingCount(fixture,"SELECT COUNT(*) FROM cashier_sessions WHERE revoked_ms IS NULL")==0,"UI session left open");
         }
     }
 
@@ -862,6 +1071,71 @@ public final class NativeQuoteSmoke extends Instrumentation {
         }finally{
             java.util.Arrays.fill(owner,'\0');java.util.Arrays.fill(staff,'\0');java.util.Arrays.fill(wrong,'\0');java.util.Arrays.fill(replacement,'\0');context.deleteDatabase(filename);
         }
+    }
+
+    private void verifyCatalogSelectionAccess(){
+        android.content.Context context=getTargetContext();String fixture=stockId(),filename="checkout-fixture-"+fixture+".db";
+        char[] owner="Synthetic-Catalog-Owner-01".toCharArray(),staff="Synthetic-Catalog-Staff-02".toCharArray();
+        try{
+            try(CatalogStore ordinary=new CatalogStore(context)){
+                rejectStock(()->ordinary.authorizedFixtureOwnerCatalog("bad",CatalogEntry.Kind.SERVICE,false,0));
+                rejectStock(()->ordinary.authorizedFixtureCheckoutServices("bad",0));
+            }
+            try(CatalogStore store=CatalogStore.checkoutFixture(context,fixture)){
+                store.bootstrapDemoFixtureOwner("catalog-owner",owner);
+                String token=store.signInFixture("catalog-owner",owner);
+                store.createFixtureCashier(token,"catalog-worker",staff);
+                String cashier=store.signInFixture("catalog-worker",staff);
+                rejectStock(()->store.authorizedFixtureOwnerCatalog(cashier,CatalogEntry.Kind.SERVICE,false,0));
+                rejectStock(()->store.authorizedFixtureCheckoutServices("bad",0));
+                rejectStock(()->store.authorizedFixtureOwnerCatalog(token,CatalogEntry.Kind.SERVICE,false,-8));
+                rejectStock(()->store.authorizedFixtureOwnerCatalog(token,CatalogEntry.Kind.SERVICE,false,1));
+                CatalogEntry seed=store.authorizedFixtureCheckoutServices(cashier,0).entries.get(0);
+                CatalogEntry material=store.authorizedFixtureOwnerCatalog(token,CatalogEntry.Kind.MATERIAL,false,0).entries.get(0);
+                rejectStock(()->store.authorizedFixtureCatalogDetail(cashier,seed.id));
+                rejectStock(()->store.authorizedFixtureCheckoutSelection(cashier,material.id,material.revision));
+                String stable=stockId();
+                CatalogEntry item=store.createAuthorizedFixtureCatalog(token,stable,CatalogEntry.Kind.SERVICE,"Synthetic dynamic service","page","4.20");
+                require(store.createAuthorizedFixtureCatalog(token,stable,CatalogEntry.Kind.SERVICE,"Synthetic dynamic service","page","4.20").id.equals(item.id),"create replay changed identity");
+                rejectStock(()->store.createAuthorizedFixtureCatalog(token,stable,CatalogEntry.Kind.SERVICE,"Synthetic different","page","4.20"));
+                rejectStock(()->store.createAuthorizedFixtureCatalog(cashier,stable,CatalogEntry.Kind.SERVICE,"Synthetic dynamic service","page","4.20"));
+                require(trainingCount(store,"SELECT COUNT(*) FROM cashier_admin_events WHERE action='CATALOG_CREATE'")==1,"create replay duplicated audit");
+                for(int i=0;i<7;i++)store.createAuthorizedFixtureCatalog(token,CatalogEntry.Kind.SERVICE,"Synthetic page "+i,"unit","1.00");
+                CatalogStore.CatalogPage first=store.authorizedFixtureCheckoutServices(cashier,0),second=store.authorizedFixtureCheckoutServices(cashier,8);
+                require(first.entries.size()==8&&first.more&&second.entries.size()==1&&!second.more,"checkout pagination wrong");
+                require(first.entries.stream().noneMatch(e->e.id.equals(second.entries.get(0).id)),"checkout page duplicate");
+                store.archiveAuthorizedFixtureCatalog(token,seed.id,seed.revision,true);
+                require(store.authorizedFixtureCheckoutServices(cashier,0).entries.size()==8&&!store.authorizedFixtureCheckoutServices(cashier,0).more,"archive filter or overflow wrong");
+                require(store.authorizedFixtureOwnerCatalog(token,CatalogEntry.Kind.SERVICE,true,0).entries.get(0).id.equals(seed.id),"owner archived view wrong");
+                rejectStock(()->store.authorizedFixtureCheckoutSelection(cashier,seed.id,seed.revision));
+                CatalogStore.CheckoutSelection selected=store.authorizedFixtureCheckoutSelection(cashier,item.id,1);
+                String shift=stockId();store.openFixtureShift(cashier,shift,0);
+                CheckoutPlan.Inputs simple=TrainingForms.checkout(selected.profile,selected.hasMaterials,"2",null,null,null,null,null,null,"10");
+                rejectStock(()->store.prepareAuthorizedFixtureCheckout(token,shift,stockId(),selected,simple));
+                require(store.prepareAuthorizedFixtureCheckout(cashier,shift,stockId(),selected,simple).totalCentavos==840,"dynamic basic selection wrong");
+                CatalogEntry edited=store.editAuthorizedFixtureCatalog(token,item.id,1,"Synthetic revised service","page","4.50");
+                rejectStock(()->store.prepareAuthorizedFixtureCheckout(cashier,shift,stockId(),selected,simple));
+                rejectStock(()->store.createAuthorizedFixtureCatalog(token,stable,CatalogEntry.Kind.SERVICE,"Synthetic dynamic service","page","4.20"));
+                CatalogStore.CheckoutSelection revised=store.authorizedFixtureCheckoutSelection(cashier,item.id,edited.revision);
+                store.saveAuthorizedFixturePricing(token,item.id,edited.revision,0,PricingMath.Method.PER_PAGE,true,
+                    java.util.Collections.singletonList(new PricingMath.Tier(500,350)));
+                rejectStock(()->store.prepareAuthorizedFixtureCheckout(cashier,shift,stockId(),revised,simple));
+                CatalogStore.CheckoutSelection priced=store.authorizedFixtureCheckoutSelection(cashier,item.id,edited.revision);
+                store.setAuthorizedFixtureMaterialUsage(token,item.id,edited.revision,material.id,material.revision,0,500);
+                CheckoutPlan.Inputs noRecipe=TrainingForms.checkout(priced.profile,false,null,"3","2",null,null,null,null,"25");
+                rejectStock(()->store.prepareAuthorizedFixtureCheckout(cashier,shift,stockId(),priced,noRecipe));
+                CatalogStore.CatalogAdminView detail=store.authorizedFixtureCatalogDetail(token,item.id);
+                require(detail.profile.revision==1&&detail.recipeRevision==1&&detail.usage(material.id)==500,"coherent detail snapshot wrong");
+                CatalogStore.CheckoutSelection ready=store.authorizedFixtureCheckoutSelection(cashier,item.id,edited.revision);
+                CheckoutPlan.Inputs input=TrainingForms.checkout(ready.profile,true,null,"3","2",null,null,null,CheckoutPlan.UsageBasis.PRODUCED_ITEM,"25");
+                CheckoutPlan.Proposal plan=store.prepareAuthorizedFixtureCheckout(cashier,shift,stockId(),ready,input);
+                require(plan.totalCentavos==2100&&plan.changeCentavos==400&&plan.materials.get(0).quantityMilli==1000,"fresh configured checkout incorrect");
+                require(trainingCount(store,"SELECT COUNT(*) FROM checkout_sales")==0&&store.stockBalance(material.id).quantity==50000,"prepare mutated financial state");
+                store.signOutFixture(cashier);
+                rejectStock(()->store.authorizedFixtureCheckoutServices(cashier,0));
+                rejectStock(()->store.prepareAuthorizedFixtureCheckout(cashier,shift,stockId(),ready,input));
+            }
+        }finally{java.util.Arrays.fill(owner,'\0');java.util.Arrays.fill(staff,'\0');context.deleteDatabase(filename);}
     }
 
     private void verifyOwnerAdministration(){

@@ -158,11 +158,30 @@ public final class CatalogStore extends SQLiteOpenHelper {
         return create(ownerToken(token),kind,name,unit,price);
     }
     private CatalogEntry create(String token,CatalogEntry.Kind kind, String name, String unit, String price) {
-        CatalogEntry entry = CatalogEntry.create(kind, name, unit, price);
+        return create(token,CatalogEntry.create(kind,name,unit,price),false);
+    }
+    /** One stable identity per native creation form; exact replay never creates a second item. */
+    CatalogEntry createAuthorizedFixtureCatalog(String token,String id,CatalogEntry.Kind kind,String name,String unit,String price){
+        return create(ownerToken(token),new CatalogEntry(id,kind,name,unit,QuoteMath.parseCentavos(price),1,false),true);
+    }
+    private CatalogEntry create(String token,CatalogEntry entry,boolean replay){
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
         try {
             CashierJournal.Principal actor=authorizeCatalogWrite(db,token);
+            if(replay){
+                try(Cursor c=db.query("catalog",null,"id=?",new String[]{entry.id},null,null,null)){
+                    if(c.moveToFirst()){
+                        CatalogEntry existing=entry(c);
+                        boolean exact=existing.revision==1&&!existing.archived&&existing.kind==entry.kind&&
+                            existing.name.equals(entry.name)&&existing.unit.equals(entry.unit)&&existing.centavos==entry.centavos;
+                        try(Cursor audit=db.rawQuery("SELECT 1 FROM cashier_admin_events WHERE action='CATALOG_CREATE' AND subject_id=? AND revision=1 AND actor_id=?",new String[]{entry.id,actor.id})){
+                            if(!exact||!audit.moveToFirst())throw new IllegalStateException("Creation already recorded or changed; reload catalog");
+                        }
+                        db.setTransactionSuccessful();return existing;
+                    }
+                }
+            }
             db.insertOrThrow("catalog", null, values(entry));
             history(db, entry, "CREATE");
             AdminJournal.append(db,actor,"CATALOG_CREATE",entry.id,entry.revision,null);
@@ -277,6 +296,9 @@ public final class CatalogStore extends SQLiteOpenHelper {
     public List<RecipeBinding> recipeBindings(String serviceId) {
         SQLiteDatabase db=getReadableDatabase();
         if(read(db,serviceId).kind!=CatalogEntry.Kind.SERVICE)throw new IllegalArgumentException("Not a service");
+        return readRecipeBindings(db,serviceId);
+    }
+    private static List<RecipeBinding> readRecipeBindings(SQLiteDatabase db,String serviceId){
         List<RecipeBinding> result=new ArrayList<>();
         try(Cursor c=db.query("service_materials",new String[]{"material_id","unit","quantity_milli"},"service_id=?",new String[]{serviceId},null,null,"material_id")){
             while(c.moveToNext())result.add(new RecipeBinding(c.getString(0),c.getString(1),c.getLong(2)));
@@ -375,6 +397,85 @@ public final class CatalogStore extends SQLiteOpenHelper {
             if(c.moveToNext())throw new IllegalStateException("Training service ambiguous");
             return service;
         }
+    }
+    /** Bounded, deterministic catalog browsing; no unrestricted catalog reads from training UI. */
+    static final class CatalogPage {
+        final List<CatalogEntry> entries;
+        final boolean more;
+        CatalogPage(List<CatalogEntry> entries,boolean more){
+            this.entries=java.util.Collections.unmodifiableList(new ArrayList<>(entries));this.more=more;
+        }
+    }
+    private static CatalogPage catalogPage(SQLiteDatabase db,CatalogEntry.Kind kind,boolean archived,int offset){
+        TrainingForms.validatePageOffset(offset);
+        if(kind==null)throw new IllegalArgumentException("Select a catalog kind");
+        List<CatalogEntry> entries=new ArrayList<>();
+        try(Cursor c=db.rawQuery("SELECT * FROM catalog WHERE kind=? AND archived=? ORDER BY name COLLATE NOCASE,id LIMIT ? OFFSET ?",
+            new String[]{kind.name(),archived?"1":"0",Integer.toString(TrainingForms.PAGE_SIZE+1),Integer.toString(offset)})){
+            while(c.moveToNext())entries.add(entry(c));
+        }
+        boolean more=entries.size()>TrainingForms.PAGE_SIZE;
+        if(more)entries.remove(entries.size()-1);
+        return new CatalogPage(entries,more);
+    }
+    CatalogPage authorizedFixtureOwnerCatalog(String token,CatalogEntry.Kind kind,boolean archived,int offset){
+        return fixtureTransaction(db->{requireFixtureOwner(db,token);return catalogPage(db,kind,archived,offset);});
+    }
+    CatalogPage authorizedFixtureCheckoutServices(String token,int offset){
+        return fixtureTransaction(db->{
+            CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            return catalogPage(db,CatalogEntry.Kind.SERVICE,false,offset);
+        });
+    }
+    static final class CatalogAdminView {
+        final CatalogEntry item;
+        final PricingProfile profile;
+        final long recipeRevision;
+        final List<RecipeBinding> bindings;
+        final List<CatalogEntry> materials;
+        final StockMath.Balance stock;
+        CatalogAdminView(CatalogEntry item,PricingProfile profile,long revision,List<RecipeBinding> bindings,List<CatalogEntry> materials,StockMath.Balance stock){
+            this.item=item;this.profile=profile;recipeRevision=revision;
+            this.bindings=java.util.Collections.unmodifiableList(new ArrayList<>(bindings));
+            this.materials=java.util.Collections.unmodifiableList(new ArrayList<>(materials));this.stock=stock;
+        }
+        long usage(String materialId){
+            for(RecipeBinding b:bindings)if(b.materialId.equals(materialId))return b.quantityMilli;
+            return 0;
+        }
+    }
+    CatalogAdminView authorizedFixtureCatalogDetail(String token,String id){
+        return fixtureTransaction(db->{
+            requireFixtureOwner(db,token);CatalogEntry item=read(db,id);
+            if(item.kind==CatalogEntry.Kind.MATERIAL)return new CatalogAdminView(item,null,0,java.util.Collections.emptyList(),java.util.Collections.emptyList(),stockBalance(db,id));
+            List<RecipeBinding> bindings=readRecipeBindings(db,id);
+            List<CatalogEntry> materials=new ArrayList<>();
+            for(RecipeBinding b:bindings)materials.add(read(db,b.materialId));
+            return new CatalogAdminView(item,readPricing(db,id),recipeRevision(db,id),bindings,materials,null);
+        });
+    }
+    static final class CheckoutSelection {
+        final CatalogEntry service;final PricingProfile profile;final long recipeRevision;final boolean hasMaterials;
+        CheckoutSelection(CatalogEntry service,PricingProfile profile,long revision,boolean hasMaterials){
+            this.service=service;this.profile=profile;recipeRevision=revision;this.hasMaterials=hasMaterials;
+        }
+    }
+    CheckoutSelection authorizedFixtureCheckoutSelection(String token,String id,long expectedRevision){
+        return fixtureTransaction(db->{
+            CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            CatalogEntry service=read(db,id);
+            if(service.kind!=CatalogEntry.Kind.SERVICE||service.archived||service.revision!=expectedRevision)
+                throw new IllegalStateException("Service changed; reload and select again");
+            return new CheckoutSelection(service,readPricing(db,id),recipeRevision(db,id),!readRecipeBindings(db,id).isEmpty());
+        });
+    }
+    CheckoutPlan.Proposal prepareAuthorizedFixtureCheckout(String token,String shiftId,String requestId,CheckoutSelection selected,CheckoutPlan.Inputs inputs){
+        return fixtureTransaction(db->{
+            CashierJournal.Principal actor=CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            CashierJournal.requireShift(db,actor,shiftId,true);
+            if(selected==null)throw new IllegalArgumentException("Select an active service");
+            return readCheckoutPlan(db,requestId,selected.service.id,selected.service.revision,selected.profile.revision,selected.recipeRevision,inputs);
+        });
     }
     CatalogEntry authorizedDemoService(String token){
         return fixtureTransaction(db->{CashierJournal.requireSession(db,token,System.currentTimeMillis());return demoService(db);});

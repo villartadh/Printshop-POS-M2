@@ -78,4 +78,40 @@
     <item type="id" name="cashier_admin_history"/>
     <item type="id" name="cashier_admin_older"/>
     <item type="id" name="cashier_admin_latest"/>
+    <item type="id" name="cashier_catalog_services"/>
+    <item type="id" name="cashier_catalog_materials"/>
+    <item type="id" name="cashier_catalog_filter"/>
+    <item type="id" name="cashier_catalog_create"/>
+    <item type="id" name="cashier_catalog_previous"/>
+    <item type="id" name="cashier_catalog_next"/>
+    <item type="id" name="cashier_catalog_reload"/>
+    <item type="id" name="cashier_catalog_edit"/>
+    <item type="id" name="cashier_catalog_pricing"/>
+    <item type="id" name="cashier_catalog_recipe"/>
+    <item type="id" name="cashier_catalog_archive"/>
+    <item type="id" name="cashier_catalog_return"/>
+    <item type="id" name="cashier_catalog_name"/>
+    <item type="id" name="cashier_catalog_unit"/>
+    <item type="id" name="cashier_catalog_price"/>
+    <item type="id" name="cashier_catalog_save"/>
+    <item type="id" name="cashier_catalog_confirm_archive"/>
+    <item type="id" name="cashier_pricing_method"/>
+    <item type="id" name="cashier_pricing_pages"/>
+    <item type="id" name="cashier_pricing_threshold"/>
+    <item type="id" name="cashier_pricing_rate"/>
+    <item type="id" name="cashier_pricing_tiers"/>
+    <item type="id" name="cashier_pricing_add"/>
+    <item type="id" name="cashier_pricing_remove"/>
+    <item type="id" name="cashier_pricing_save"/>
+    <item type="id" name="cashier_recipe_usage"/>
+    <item type="id" name="cashier_recipe_save"/>
+    <item type="id" name="cashier_recipe_remove"/>
+    <item type="id" name="cashier_recipe_confirm_remove"/>
+    <item type="id" name="cashier_checkout_pages"/>
+    <item type="id" name="cashier_checkout_copies"/>
+    <item type="id" name="cashier_checkout_width"/>
+    <item type="id" name="cashier_checkout_height"/>
+    <item type="id" name="cashier_checkout_unit"/>
+    <item type="id" name="cashier_checkout_basis"/>
+    <item type="id" name="cashier_checkout_choose"/>
 </resources>

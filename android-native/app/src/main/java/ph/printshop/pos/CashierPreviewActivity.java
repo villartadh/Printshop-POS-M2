@@ -12,6 +12,9 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.Button;
+import android.widget.AdapterView;
+import android.widget.ArrayAdapter;
+import android.widget.Spinner;
 import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -132,13 +135,46 @@ public final class CashierPreviewActivity extends Activity {
             case "Use up to three decimal places.":return message;
             case "Enter a printable reason (1–160 characters).":return message;
             case "Owner authorization required":return message;
+            case "Creation already recorded or changed; reload catalog":
+            case "Catalog entry changed; reload before editing":
+            case "Catalog or recipe changed; reload before editing":
+            case "Service or pricing changed; reload before editing":
+            case "Service changed; reload and select again":
+            case "Service, pricing or recipe changed; review a fresh quotation":
+            case "Restore archived entry before editing":
+            case "Entry already has requested archive state":
+            case "Resolve the pending stock movement before editing this material":
+            case "Material unit cannot change after stock movement history exists":
+            case "Material unit cannot change after recipe history exists":
+            case "Remove material from linked service recipes before archiving":
+            case "Reduce material stock to zero with a reason before archiving":
+            case "Service unit cannot change after material or pricing history exists; create a new service":
+            case "Name must contain 1 to 80 printable characters":
+            case "Unit must contain 1 to 24 printable characters":
+            case "No pricing change":case "No recipe change":
+            case "Duplicate tier threshold":case "Maximum 100 material bindings":
+            case "Page and copy inputs require a document pricing method":
+            case "Enter a positive tier quantity with up to two decimals":
+            case "Tier quantity outside supported range":
+            case "Choose the material usage basis":
+            case "Enter a positive dimension with up to three decimal places":
+            case "Dimensions must be positive":
+            case "Billable quantity outside supported range":
+            case "Insufficient material stock":
+            case "Recipe demand is not representable in exact stock milliunits":
+            case "Resolve pending inventory movement before checkout":
+            case "Zero-value checkout requires a separate policy":
+            case "Enter a positive quantity; use Remove to unlink":
+            case "Only active services and materials may be linked":
+            case "Select an active service":
+                return message;
             case "Resolve the existing pending stock movement first":return message;
             case "Invalid quantity":case "Price or quantity outside supported range.":return "Enter a whole training page count from 1 to 100000.";
             default:return "Operation refused or confirmation unavailable. Review the same pending request or history before retrying.";
         }
     }
     private void pauseControls(View v,List<View> paused){
-        if((v instanceof Button||v instanceof EditText)&&v.isEnabled()){v.setEnabled(false);paused.add(v);}
+        if((v instanceof Button||v instanceof EditText||v instanceof Spinner)&&v.isEnabled()){v.setEnabled(false);paused.add(v);}
         if(v instanceof ViewGroup){ViewGroup group=(ViewGroup)v;for(int i=0;i<group.getChildCount();i++)pauseControls(group.getChildAt(i),paused);}
     }
     private void screen(String title,String description){
@@ -177,9 +213,20 @@ public final class CashierPreviewActivity extends Activity {
     private EditText cashField(String title,int id,String initial){
         return field(title,id,InputType.TYPE_CLASS_NUMBER|InputType.TYPE_NUMBER_FLAG_DECIMAL,12,initial);
     }
-    private static int quantity(String text){
-        if(text==null||!text.matches("[0-9]{1,6}"))throw new IllegalArgumentException("Invalid quantity");
-        int value=Integer.parseInt(text);QuoteMath.total(0,value);return value;
+    private Spinner choices(String title,int id,List<String> labels,int selected){
+        TextView titleView=label(title);titleView.setLabelFor(id);
+        Spinner spinner=new Spinner(this);spinner.setId(id);spinner.setMinimumHeight(dp(48));spinner.setSaveEnabled(false);
+        setChoices(spinner,labels,selected);page.addView(spinner);return spinner;
+    }
+    private void setChoices(Spinner spinner,List<String> labels,int selected){
+        ArrayAdapter<String> adapter=new ArrayAdapter<>(this,android.R.layout.simple_spinner_item,labels);
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);spinner.setAdapter(adapter);
+        if(!labels.isEmpty())spinner.setSelection(Math.max(0,Math.min(selected,labels.size()-1)));
+    }
+    private static String text(EditText field){return field==null?null:field.getText().toString();}
+    private void catalogPages(int offset,boolean more,Runnable previous,Runnable next){
+        if(offset>0)button("Previous page",R.id.cashier_catalog_previous,previous);
+        if(more)button("Next page",R.id.cashier_catalog_next,next);
     }
     private void loadEntry(){
         signedIn=false;mode="entry";screen("Training cashier","Checking the isolated workspace");
@@ -218,15 +265,14 @@ public final class CashierPreviewActivity extends Activity {
         final CashierJournal.Shift shift;
         final long expected;
         final int pending;
-        final CatalogEntry service;
-        Dashboard(CashierJournal.Principal a,CashierJournal.Shift s,long e,int p,CatalogEntry service){actor=a;shift=s;expected=e;pending=p;this.service=service;}
+        Dashboard(CashierJournal.Principal a,CashierJournal.Shift s,long e,int p){actor=a;shift=s;expected=e;pending=p;}
     }
     private Dashboard dashboard(){
         String token=session();CashierJournal.Principal actor=store.fixturePrincipal(token);
         CashierJournal.Shift shift=store.activeFixtureShift(token);
         long expected=shift==null?0:store.expectedFixtureCash(token,shift.id);
         int pending=shift==null?0:store.pendingAuthorizedFixtureCheckouts(token,shift.id,50).size();
-        return new Dashboard(actor,shift,expected,pending,store.authorizedDemoService(token));
+        return new Dashboard(actor,shift,expected,pending);
     }
     private void refreshDashboard(){
         submit(this::dashboard,v->showDashboard((Dashboard)v));
@@ -243,7 +289,7 @@ public final class CashierPreviewActivity extends Activity {
         }else{
             label("Shift open · Expected cash: "+QuoteMath.display(d.expected),18,Color.rgb(27,39,58));
             label(d.pending==0?"No pending training checkouts":"Unresolved training requests: "+d.pending+(d.pending==50?"+":""));
-            Button next=button("New training checkout",R.id.cashier_new_checkout,()->showCheckout(d));
+            Button next=button("New training checkout",R.id.cashier_new_checkout,()->showCheckoutChoices(d.shift.id,0));
             next.setEnabled(d.pending==0);
             button("Recover pending checkouts",R.id.cashier_pending,()->showPendingList(d.shift.id));
             Button close=button("Close training shift",R.id.cashier_close_shift,()->showClose(d));close.setEnabled(d.pending==0);
@@ -253,11 +299,163 @@ public final class CashierPreviewActivity extends Activity {
         if(d.actor.role==CashierSecurity.Role.OWNER){
             button("Create training cashier",R.id.cashier_add_staff,this::showStaff);
             button("Manage training cashiers",R.id.cashier_manage_staff,this::showManageStaff);
+            button("Manage training services",R.id.cashier_catalog_services,()->showOwnerCatalog(CatalogEntry.Kind.SERVICE,false,0));
+            button("Manage training materials",R.id.cashier_catalog_materials,()->showOwnerCatalog(CatalogEntry.Kind.MATERIAL,false,0));
             button("Training inventory",R.id.cashier_inventory,this::showInventory);
             button("Administrative history",R.id.cashier_admin_history,()->showAdminHistory(0));
             button("Reset training cashier passphrase",R.id.cashier_reset_pass,()->showCredentialChange(true));
         }
         button("Lock / sign out",R.id.cashier_lock,this::lockAndReload);
+    }
+    private void showOwnerCatalog(CatalogEntry.Kind kind,boolean archived,int offset){
+        submit(()->store.authorizedFixtureOwnerCatalog(session(),kind,archived,offset),v->{
+            CatalogStore.CatalogPage result=(CatalogStore.CatalogPage)v;
+            mode="owner-catalog";boolean services=kind==CatalogEntry.Kind.SERVICE;
+            screen(services?"Training services":"Training materials",archived?"Archived records — restore without deleting history.":"Active synthetic records — changes are recorded in administrative history.");
+            button(archived?"Show active entries":"Show archived entries",R.id.cashier_catalog_filter,()->showOwnerCatalog(kind,!archived,0));
+            if(!archived)button(services?"New training service":"New training material",R.id.cashier_catalog_create,()->showCatalogEditor(kind,null));
+            if(result.entries.isEmpty())label(archived?"No archived entries on this page":"No active entries on this page");
+            for(CatalogEntry item:result.entries){
+                label(item.name+" · "+QuoteMath.display(item.centavos)+" / "+item.unit);
+                label("Revision "+item.revision+" · ID "+item.id.substring(0,8));
+                button("Manage "+item.name,0,()->showOwnerDetail(item.id));
+            }
+            catalogPages(offset,result.more,()->showOwnerCatalog(kind,archived,offset-TrainingForms.PAGE_SIZE),
+                ()->showOwnerCatalog(kind,archived,offset+TrainingForms.PAGE_SIZE));
+            button("Reload catalog",R.id.cashier_catalog_reload,()->showOwnerCatalog(kind,archived,0));
+            back();
+        });
+    }
+    private void showOwnerDetail(String id){
+        submit(()->store.authorizedFixtureCatalogDetail(session(),id),v->{
+            CatalogStore.CatalogAdminView detail=(CatalogStore.CatalogAdminView)v;CatalogEntry item=detail.item;
+            mode="catalog-detail";screen("Training catalog item",item.name+" · "+(item.archived?"Archived":"Active"));
+            label(QuoteMath.display(item.centavos)+" / "+item.unit+" · Revision "+item.revision);
+            label("Item: "+item.id);
+            if(detail.stock!=null)label("Stock: "+StockMath.display(detail.stock.quantity)+" "+item.unit);
+            if(!item.archived){
+                button("Edit training item",R.id.cashier_catalog_edit,()->showCatalogEditor(item.kind,item));
+                if(detail.profile!=null){
+                    label("Pricing: "+PricingProfile.label(detail.profile.method)+" · revision "+detail.profile.revision+" · "+detail.profile.tiers.size()+" tier(s)");
+                    button("Configure training pricing",R.id.cashier_catalog_pricing,()->showOwnerPricing(detail));
+                    label("Recipe: "+detail.bindings.size()+" linked material(s) · revision "+detail.recipeRevision);
+                    button("Configure training recipe",R.id.cashier_catalog_recipe,()->showOwnerRecipe(detail,0));
+                }
+            }
+            button(item.archived?"Restore training item":"Archive training item",R.id.cashier_catalog_archive,()->showCatalogArchive(item));
+            button("Reload training item",R.id.cashier_catalog_reload,()->showOwnerDetail(id));
+            button("Return to catalog",R.id.cashier_catalog_return,()->showOwnerCatalog(item.kind,item.archived,0));
+            back();
+        });
+    }
+    private void showCatalogEditor(CatalogEntry.Kind kind,CatalogEntry original){
+        mode="catalog-edit";boolean service=kind==CatalogEntry.Kind.SERVICE;
+        screen(original==null?(service?"Create training service":"Create training material"):"Edit training catalog item",
+            "Synthetic only. Save creates an audited catalog revision. Review saved records before another attempt.");
+        EditText name=field("Name",R.id.cashier_catalog_name,InputType.TYPE_CLASS_TEXT,80,original==null?null:original.name);
+        EditText unit=field("Unit",R.id.cashier_catalog_unit,InputType.TYPE_CLASS_TEXT,24,original==null?null:original.unit);
+        EditText price=cashField(service?"Base selling price (PHP)":"Unit material cost (PHP)",R.id.cashier_catalog_price,
+            original==null?null:TrainingForms.money(original.centavos));
+        String creationId=original==null?UUID.randomUUID().toString():null;
+        button("Save training item",R.id.cashier_catalog_save,()->{
+            String n=text(name),u=text(unit),p=text(price);
+            submit(()->original==null?store.createAuthorizedFixtureCatalog(session(),creationId,kind,n,u,p):
+                store.editAuthorizedFixtureCatalog(session(),original.id,original.revision,n,u,p),
+                v->showOwnerDetail(((CatalogEntry)v).id));
+        });
+        button("Discard draft",R.id.cashier_catalog_return,()->{
+            if(original==null)showOwnerCatalog(kind,false,0);else showOwnerDetail(original.id);
+        });back();
+    }
+    private void showCatalogArchive(CatalogEntry item){
+        mode="catalog-archive";screen(item.archived?"Confirm training restore":"Confirm training archive",
+            item.name+" · Revision "+item.revision+". Historical records are preserved. Pending movements and linked stock protection still apply.");
+        button(item.archived?"Confirm restore":"Confirm archive",R.id.cashier_catalog_confirm_archive,()->submit(
+            ()->store.archiveAuthorizedFixtureCatalog(session(),item.id,item.revision,!item.archived),v->showOwnerDetail(item.id)));
+        button("Cancel and reload item",R.id.cashier_catalog_return,()->showOwnerDetail(item.id));back();
+    }
+    private void showOwnerPricing(CatalogStore.CatalogAdminView detail){
+        CatalogEntry service=detail.item;PricingProfile saved=detail.profile;
+        mode="catalog-pricing";screen("Configure training pricing",service.name+" · Saved pricing revision "+saved.revision+" · Base "+QuoteMath.display(service.centavos));
+        List<String> methods=new ArrayList<>();for(PricingMath.Method m:PricingMath.Method.values())methods.add(PricingProfile.label(m));
+        Spinner method=choices("Pricing method",R.id.cashier_pricing_method,methods,saved.method.ordinal());
+        CheckBox pages=new CheckBox(this);pages.setId(R.id.cashier_pricing_pages);pages.setText("Use pages × copies (document methods only)");
+        pages.setSaveEnabled(false);pages.setChecked(saved.pagesAndCopies);pages.setEnabled(PricingProfile.supportsPages(saved.method));page.addView(pages);
+        method.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){
+            public void onItemSelected(AdapterView<?> p,View view,int position,long id){
+                boolean allowed=position>=0&&position<PricingMath.Method.values().length&&PricingProfile.supportsPages(PricingMath.Method.values()[position]);
+                if(!allowed)pages.setChecked(false);pages.setEnabled(allowed&&!busy);
+            }
+            public void onNothingSelected(AdapterView<?> p){pages.setChecked(false);pages.setEnabled(false);}
+        });
+        label("Optional bulk tiers. Highest qualifying quantity wins; base selling price otherwise.");
+        List<PricingMath.Tier> draft=new ArrayList<>(saved.tiers);
+        EditText threshold=field("Minimum billable quantity",R.id.cashier_pricing_threshold,InputType.TYPE_CLASS_NUMBER|InputType.TYPE_NUMBER_FLAG_DECIMAL,9,null);
+        EditText rate=cashField("Tier rate per billable unit (PHP)",R.id.cashier_pricing_rate,null);
+        Spinner tiers=choices("Draft tiers",R.id.cashier_pricing_tiers,tierLabels(draft),0);
+        final Button[] remove={null};
+        button("Add tier to draft",R.id.cashier_pricing_add,()->{
+            try{
+                List<PricingMath.Tier> next=TrainingForms.addTier(PricingMath.Method.values()[method.getSelectedItemPosition()],pages.isChecked(),draft,text(threshold),text(rate));
+                draft.clear();draft.addAll(next);threshold.setText("");rate.setText("");setChoices(tiers,tierLabels(draft),0);
+                remove[0].setEnabled(true);status.setText("Tier added to draft. Save pricing to apply.");
+            }catch(IllegalArgumentException|IllegalStateException ex){status.setText(safeFailure(ex.getMessage()));}
+        });
+        remove[0]=button("Remove selected draft tier",R.id.cashier_pricing_remove,()->{
+            int index=tiers.getSelectedItemPosition();
+            if(index>=0&&index<draft.size()){draft.remove(index);setChoices(tiers,tierLabels(draft),0);remove[0].setEnabled(!draft.isEmpty());status.setText("Tier removed from draft. Save pricing to apply.");}
+        });
+        remove[0].setEnabled(!draft.isEmpty());
+        button("Save training pricing",R.id.cashier_pricing_save,()->{
+            if(threshold.length()!=0||rate.length()!=0){status.setText("Add the entered tier or clear both fields before saving.");return;}
+            PricingMath.Method selected=PricingMath.Method.values()[method.getSelectedItemPosition()];
+            boolean usePages=pages.isChecked();List<PricingMath.Tier> copy=new ArrayList<>(draft);
+            submit(()->store.saveAuthorizedFixturePricing(session(),service.id,service.revision,saved.revision,selected,usePages,copy),v->showOwnerDetail(service.id));
+        });
+        button("Discard draft and reload item",R.id.cashier_catalog_return,()->showOwnerDetail(service.id));back();
+    }
+    private static List<String> tierLabels(List<PricingMath.Tier> draft){
+        List<String> rows=new ArrayList<>();
+        for(PricingMath.Tier t:draft)rows.add(PricingMath.displayQuantity(t.minQuantityHundredths)+"+ units · "+QuoteMath.display(t.rateCentavos));
+        if(rows.isEmpty())rows.add("No bulk tiers");
+        return rows;
+    }
+    private void showOwnerRecipe(CatalogStore.CatalogAdminView detail,int offset){
+        submit(()->store.authorizedFixtureOwnerCatalog(session(),CatalogEntry.Kind.MATERIAL,false,offset),v->{
+            CatalogStore.CatalogPage result=(CatalogStore.CatalogPage)v;
+            mode="catalog-recipe";screen("Configure training recipe",detail.item.name+" · Saved recipe revision "+detail.recipeRevision+". Configure material usage; stock is not consumed by editing.");
+            label(detail.bindings.size()+" linked material(s). Select a material to set or remove its usage.");
+            if(result.entries.isEmpty())label("No active materials on this page");
+            for(CatalogEntry m:result.entries){
+                long usage=detail.usage(m.id);
+                label(m.name+" · "+QuoteMath.display(m.centavos)+" / "+m.unit+" · ID "+m.id.substring(0,8));
+                label(usage>0?"Linked: "+StockMath.display(usage)+" "+m.unit+" per selected usage basis":"Not linked");
+                button("Set usage for "+m.name,0,()->showRecipeUsage(detail,m,usage));
+            }
+            catalogPages(offset,result.more,()->showOwnerRecipe(detail,offset-TrainingForms.PAGE_SIZE),()->showOwnerRecipe(detail,offset+TrainingForms.PAGE_SIZE));
+            button("Reload service",R.id.cashier_catalog_return,()->showOwnerDetail(detail.item.id));back();
+        });
+    }
+    private void showRecipeUsage(CatalogStore.CatalogAdminView detail,CatalogEntry material,long prior){
+        CatalogEntry service=detail.item;mode="recipe-usage";
+        screen("Training material usage",service.name+" · "+material.name+" ("+material.unit+"). Quantity per selected usage basis; no stock movement on save.");
+        EditText usage=field("Material quantity (up to three decimals)",R.id.cashier_recipe_usage,
+            InputType.TYPE_CLASS_NUMBER|InputType.TYPE_NUMBER_FLAG_DECIMAL,13,prior==0?null:StockMath.display(prior));
+        button("Save training usage",R.id.cashier_recipe_save,()->{
+            String raw=text(usage);
+            submit(()->{
+                long qty=StockMath.parse(raw);
+                if(qty==0)throw new IllegalArgumentException("Enter a positive quantity; use Remove to unlink");
+                return store.setAuthorizedFixtureMaterialUsage(session(),service.id,service.revision,material.id,material.revision,detail.recipeRevision,qty);
+            },v->showOwnerDetail(service.id));
+        });
+        if(prior>0)button("Remove material from recipe",R.id.cashier_recipe_remove,()->{
+            screen("Confirm training recipe removal",material.name+" will be unlinked from "+service.name+". Historical records and stock remain unchanged.");
+            button("Confirm recipe removal",R.id.cashier_recipe_confirm_remove,()->submit(()->store.setAuthorizedFixtureMaterialUsage(
+                session(),service.id,service.revision,material.id,material.revision,detail.recipeRevision,0),v->showOwnerDetail(service.id)));
+            button("Cancel and reload service",R.id.cashier_catalog_return,()->showOwnerDetail(service.id));back();
+        });
+        button("Discard draft and reload service",R.id.cashier_catalog_return,()->showOwnerDetail(service.id));back();
     }
     private void showAdminHistory(long before){
         submit(()->store.authorizedFixtureAdminHistory(session(),before,20),v->{
@@ -389,15 +587,48 @@ public final class CashierPreviewActivity extends Activity {
             })){Arrays.fill(old,'\0');Arrays.fill(replacement,'\0');}
         });back();
     }
-    private void showCheckout(Dashboard d){
-        mode="checkout";screen("New training checkout",d.service.name+" · "+QuoteMath.display(d.service.centavos)+" / "+d.service.unit);
-        EditText count=field("Number of pages",R.id.cashier_count,InputType.TYPE_CLASS_NUMBER,6,"1");
+    private void showCheckoutChoices(String shift,int offset){
+        submit(()->store.authorizedFixtureCheckoutServices(session(),offset),v->{
+            CatalogStore.CatalogPage result=(CatalogStore.CatalogPage)v;
+            if(offset==0&&!result.more&&result.entries.size()==1){selectCheckout(shift,result.entries.get(0));return;}
+            mode="checkout-service";screen("Choose training service","Only active services can be used. Pricing and recipe are loaded from saved records.");
+            if(result.entries.isEmpty())label("No active training services on this page. Ask an owner to configure or restore a service.");
+            for(CatalogEntry item:result.entries){
+                label(item.name+" · "+QuoteMath.display(item.centavos)+" / "+item.unit+" · ID "+item.id.substring(0,8));
+                button("Choose "+item.name,0,()->selectCheckout(shift,item));
+            }
+            catalogPages(offset,result.more,()->showCheckoutChoices(shift,offset-TrainingForms.PAGE_SIZE),()->showCheckoutChoices(shift,offset+TrainingForms.PAGE_SIZE));
+            button("Reload services",R.id.cashier_catalog_reload,()->showCheckoutChoices(shift,0));back();
+        });
+    }
+    private void selectCheckout(String shift,CatalogEntry service){
+        submit(()->store.authorizedFixtureCheckoutSelection(session(),service.id,service.revision),v->showCheckout(shift,(CatalogStore.CheckoutSelection)v));
+    }
+    private void showCheckout(String shift,CatalogStore.CheckoutSelection selected){
+        CatalogEntry service=selected.service;PricingProfile profile=selected.profile;
+        mode="checkout";screen("New training checkout",service.name+" · "+QuoteMath.display(service.centavos)+" / "+service.unit);
+        label("Pricing: "+PricingProfile.label(profile.method)+" · "+profile.tiers.size()+" tier(s)");
+        EditText count=profile.pagesAndCopies?null:field("Quantity ("+service.unit+")",R.id.cashier_count,InputType.TYPE_CLASS_NUMBER,6,"1");
+        EditText pages=profile.pagesAndCopies?field("Pages",R.id.cashier_checkout_pages,InputType.TYPE_CLASS_NUMBER,6,"1"):null;
+        EditText copies=profile.pagesAndCopies?field("Copies",R.id.cashier_checkout_copies,InputType.TYPE_CLASS_NUMBER,6,"1"):null;
+        boolean measured=TrainingForms.measured(profile.method);
+        int decimals=InputType.TYPE_CLASS_NUMBER|InputType.TYPE_NUMBER_FLAG_DECIMAL;
+        EditText width=measured?field("Width",R.id.cashier_checkout_width,decimals,9,null):null;
+        EditText height=measured?field("Height",R.id.cashier_checkout_height,decimals,9,null):null;
+        Spinner units=measured?choices("Measurement unit",R.id.cashier_checkout_unit,Arrays.asList("Feet","Inches","Centimeters","Meters"),0):null;
+        Spinner basis=selected.hasMaterials&&profile.needsAdvancedQuote()?choices("Material usage basis",R.id.cashier_checkout_basis,
+            Arrays.asList("Choose usage basis","Per billable unit","Per produced item"),0):null;
+        if(selected.hasMaterials&&!profile.needsAdvancedQuote())label("Material usage: per billable unit");
+        if(!selected.hasMaterials)label("No material recipe configured");
         EditText cash=cashField("Training cash tendered (PHP)",R.id.cashier_cash,null);
         button("Review training checkout",R.id.cashier_review,()->{
-            String q=count.getText().toString(),amount=cash.getText().toString();String id=UUID.randomUUID().toString();
-            submit(()->store.prepareDemoFixtureCheckout(session(),d.shift.id,id,quantity(q),QuoteMath.parseCentavos(amount)),
-                v->showReview(d.shift.id,(CheckoutPlan.Proposal)v));
-        });back();
+            String quantity=text(count),p=text(pages),c=text(copies),w=text(width),h=text(height),amount=text(cash),id=UUID.randomUUID().toString();
+            PricingMath.DimensionUnit unit=units==null?null:PricingMath.DimensionUnit.values()[units.getSelectedItemPosition()];
+            CheckoutPlan.UsageBasis usage=basis==null?null:CheckoutPlan.UsageBasis.values()[basis.getSelectedItemPosition()];
+            submit(()->store.prepareAuthorizedFixtureCheckout(session(),shift,id,selected,
+                TrainingForms.checkout(profile,selected.hasMaterials,quantity,p,c,w,h,unit,usage,amount)),v->showReview(shift,(CheckoutPlan.Proposal)v));
+        });
+        button("Reload service selection",R.id.cashier_checkout_choose,()->showCheckoutChoices(shift,0));back();
     }
     private void showReview(String shift,CheckoutPlan.Proposal plan){
         mode="review";screen("Review training checkout","No sale, payment or inventory change has been recorded.");
