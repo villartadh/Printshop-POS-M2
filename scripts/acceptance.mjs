@@ -100,13 +100,16 @@ async function main(){
     assert.deepEqual(restored.branding,original.branding);
   });
   await check('expense centavo validation, Philippine business date and immutable void audit', async () => {
-    const fixture={description:'Synthetic expense',category:'other',amount:25};
+    const fixture={description:'Synthetic expense',category:'other',amount:25,clientMutationId:randomUUID()};
     for (const invalid of [{amount:'Infinity'},{amount:'25'},{amount:0.001},{amount:1000000001},{amount:-1},{amount:0},{amount:true},{description:' '},{category:'invalid'},{vendor:42},{expenseDate:'2026-02-30'},{expenseDate:'not-a-date'}]) {
       await write('/expenses',{...fixture,...invalid},400);
     }
     const date=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Manila',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
     const before=date();
+    await write('/expenses',{...fixture,clientMutationId:undefined},400);
     const expense=await write('/expenses',fixture);
+    const replay=await write('/expenses',fixture,200);assert.equal(replay.id,expense.id);assert.equal(replay.duplicate,true);
+    await write('/expenses',{...fixture,amount:26},409);
     assert.ok([before,date()].includes(expense.expenseDate));
     assert.equal(expense.amount,25);
     assert.ok((await state()).expenses.some(e=>e.id===expense.id));
@@ -126,7 +129,8 @@ async function main(){
       const row=db.prepare('SELECT * FROM expenses WHERE id=?').get(expense.id);
       assert.equal(row.amount,25);assert.equal(row.description,fixture.description);assert.equal(row.void_reason,reason);assert.ok(row.voided_at&&row.voided_by);
     }finally{db.close();}
-    const tiny=await write('/expenses',{...fixture,amount:0.01});assert.equal(tiny.amount,0.01);
+    const afterVoid=await write('/expenses',fixture,200);assert.equal(afterVoid.id,expense.id);assert.equal(afterVoid.voided,true);
+    const tiny=await write('/expenses',{...fixture,clientMutationId:randomUUID(),amount:0.01});assert.equal(tiny.amount,0.01);
     await write('/expenses/'+tiny.id,{reason},200,'DELETE');
   });
   await check('synthetic catalog and customer setup', async () => {
@@ -506,6 +510,7 @@ async function main(){
     for(const table of ['transaction_request_identities','balance_collection_requests','drawer_movement_requests','inventory_mutation_results','applied_mutations','inventory_alert_reads','inventory_alert_epochs'])assert.ok(!(table in exported),table);
     verifyResponse(await request('/api/backup/export'),401);
     assert.ok(!('users' in exported)&&!('sessions' in exported)&&!('session_secret' in exported));
+    assert.ok(exported.expenses.every(e=>!('request_digest' in e)&&!('client_mutation_id' in e)&&!('actor_id' in e)));
     assert.ok(!JSON.stringify(exported).includes('password_hash')&&!JSON.stringify(exported).includes('pin_hash'));
   });
   await check('logout revokes session',async()=>{verifyResponse(await request('/api/auth/logout',{method:'POST',auth:true}),200);verifyResponse(await request('/api/bootstrap',{auth:true}),401);});

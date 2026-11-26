@@ -503,6 +503,34 @@ try {
     await page.getByText('Unconfirmed drawer adjustment',{exact:true}).waitFor({state:'hidden'});
     assert.deepEqual((await api('/bootstrap')).shifts,accepted.shifts);
   });
+  await check('expense recovery preserves exact reference after lost acknowledgment',async()=>{
+    await click('Expenses & Reports');
+    await click('Log Expense');
+    const dialog=page.getByRole('dialog').filter({has:page.getByText('Record Operating Expense',{exact:true})});
+    await dialog.getByLabel('Description',{exact:true}).fill('Synthetic Expense Recovery');
+    await dialog.getByLabel(/^Amount /).fill('12.34');
+    let forwarded;
+    await page.route('**/api/expenses',async route=>{
+      if(route.request().method()!=='POST'){await route.continue();return;}
+      const upstream=await route.fetch();
+      forwarded={request:route.request().postDataJSON(),response:await upstream.json()};
+      await route.fulfill({response:upstream,json:{...forwarded.response,clientMutationId:'invalid-ack'}});
+    });
+    await dialog.getByRole('button',{name:'Save Expense',exact:true}).click();
+    await waitText('Unconfirmed expense');
+    assert.equal(forwarded.response.duplicate,false);
+    assert.equal((await api('/bootstrap')).expenses.filter(e=>e.id===forwarded.response.id).length,1);
+    await page.reload();await signIn();await click('Expenses & Reports');
+    await waitText('Unconfirmed expense');await waitText('Reference: '+forwarded.request.clientMutationId);
+    assert.equal(await button('Log Expense').isEnabled(),false);
+    await page.unroute('**/api/expenses');
+    const replay=page.waitForResponse(r=>r.url().endsWith('/api/expenses')&&r.request().method()==='POST');
+    await click('Retry Original Expense');
+    const response=await replay;assert.equal(response.status(),200);
+    assert.equal((await response.json()).duplicate,true);assert.deepEqual(response.request().postDataJSON(),forwarded.request);
+    await page.getByText('Unconfirmed expense',{exact:true}).waitFor({state:'hidden'});
+    assert.equal((await api('/bootstrap')).expenses.filter(e=>e.description==='Synthetic Expense Recovery').length,1);
+  });
   await check('browser DPI simulation at 100, 125 and 150 percent',async()=>{
     const measurements=[];
     for(const scale of [1,1.25,1.5]){

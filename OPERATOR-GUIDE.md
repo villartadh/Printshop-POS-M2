@@ -70,3 +70,6 @@ The administrator-only JSON export retains business configuration, customers, sa
 
 ### Expense correction
 Record positive numeric amounts to centavo precision. Administrators and managers void mistakes with a reason rather than deleting the original record. Active financial reports omit voided expenses; the original amount, identity, date, void actor/time/reason and audit event remain in the database and private review export. This is a pilot correction, not an authorized fiscal adjustment. Legacy expenses deleted before this change cannot be reconstructed. If an expense submission is unconfirmed, review existing records before repeating it; create replay protection is not yet implemented.
+
+### Expense recovery
+Expense recording now reserves the original amount, category, description, vendor, date and request reference in this browser's recovery storage before sending. Retry only the original reference; even a subsequently voided expense is acknowledged without reactivation. Pending records block new expense entry for that operator in this browser. Do not clear browser data or pay/record the same expense again. Definitively rejected requests require manager reconciliation; no destructive discard is provided. The server requires a reference; old clients must be upgraded.

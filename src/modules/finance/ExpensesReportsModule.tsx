@@ -9,6 +9,7 @@ import { Button, Card, Input, Select } from '../../components/ui/Primitives.tsx'
 import { DataTable } from '../../components/ui/DataTable.tsx';
 import { BreakdownBarList } from '../../components/ui/Charts.tsx';
 import { Modal } from '../../components/ui/Overlays.tsx';
+import {readPendingExpense,reserveExpense,type PendingExpense} from '../../services/offlineDb.ts';
 
 const businessDate = (date = new Date()) => new Intl.DateTimeFormat('en-CA', {timeZone:'Asia/Manila',year:'numeric',month:'2-digit',day:'2-digit'}).format(date);
 type ReportData = {from:string;to:string;transactions:Transaction[];expenses:ExpenseRecord[]};
@@ -26,6 +27,7 @@ export const ExpensesReportsModule: React.FC = () => {
     createExpense,
     deleteExpense,
     session,
+    isOnline,
     notify,
   } = useApp();
   const taxCurr = settings.taxAndCurrency;
@@ -42,6 +44,10 @@ export const ExpensesReportsModule: React.FC = () => {
   const expenseSubmitting=useRef(false);
   const [savingExpense,setSavingExpense]=useState(false);
   const [expenseError,setExpenseError]=useState('');
+  const [pendingExpense,setPendingExpense]=useState<PendingExpense|null>(null);
+  const [expenseStorageReady,setExpenseStorageReady]=useState(false);
+  const owner=session?.user.id;
+  useEffect(()=>{let cancelled=false;setExpenseStorageReady(false);setPendingExpense(null);setExpenseError('');if(owner)readPendingExpense(owner).then(record=>{if(!cancelled){setPendingExpense(record);setExpenseStorageReady(true);}}).catch(()=>{if(!cancelled)setExpenseError('Expense recovery storage unavailable. Do not repeat unconfirmed expenses.');});return()=>{cancelled=true;};},[owner]);
 
   // Expense form
   const [expCategory, setExpCategory] = useState<ExpenseRecord['category']>('printing_materials');
@@ -49,6 +55,16 @@ export const ExpensesReportsModule: React.FC = () => {
   const [expAmount, setExpAmount] = useState('');
   const [expVendor, setExpVendor] = useState('');
   const [expDate, setExpDate] = useState(businessDate());
+  const submitExpense=async(existing?:PendingExpense)=>{
+    if(expenseSubmitting.current||!owner||!expenseStorageReady||!isOnline||(!existing&&pendingExpense)||(existing&&existing.ownerId!==owner))return;
+    expenseSubmitting.current=true;setSavingExpense(true);setExpenseError('');
+    try{
+      const record=existing??await reserveExpense(owner,{category:expCategory,description:expDesc,amount:Number(expAmount),vendor:expVendor,expenseDate:expDate});
+      setPendingExpense(record);await createExpense(record);
+      setPendingExpense(null);setExpDesc('');setExpAmount('');setExpVendor('');setAddExpenseOpen(false);
+    }catch(error){setExpenseError(error instanceof Error?error.message:'Expense confirmation failed.');try{const pending=await readPendingExpense(owner);setPendingExpense(pending);if(pending)setAddExpenseOpen(false);}catch{setExpenseStorageReady(false);}}
+    finally{expenseSubmitting.current=false;setSavingExpense(false);}
+  };
 
   const [report,setReport] = useState<ReportData|null>(null);
   const [reportError,setReportError] = useState('');
@@ -162,13 +178,21 @@ export const ExpensesReportsModule: React.FC = () => {
             <Printer className="w-3.5 h-3.5" />
             Print Report
           </Button>
-          <Button size="sm" onClick={() => setAddExpenseOpen(true)}>
+          <Button size="sm" disabled={!expenseStorageReady||!isOnline||!!pendingExpense||savingExpense} onClick={() => {setExpenseError('');setAddExpenseOpen(true);}}>
             <Plus className="w-4 h-4" />
             Log Expense
           </Button>
         </div>
       </div>
 
+      {!addExpenseOpen&&expenseError&&<p role="alert" className="text-sm text-[var(--pos-error)]">{expenseError}</p>}
+      {pendingExpense&&pendingExpense.ownerId===owner&&<Card><div className="space-y-2">
+        <h2 className="font-semibold">Unconfirmed expense</h2>
+        <p className="text-sm">{pendingExpense.description} · {formatCurrency(pendingExpense.amount,taxCurr)} · {pendingExpense.expenseDate}</p>
+        <p className="text-xs break-all">Reference: {pendingExpense.clientMutationId}</p>
+        <p className="text-sm">Do not record the expense again. Confirm this original reference.</p>
+        <Button size="sm" disabled={!isOnline||!expenseStorageReady||savingExpense} onClick={()=>void submitExpense(pendingExpense)}>Retry Original Expense</Button>
+      </div></Card>}
       {/* Date Filter & Tabs */}
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="flex flex-wrap items-center gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-lg">
@@ -423,13 +447,7 @@ export const ExpensesReportsModule: React.FC = () => {
         <form
           onSubmit={async (e) => {
             e.preventDefault();
-            if(expenseSubmitting.current)return;
-            expenseSubmitting.current=true;setSavingExpense(true);setExpenseError('');
-            try{
-              await createExpense({category:expCategory,description:expDesc,amount:Number(expAmount),vendor:expVendor,expenseDate:expDate});
-              setExpDesc('');setExpAmount('');setExpVendor('');setAddExpenseOpen(false);
-            }catch(error){setExpenseError((error instanceof Error?error.message:'Expense submission failed.')+' Refresh the report before repeating an unconfirmed expense.');}
-            finally{expenseSubmitting.current=false;setSavingExpense(false);}
+            await submitExpense();
           }}
           className="space-y-3"
         >

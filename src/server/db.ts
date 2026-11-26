@@ -317,6 +317,9 @@ const requiredTriggers=['inventory_alert_insert','inventory_alert_transition'];
   };
 
   // Additive migration: preserve all existing expense rows, including legacy backups.
+  ensureColumn('expenses', 'client_mutation_id', 'TEXT');
+  ensureColumn('expenses', 'request_digest', 'TEXT');
+  ensureColumn('expenses', 'actor_id', 'TEXT');
   ensureColumn('expenses', 'voided_at', 'TEXT');
   ensureColumn('expenses', 'voided_by', "TEXT NOT NULL DEFAULT ''");
   ensureColumn('expenses', 'void_reason', "TEXT NOT NULL DEFAULT ''");
@@ -343,6 +346,7 @@ const requiredTriggers=['inventory_alert_insert','inventory_alert_transition'];
   ensureColumn('stock_movements', 'occurred_at', "TEXT NOT NULL DEFAULT ''");
 
   db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_expense_mutation ON expenses(client_mutation_id) WHERE client_mutation_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_sessions_user_expiry ON sessions(user_id, expires_at);
     CREATE INDEX IF NOT EXISTS idx_transactions_created ON transactions(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_transactions_customer ON transactions(customer_id, created_at);

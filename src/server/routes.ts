@@ -1981,6 +1981,8 @@ apiRouter.post('/customers/:id/pay-balance', requireAuth, (req: AuthenticatedReq
 apiRouter.post('/expenses', requireAuth, (req: AuthenticatedRequest, res) => {
   const e = (req.body ?? {}) as Partial<ExpenseRecord>;
   const amount = e.amount;
+  const reference=req.body?.clientMutationId;
+  if(typeof reference!=='string'||!reference.trim()||reference.length>200)return res.status(400).json({error:'Valid expense reference required.'});
   const categories = ['electricity','ink_toner','printing_materials','maintenance','equipment','labor','rent','other'];
   if (typeof e.description !== 'string' || !e.description.trim() || e.description.trim().length > 500 ||
       !isLedgerMoney(amount) || amount <= 0 ||
@@ -1997,15 +1999,22 @@ apiRouter.post('/expenses', requireAuth, (req: AuthenticatedRequest, res) => {
     return res.status(400).json({ error: 'Valid expense date is required (YYYY-MM-DD).' });
   }
   const record={id,category:e.category||'other',description:e.description.trim(),amount:fromCents(cents(amount)),vendor:e.vendor?.trim()||'',recordedBy:actor.fullName,expenseDate,isDemo:false,createdAt:now};
-  db.transaction(()=>{
+  const digest=crypto.createHash('sha256').update(JSON.stringify([record.category,record.description,record.amount,record.vendor,e.expenseDate??null])).digest('hex');
+  const result=db.transaction(()=>{
+    const existing=db.prepare('SELECT * FROM expenses WHERE client_mutation_id=?').get(reference) as Record<string,unknown>|undefined;
+    if(existing){
+      if(existing.actor_id!==actor.id||existing.request_digest!==digest)return {status:409,body:{error:'Expense reference belongs to a different request.'}};
+      return {status:200,body:{id:existing.id,category:existing.category,description:existing.description,amount:existing.amount,vendor:existing.vendor,recordedBy:existing.recorded_by,expenseDate:existing.expense_date,isDemo:false,createdAt:existing.created_at,clientMutationId:reference,duplicate:true,voided:Boolean(existing.voided_at)}};
+    }
     db.prepare(`
-      INSERT INTO expenses (id, category, description, amount, vendor, recorded_by, expense_date, is_demo, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)
-    `).run(record.id,record.category,record.description,record.amount,record.vendor,record.recordedBy,record.expenseDate,record.createdAt);
+      INSERT INTO expenses (id, category, description, amount, vendor, recorded_by, expense_date, is_demo, created_at,client_mutation_id,request_digest,actor_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
+    `).run(record.id,record.category,record.description,record.amount,record.vendor,record.recordedBy,record.expenseDate,record.createdAt,reference,digest,actor.id);
     writeAuditLog(actor.id,actor.fullName,'EXPENSE_RECORDED','expense',id,'Recorded operating expense: '+record.category+', amount '+record.amount);
+    return {status:201,body:{...record,clientMutationId:reference,duplicate:false,voided:false}};
   })();
   res.setHeader('Cache-Control','no-store');
-  res.status(201).json(record);
+  res.status(result.status).json(result.body);
 });
 
 apiRouter.delete(
@@ -2259,7 +2268,7 @@ apiRouter.get(
       transactions: db.prepare('SELECT * FROM transactions').all(),
       print_jobs: db.prepare('SELECT * FROM print_jobs').all(),
       order_conversions: db.prepare('SELECT * FROM order_conversions').all(),
-      expenses: db.prepare('SELECT * FROM expenses').all(),
+      expenses: db.prepare('SELECT id,category,description,amount,vendor,recorded_by,expense_date,is_demo,created_at,voided_at,voided_by,void_reason FROM expenses').all(),
       supply_categories:db.prepare('SELECT * FROM supply_categories').all(),
       stock_movements:db.prepare('SELECT * FROM stock_movements').all(),
       cashier_shifts:db.prepare('SELECT * FROM cashier_shifts').all(),

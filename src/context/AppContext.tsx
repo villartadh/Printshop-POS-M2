@@ -48,6 +48,8 @@ import {
   type PendingBalanceCollection,
   type PendingDrawerMovement,
   acknowledgeDrawerMovement,
+  acknowledgeExpense,
+  type PendingExpense,
   readPendingDrawerMovement,
   saveOfflineSnapshot,
 } from '../services/offlineDb.ts';
@@ -203,7 +205,7 @@ interface AppContextValue {
   getItemStockMovements: (inventoryItemId: string) => StockMovement[];
   createCustomer: (customer: Partial<Customer>) => Promise<Customer>;
   collectCustomerBalance: (record: PendingBalanceCollection) => Promise<void>;
-  createExpense: (expense: Partial<ExpenseRecord>) => Promise<void>;
+  createExpense: (expense: PendingExpense) => Promise<void>;
   deleteExpense: (id: string, reason: string) => Promise<void>;
   startShift: (openingCash: number) => Promise<void>;
   recordCashMovement: (record:PendingDrawerMovement) => Promise<void>;
@@ -941,13 +943,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     notify(result.duplicate?'Original balance payment confirmed.':'Customer balance payment recorded.','success');
   };
 
-  const createExpense = async (expense: Partial<ExpenseRecord>) => {
-    const created = await apiRequest<ExpenseRecord>('/api/expenses', {
-      method: 'POST',
-      body: JSON.stringify(expense),
-    });
-    setExpenses((prev) => [created, ...prev]);
-    notify('Expense recorded.', 'success');
+  const createExpense = async (expense: PendingExpense) => {
+    if(!session||expense.ownerId!==session.user.id||!isOnline)throw new Error('Connect and sign in as the original operator to confirm the expense.');
+    const {ownerId,createdAt,...payload}=expense;
+    const created=await apiRequest<ExpenseRecord & {clientMutationId:string;duplicate:boolean;voided:boolean}>('/api/expenses',{method:'POST',body:JSON.stringify(payload)});
+    if(created.clientMutationId!==expense.clientMutationId||typeof created.id!=='string'||!created.id||created.category!==expense.category||created.description!==expense.description||created.amount!==expense.amount||created.vendor!==expense.vendor||created.expenseDate!==expense.expenseDate||typeof created.duplicate!=='boolean'||typeof created.voided!=='boolean')throw new Error('Expense confirmation could not be verified. Retry the original reference.');
+    await acknowledgeExpense(expense);
+    setExpenses(prev=>created.voided?prev.filter(e=>e.id!==created.id):[created,...prev.filter(e=>e.id!==created.id)]);
+    notify(created.voided?'Original expense confirmed; it was subsequently voided.':created.duplicate?'Original expense confirmed.':'Expense recorded.','success');
   };
 
   const deleteExpense = async (id: string, reason: string) => {
