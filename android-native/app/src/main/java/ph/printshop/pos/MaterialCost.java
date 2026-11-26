@@ -17,7 +17,8 @@ public final class MaterialCost {
     public static final class Estimate {
         public final long costCentavos;
         public final boolean stockSufficient;
-        Estimate(long costCentavos,boolean stockSufficient){this.costCentavos=costCentavos;this.stockSufficient=stockSufficient;}
+        public final int componentCount;
+        Estimate(long costCentavos,boolean stockSufficient,int componentCount){this.costCentavos=costCentavos;this.stockSufficient=stockSufficient;this.componentCount=componentCount;}
     }
     public static Estimate estimate(List<Component> components,int count){
         QuoteMath.total(0,count);
@@ -33,6 +34,6 @@ public final class MaterialCost {
         BigInteger rounded=subtotal.add(BigInteger.valueOf(500)).divide(BigInteger.valueOf(1000));
         if(rounded.compareTo(BigInteger.valueOf(QuoteMath.total(99_999_999_999L,100_000)))>0)
             throw new IllegalArgumentException("Estimated material cost exceeds supported amount");
-        return new Estimate(rounded.longValue(),sufficient);
+        return new Estimate(rounded.longValue(),sufficient,components.size());
     }
 }
