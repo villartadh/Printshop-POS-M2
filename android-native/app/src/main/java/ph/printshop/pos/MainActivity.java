@@ -95,8 +95,25 @@ public final class MainActivity extends Activity {
         return v;
     }
     private void calculate() {
-        updateMaterialEstimate();
         change.setText("Change —");
+        if(selectedServiceId!=null){
+            try{
+                CatalogEntry selected=store.get(selectedServiceId);
+                if(selected.archived||selected.kind!=CatalogEntry.Kind.SERVICE)throw new IllegalStateException("Service unavailable");
+                if(store.pricing(selectedServiceId).needsAdvancedQuote()){
+                    linkedService.setText("Linked service: "+selected.name);
+                    total.setText("Total — advanced quotation controls pending");
+                    materialCost.setText("Material cost — advanced quotation controls pending");
+                    return;
+                }
+            }catch(RuntimeException ex){
+                linkedService.setText("Linked service — unavailable");
+                total.setText("Total — selected service unavailable");
+                materialCost.setText("Material cost — selected service unavailable");
+                return;
+            }
+        }
+        updateMaterialEstimate();
         try {
             long amount = QuoteMath.total(QuoteMath.parseCentavos(price.getText().toString()), Integer.parseInt(quantity.getText().toString()));
             total.setText("Total: " + QuoteMath.display(amount));
