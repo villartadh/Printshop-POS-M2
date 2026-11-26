@@ -31,9 +31,16 @@ test('support ZIP contains only checksummed allowlisted diagnostics',t=>{
     entries[name]=content.toString();
     i=from+size;
   }
-  assert.deepEqual(Object.keys(entries),['status.json','README.txt']);
+  assert.deepEqual(Object.keys(entries),['status.json','README.txt','SHA256SUMS.txt']);
+  for(const name of ['status.json','README.txt'])assert.ok(entries['SHA256SUMS.txt'].includes(createHash('sha256').update(entries[name]).digest('hex')+'  '+name));
   assert.equal(zip.readUInt32LE(i),0x02014b50);
   assert.equal(JSON.parse(entries['status.json']).version,'unknown');
   assert.equal(JSON.parse(entries['status.json']).health,true);
   assert.doesNotMatch(zip.toString(),/DANGER_|token-from-untrusted/);
 });
+
+import {createHash} from 'node:crypto';
+import {executeGate,comprehensiveSteps} from '../scripts/ldc.mjs';
+import {safeGate} from '../scripts/support-archive.mjs';
+test('comprehensive LDC gate stops on failure and records blocked checks',async()=>{const ran=[];const result=await executeGate(comprehensiveSteps(),async name=>{ran.push(name);if(name==='acceptance:https')throw Error('synthetic');});assert.deepEqual(ran,['acceptance:browser','acceptance:https']);assert.equal(result.status,'FAIL');assert.deepEqual(result.checks.map(c=>c.status),['PASS','FAIL','BLOCKED']);});
+test('gate support summary excludes arbitrary data and does not claim unknown checks passed',()=>{const result=safeGate({mode:'comprehensive',checks:[{name:'test',status:'PASS',durationMs:1,password:'SECRET'},{name:'SECRET',status:'PASS'}]});assert.equal(result.status,'BLOCKED');assert.doesNotMatch(JSON.stringify(result),/SECRET/);});

@@ -7,3 +7,6 @@ Codex reported 88 regression tests, 20 API checks, seven Chromium workflows, HTT
 Target: v0.9.6 final software pilot candidate. Audit and fix incomplete controls, first-run business setup, financial and offline workflows, LDC, backup/restore and self-contained distribution. Use synthetic data only. Rebuild release manifest and checksums at packaging. Run cumulative tests on clean installs and export evidence. Native shop Windows, display scaling, physical printer and tablet acceptance remain deferred; BIR review open. Do not promote v1.0.0 or claim deferred tests passed. GitHub-hosted Windows software tests are distinct from shop-device acceptance.
 
 CI: software-acceptance.yml runs Linux/Windows build, regression, API and Chromium checks; HTTPS on Linux. Packaging and distribution-specific checks remain to be added. Never add secrets or actual business databases to GitHub.
+
+## Verified candidate engineering checkpoint
+At 1b34246: CI 45731676204 and 45731669288 passed on Ubuntu and Windows. 113 regression tests, 33 API checks, 14 Chromium workflows and four actual v0.9.5 upgrade/restore scenarios, Linux HTTPS and staged Windows runtime smoke. LDC structured gate evidence and checksummed support archive submitted for verification. No production promotion; release version and source manifest still need regeneration at packaging.
