@@ -18,7 +18,7 @@ import android.widget.TextView;
 /** Native offline calculator only. No sales, tax issuance, network, or shop data. */
 public final class MainActivity extends Activity {
     private EditText price, quantity, received;
-    private TextView total, change, materialCost;
+    private TextView total, change, materialCost, linkedService;
     private CatalogStore store;
     private String selectedServiceId;
     private int dp(int x) { return Math.round(x * getResources().getDisplayMetrics().density); }
@@ -48,6 +48,7 @@ public final class MainActivity extends Activity {
         received = field(root, "Amount received (optional)", R.id.quote_received, true);
         total = label(root, "Total —", 24);
         change = label(root, "Change —", 20);
+        linkedService = label(root, "No service linked", 16);
         materialCost = label(root, "Material cost — select a service", 16);
         Button clear = new Button(this);
         clear.setText("Clear service link");
@@ -107,17 +108,20 @@ public final class MainActivity extends Activity {
     }
     private void updateMaterialEstimate() {
         if (selectedServiceId == null) {
+            linkedService.setText("No service linked");
             materialCost.setText("Material cost — select a service");
             return;
         }
         try {
-            int count = Integer.parseInt(quantity.getText().toString());
-            QuoteMath.total(0, count);
+            linkedService.setText("Linked service — unavailable");
             CatalogEntry selected = store.get(selectedServiceId);
             if (selected.archived || selected.kind != CatalogEntry.Kind.SERVICE) {
                 materialCost.setText("Material cost — selected service unavailable");
                 return;
             }
+            linkedService.setText("Linked service: " + selected.name + " (editable selling price)");
+            int count = Integer.parseInt(quantity.getText().toString());
+            QuoteMath.total(0, count);
             MaterialCost.Estimate estimate = store.estimateMaterials(selectedServiceId, count);
             materialCost.setText(estimate.componentCount == 0
                 ? "Material cost — no materials configured"
