@@ -41,6 +41,17 @@ Version 0.9.7 expanded engineering candidate; not a production release.
 12. One-click physical acceptance tools — PR #2 awaiting full acceptance; audit scope, including printer and device tools, before closing.
 13. Final expanded software acceptance — pending integrated revision, evidence and packages.
 
+## GitHub branching and integration policy — owner-approved 2026-11-26
+
+This policy supersedes any older wording that requires a separate branch for every task.
+
+- `develop` is the single active development and integration branch. Make routine fixes, small UI adjustments, tests, documentation and handoff updates directly on develop after appropriate verification. Commit cohesive changes and validate the fresh integrated head before advancing.
+- Create or reuse a feature branch only for substantial/critical features such as architecture, database and migration work, financial transaction logic, security, cross-platform/native milestones; group related changes in the same feature branch. Do not create separate branches for small tasks, repair commits, documentation, or staging. Preserve dedicated immutable baseline/release branches/tags.
+- Before editing, inspect current branches, PRs, exact head/base SHAs, CI results and automation activity. Prioritize integrating tested, complete features. Merge each mergeable feature PR into develop promptly once its exact current head against the current base has passed all applicable targeted and full regression/Android/Windows/Linux gates. Retarget existing stacked PRs after their parent integrates, resolve conflicts and run required gates anew.
+- Never merge a failed, pending, unverified or conflicting feature; diagnose and fix in the relevant existing branch without weakening gates. Preserve fresh integrated CI, do not cancel unrelated running jobs. Minor work on develop must not disrupt existing gates.
+- Keep main, accepted versioned candidates, historical baselines (including baseline/v0.9.5), the original repository and prior evidence immutable. No branch deletion, production promotion, deployment, physical acceptance or BIR claim without separate authorization/evidence. Record exact tested SHAs, merge commits, evidence, outstanding checks and next action in DEVELOPMENT_QUEUE.md and maintain HANDOFF-README.md.
+
+
 ## Exact resumption procedure
 
 1. Obtain authorized repository access. Clone or open the existing checkout, inspect `git status`, preserve uncommitted work, fetch without destructive resets, and inspect `git log -5 --oneline`, current branch, open PRs and Actions. Never assume this checkpoint is current.
