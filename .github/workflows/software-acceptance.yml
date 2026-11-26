@@ -38,6 +38,17 @@ jobs:
       - run: npm run lint
       - run: npm run build
       - run: npm run acceptance
+      - name: Checkout immutable v0.9.5 baseline
+        uses: actions/checkout@v4
+        with:
+          ref: 255518ed388bcee3d63ee211e17c199ba984547e
+          path: .baseline-v095
+          persist-credentials: false
+      - run: npm ci --prefix .baseline-v095
+      - name: Verify actual baseline database upgrade and restoration
+        run: node scripts/upgrade-acceptance.mjs .baseline-v095
+      - name: Remove baseline checkout before packaging
+        run: rm -rf .baseline-v095
       - if: runner.os == 'Linux'
         run: npx playwright install --with-deps chromium
       - if: runner.os == 'Windows'

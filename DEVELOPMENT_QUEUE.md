@@ -2,6 +2,9 @@
 
 Target: v0.9.6 consolidated software pilot, not a production release. Preserve main, baseline/v0.9.5, and the original Printshop-POS repo. Use develop only; inspect current head and both CI runs before advancing. Make cohesive atomic changes, with tests and evidence; never bypass failing gates.
 
+## Verified at 2f6b772
+113 regression tests, 33 API scenarios, 14 browser workflows; CI 45730582869 and 45730574833 passed. Version-aware backup gate accepted. Added CI gate with pinned actual v0.9.5 server and its locked dependencies, synthetic sales, collections, inventory, legacy/current restoration, unchanged historical columns, session secret and current receipt/idempotency evidence. Uses current static build only as server startup prerequisite; tests actual baseline backend, not baseline UI. No real data. Next: resolve upgrade gate then LDC and packaging.
+
 ## Verified at 686cd27
 112 regression tests, 32 API scenarios, 14 browser workflows; CI 45730007855 and 45729999746 passed. Checkout and targeted authorization accepted. Schema-version marker and strict marked database completeness checks submitted; legacy version 0 remains eligible for migration, future versions rejected. Financial ledger/replay table snapshot comparison and expanded non-restorable JSON export tests added. Next: actual baseline upgrade and restore acceptance, LDC evidence and release documentation. Browser-local unresolved records and session.secret remain outside SQLite snapshot.
 
