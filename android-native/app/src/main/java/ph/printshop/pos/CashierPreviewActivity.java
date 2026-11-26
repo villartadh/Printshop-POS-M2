@@ -118,6 +118,9 @@ public final class CashierPreviewActivity extends Activity {
             case "Resolve pending checkout before closing shift":return "Resolve the pending training checkout before closing the shift.";
             case "Insufficient stock or quantity limit exceeded.":return "Insufficient training stock.";
             case "Username unavailable":return "Training username unavailable.";
+            case "Credential confirmation denied":return "Credential confirmation denied. Check your current synthetic passphrase or wait for lockout.";
+            case "Active cashier required":return "Select an active training cashier. The owner account cannot be reset.";
+            case "Choose a different synthetic passphrase":return message;
             case "Use 3–32 letters, digits, dots, underscores or hyphens":return message;
             case "Choose a password with 12–128 characters":return message;
             case "Password cannot be blank":return message;
@@ -240,7 +243,11 @@ public final class CashierPreviewActivity extends Activity {
             Button close=button("Close training shift",R.id.cashier_close_shift,()->showClose(d));close.setEnabled(d.pending==0);
         }
         button("Recorded training receipts",R.id.cashier_history,this::showHistory);
-        if(d.actor.role==CashierSecurity.Role.OWNER)button("Create training cashier",R.id.cashier_add_staff,this::showStaff);
+        button("Change my training passphrase",R.id.cashier_change_pass,()->showCredentialChange(false));
+        if(d.actor.role==CashierSecurity.Role.OWNER){
+            button("Create training cashier",R.id.cashier_add_staff,this::showStaff);
+            button("Reset training cashier passphrase",R.id.cashier_reset_pass,()->showCredentialChange(true));
+        }
         button("Lock / sign out",R.id.cashier_lock,this::lockAndReload);
     }
     private void showStaff(){
@@ -249,6 +256,36 @@ public final class CashierPreviewActivity extends Activity {
         button("Create cashier",R.id.cashier_confirm_staff,()->{
             String user=name.getText().toString();char[] pass=takePassword(secret);
             if(!submit(()->{try{return store.createFixtureCashier(session(),user,pass);}finally{Arrays.fill(pass,'\0');}},v->refreshDashboard()))Arrays.fill(pass,'\0');
+        });back();
+    }
+
+    private EditText credentialField(String label,int id){
+        return field(label,id,InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD,128,null);
+    }
+    private void showCredentialChange(boolean reset){
+        mode="credential";
+        screen(reset?"Reset training cashier passphrase":"Change training passphrase",
+            reset?"Owner confirmation is required. The cashier keeps their existing shift, requests and receipts; old sessions are revoked. Never enter real credentials.":
+            "Confirm your current synthetic passphrase. All your sessions will be revoked. Sign in again with the new passphrase; existing training records stay intact.");
+        EditText target=reset?username():null;
+        EditText current=credentialField(reset?"Owner current synthetic passphrase":"Current synthetic passphrase",R.id.cashier_current_pass);
+        EditText next=credentialField("New synthetic passphrase (12+ characters)",R.id.cashier_new_pass);
+        EditText confirmation=credentialField("Repeat new synthetic passphrase",R.id.cashier_confirm_pass);
+        button(reset?"Confirm cashier reset":"Confirm passphrase change",R.id.cashier_rotate_pass,()->{
+            String username=target==null?null:target.getText().toString();
+            char[] old=takePassword(current),replacement=takePassword(next),repeat=takePassword(confirmation);
+            boolean matches=Arrays.equals(replacement,repeat);Arrays.fill(repeat,'\0');
+            if(!matches){Arrays.fill(old,'\0');Arrays.fill(replacement,'\0');status.setText("New synthetic passphrases do not match.");return;}
+            if(!submit(()->{
+                try{
+                    if(reset)store.resetFixtureCashierPassphrase(session(),old,username,replacement);
+                    else{store.changeFixturePassphrase(session(),old,replacement);workerToken=null;}
+                    return null;
+                }finally{Arrays.fill(old,'\0');Arrays.fill(replacement,'\0');}
+            },v->{
+                if(reset){screen("Training cashier passphrase reset","The cashier must sign in again. Their existing training records are preserved.");back();}
+                else lockAndReload();
+            })){Arrays.fill(old,'\0');Arrays.fill(replacement,'\0');}
         });back();
     }
     private void showCheckout(Dashboard d){

@@ -56,4 +56,10 @@
     <item name="cashier_back" type="id"/>
     <item name="cashier_status" type="id"/>
     <item name="cashier_return_home" type="id"/>
+    <item name="cashier_change_pass" type="id"/>
+    <item name="cashier_reset_pass" type="id"/>
+    <item name="cashier_current_pass" type="id"/>
+    <item name="cashier_new_pass" type="id"/>
+    <item name="cashier_confirm_pass" type="id"/>
+    <item name="cashier_rotate_pass" type="id"/>
 </resources>

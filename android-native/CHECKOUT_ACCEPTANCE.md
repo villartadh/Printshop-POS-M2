@@ -41,3 +41,7 @@ See [CASHIER_ACCEPTANCE.md](CASHIER_ACCEPTANCE.md). The existing checkout featur
 
 ## Phase 4 — original native synthetic cashier training screen
 See [CASHIER_ACCEPTANCE.md](CASHIER_ACCEPTANCE.md) Phase 2. The existing #13 checkout branch now exposes authenticated, separate UUID-scoped training fixture operations through native setup/login/shift/review/pending/recovery/record/cancel/receipt/history/lock. No ordinary preview catalog/checkout change, real cash, physical printing, tax issuance, schema bump or new branch. New required NATIVE_CASHIER_UI_PASS is added; host 729 regression checks passed, actual Android UI gate pending. Parent integrations and full software gates remain mandatory. Continue credential lifecycle, administrative authorization, drawer adjustments, linked void/refund and installed layout/lifecycle acceptance; preserve immutable sale and request history.
+
+
+## Phase 5 — credential lifecycle v8
+See [CASHIER_ACCEPTANCE.md](CASHIER_ACCEPTANCE.md) Phase 3. Audited authenticated own passphrase change and owner-only cashier reset with revocation, original cashier ID, open shift, pending request and historical checkout preserved. 988 local checks passed; new mandatory NATIVE_CREDENTIAL_LIFECYCLE_PASS with v7 fixture migration and native user interaction. Actual SDK/emulator/Windows/Linux acceptance outstanding; no real sale, data, printing, tax or production promotion. No new minor branch. Continue administrative permissions and accountable drawer/expense/void/refund with full gates.

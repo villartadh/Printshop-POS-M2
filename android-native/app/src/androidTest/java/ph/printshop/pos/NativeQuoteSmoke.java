@@ -58,15 +58,17 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "checkout read-only confirmation plan"; verifyCheckoutConfirmationPlan();
             phase = "v5 checkout migration"; verifyCheckoutMigration(5);
             phase = "v6 cashier migration"; verifyCheckoutMigration(6);
+            phase = "v7 credential migration"; verifyCheckoutMigration(7);
             phase = "durable atomic checkout fixture"; verifyDurableCheckout();
             phase = "cashier authorization and shift fixture"; verifyCashierAuthShift();
+            phase = "audited credential lifecycle"; verifyCredentialLifecycle();
             phase = "material costing"; verifyMaterials();
             phase = "recipe and quote screen"; verifyRecipeScreen(screen);
             phase = "pricing store migration"; verifyPricingStore();
             phase = "pricing settings and document quote"; verifyPricingScreen(screen);
             phase = "measured quote"; verifyMeasuredQuote(screen);
             phase = "native cashier training UI"; verifyCashierTrainingScreen(screen);
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\n");
+            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\n");
             result = Activity.RESULT_OK;
         } catch (Throwable error) {
             evidence.putString("stream", failureDetails(phase, error));
@@ -117,7 +119,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
     private void verifyCashierTrainingScreen(Activity screen){
         android.content.Context context=getTargetContext();
         final String owner="training-owner",cashier="training-cashier";
-        final String ownerPass="Synthetic-Owner-UI-01",cashierPass="Synthetic-Cashier-UI-01";
+        final String ownerPass="Synthetic-Owner-UI-01",cashierPass="Synthetic-Cashier-UI-01",resetPass="Synthetic-Cashier-Reset-UI-02",newPass="Synthetic-Cashier-New-UI-03";
         java.util.List<CatalogEntry> before;
         try(CatalogStore ordinary=new CatalogStore(context)){before=ordinary.list(true);}
         android.content.SharedPreferences preferences=context.getSharedPreferences(CashierPreviewActivity.PREFS,0);
@@ -183,8 +185,39 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 EditText password=recovered.findViewById(R.id.cashier_password);
                 require(password!=null&&password.getText().length()==0,"password restored after reopen");
             });
+            // Owner-assisted recovery preserves the original unresolved checkout.
+            trainingLogin(second,owner,ownerPass);
+            awaitText(second,"No open shift","owner login for reset failed");
+            trainingClick(second,R.id.cashier_reset_pass);
+            awaitText(second,"Reset training cashier passphrase","reset screen missing");
+            trainingField(second,R.id.cashier_username,cashier);
+            trainingField(second,R.id.cashier_current_pass,ownerPass);
+            trainingField(second,R.id.cashier_new_pass,resetPass);
+            trainingField(second,R.id.cashier_confirm_pass,resetPass);
+            trainingClick(second,R.id.cashier_rotate_pass);
+            awaitText(second,"Training cashier passphrase reset","owner reset failed");
+            trainingClick(second,R.id.cashier_back);
+            awaitText(second,"No open shift","reset dashboard missing");
+            trainingClick(second,R.id.cashier_lock);
+            awaitText(second,"Training sign in","owner not locked after reset");
             trainingLogin(second,cashier,cashierPass);
-            awaitText(second,"Unresolved training requests: 1","pending request not recovered");
+            awaitText(second,"Sign in denied. Check your synthetic credentials or wait for the lockout.","old credential was not rejected");
+            trainingLogin(second,cashier,resetPass);
+            awaitText(second,"Unresolved training requests: 1","pending request not recovered after reset");
+            trainingClick(second,R.id.cashier_change_pass);
+            awaitText(second,"Change training passphrase","own credential screen missing");
+            trainingField(second,R.id.cashier_current_pass,resetPass);
+            trainingField(second,R.id.cashier_new_pass,newPass);
+            trainingField(second,R.id.cashier_confirm_pass,"Mismatch-Synthetic-UI-01");
+            trainingClick(second,R.id.cashier_rotate_pass);
+            awaitText(second,"New synthetic passphrases do not match.","confirmation mismatch accepted");
+            trainingField(second,R.id.cashier_current_pass,resetPass);
+            trainingField(second,R.id.cashier_new_pass,newPass);
+            trainingField(second,R.id.cashier_confirm_pass,newPass);
+            trainingClick(second,R.id.cashier_rotate_pass);
+            awaitText(second,"Training sign in","credential change did not sign out");
+            trainingLogin(second,cashier,newPass);
+            awaitText(second,"Unresolved training requests: 1","pending request not recovered after self change");
             runOnMainChecked(()->{
                 require(!recovered.findViewById(R.id.cashier_new_checkout).isEnabled(),"new checkout not blocked by pending");
                 require(!recovered.findViewById(R.id.cashier_close_shift).isEnabled(),"close shift not blocked by pending");
@@ -232,6 +265,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 require(trainingCount(fixture,"SELECT COUNT(*) FROM stock_movements")==2,"training stock movement count wrong");
                 require(trainingCount(fixture,"SELECT after_quantity FROM stock_movements ORDER BY stock_revision DESC LIMIT 1")==48000,"training stock not deducted exactly");
                 require(trainingCount(fixture,"SELECT COUNT(*) FROM cashier_sessions WHERE revoked_ms IS NULL")==0,"session still active after logout");
+                require(trainingCount(fixture,"SELECT COUNT(*) FROM cashier_credential_events")==2,"UI credential audit count wrong");
             }
             try(CatalogStore ordinary=new CatalogStore(context)){
                 java.util.List<CatalogEntry> after=ordinary.list(true);
@@ -461,7 +495,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 db.setVersion(4);
             }
             try(CatalogStore store=new CatalogStore(context,filename)){
-                require(store.getReadableDatabase().getVersion()==7,"v4-to-v7 migration version wrong");
+                require(store.getReadableDatabase().getVersion()==8,"v4-to-v8 migration version wrong");
                 require(store.stockBalance(material).quantity==1500&&store.stockHistory(material,0,5).size()==1,"v4 stock lost");
                 require(store.recipeBindings(service).get(0).quantityMilli==500&&store.pricing(service).tiers.get(0).rateCentavos==250,"v4 recipe/pricing lost");
                 require(store.pendingStock(material)==null,"unexpected migrated pending request");
@@ -580,7 +614,8 @@ public final class NativeQuoteSmoke extends Instrumentation {
     }
     private void verifyCheckoutMigration(int former){
         android.content.Context context=getTargetContext();
-        String filename="checkout-v"+former+"-"+stockId()+".db",material=stockId(),pending=stockId(),historic=stockId();
+        String filename="checkout-v"+former+"-"+stockId()+".db",material=stockId(),pending=stockId(),historic=stockId(),pendingCheckout=stockId();
+        String migratedToken=null,migratedShift=stockId();
         try{
             try(android.database.sqlite.SQLiteDatabase db=context.openOrCreateDatabase(filename,0,null)){
                 db.execSQL("CREATE TABLE catalog (id TEXT PRIMARY KEY NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('SERVICE','MATERIAL')), name TEXT NOT NULL, unit TEXT NOT NULL, centavos INTEGER NOT NULL CHECK(centavos BETWEEN 0 AND 99999999999), revision INTEGER NOT NULL CHECK(revision >= 1), archived INTEGER NOT NULL CHECK(archived IN (0,1)))");
@@ -599,30 +634,126 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 db.execSQL("INSERT INTO catalog_history VALUES(?,?,?,?,?,?,?,?)",new Object[]{material,1,"MATERIAL","Synthetic old paper","sheet",199,0,"CREATE"});
                 db.execSQL("INSERT INTO stock_movements VALUES(?,?,?,?,?,?,?,?,?,?)",new Object[]{stockId(),material,1,1,"sheet","Synthetic old receipt",1500,0,1500,1});
                 db.execSQL("INSERT INTO stock_requests VALUES(?,?,?,?,?,?,?,?,?)",new Object[]{pending,material,1,1,-500,"Synthetic pending",1,"PENDING",null});
-                if(former==6){
+                if(former>=6){
                     CheckoutJournal.create(db);
                     CatalogEntry service=CatalogEntry.create(CatalogEntry.Kind.SERVICE,"Synthetic historic service","page","2.50");
                     db.execSQL("INSERT INTO catalog VALUES(?,?,?,?,?,?,?)",new Object[]{service.id,"SERVICE",service.name,service.unit,service.centavos,1,0});
                     CheckoutPlan.Proposal plan=CheckoutPlan.prepare(historic,service,PricingProfile.defaults(),0,
                         new CheckoutPlan.Inputs(1,1,1,null,null,null,CheckoutPlan.UsageBasis.NONE,250),java.util.Collections.emptyList());
-                    CheckoutJournal.stage(db,plan);CheckoutJournal.saleAndCash(db,CheckoutJournal.read(db,historic));CheckoutJournal.resolve(db,historic,"APPLIED",null);
+                    CashierJournal.Shift shift=null;
+                    if(former==7){
+                        CashierJournal.create(db);
+                        char[] synthetic="Synthetic-Migration-Owner-01".toCharArray();
+                        try{
+                            long now=System.currentTimeMillis();
+                            CashierJournal.Principal owner=CashierJournal.bootstrap(db,"migration-owner",synthetic,now);
+                            migratedToken=CashierJournal.signIn(db,owner.username,synthetic,now);
+                            shift=CashierJournal.openShift(db,owner,migratedShift,1000,now);
+                        }finally{java.util.Arrays.fill(synthetic,'\0');}
+                    }
+                    CheckoutJournal.stage(db,plan);
+                    if(shift!=null)CashierJournal.link(db,historic,shift);
+                    CheckoutJournal.saleAndCash(db,CheckoutJournal.read(db,historic));CheckoutJournal.resolve(db,historic,"APPLIED",null);
+                    if(shift!=null){
+                        CheckoutPlan.Proposal unresolved=CheckoutPlan.prepare(pendingCheckout,service,PricingProfile.defaults(),0,
+                            new CheckoutPlan.Inputs(1,1,1,null,null,null,CheckoutPlan.UsageBasis.NONE,250),java.util.Collections.emptyList());
+                        CheckoutJournal.stage(db,unresolved);CashierJournal.link(db,pendingCheckout,shift);
+                    }
                 }
                 db.setVersion(former);
             }
             try(CatalogStore store=new CatalogStore(context,filename)){
-                require(store.getReadableDatabase().getVersion()==7,"v5/v6 migration failed");
+                require(store.getReadableDatabase().getVersion()==8,"v5/v6/v7 migration failed");
                 require(store.stockBalance(material).quantity==1500&&store.stockHistory(material,0,10).size()==1,"v5 stock changed");
                 require(store.pendingStock(material)!=null&&store.pendingStock(material).id.equals(pending),"v5 pending stock lost");
                 require(store.get(material).centavos==199,"v5 catalog changed");
                 require(store.applyStagedStock(pending).quantity==1000,"v5 pending request not recoverable");
                 try(android.database.Cursor c=store.getReadableDatabase().rawQuery("SELECT COUNT(*) FROM checkout_requests",null)){
-                    require(c.moveToFirst()&&c.getInt(0)==(former==6?1:0),"migration changed checkout history");
+                    require(c.moveToFirst()&&c.getInt(0)==(former==7?2:former==6?1:0),"migration changed checkout history");
                 }
-                require(!CashierJournal.initialized(store.getReadableDatabase()),"migration created default accounts");
-                if(former==6)require(CheckoutJournal.read(store.getReadableDatabase(),historic).state.equals("APPLIED"),"v6 historic sale lost");
+                require(CashierJournal.initialized(store.getReadableDatabase())==(former==7),"migration changed account initialization");
+                require(trainingCount(store,"SELECT COUNT(*) FROM cashier_credential_events")==0,"migration invented credential audit");
+                if(former>=6)require(CheckoutJournal.read(store.getReadableDatabase(),historic).state.equals("APPLIED"),"historic sale lost");
+                if(former==7){
+                    CashierJournal.Principal owner=CashierJournal.requireSession(store.getReadableDatabase(),migratedToken,System.currentTimeMillis());
+                    require(CashierJournal.activeShift(store.getReadableDatabase(),owner).id.equals(migratedShift),"v7 open shift lost");
+                    require(CheckoutJournal.read(store.getReadableDatabase(),pendingCheckout).state.equals("PENDING"),"v7 pending checkout lost");
+                    require(CashierJournal.expected(store.getReadableDatabase(),CashierJournal.shift(store.getReadableDatabase(),migratedShift))==1250,"v7 drawer changed");
+                }
             }
         }finally{context.deleteDatabase(filename);}
     }
+
+    private void verifyCredentialLifecycle(){
+        android.content.Context context=getTargetContext();
+        String fixture=stockId(),filename="checkout-fixture-"+fixture+".db",shift=stockId(),request=stockId();
+        char[] owner="Synthetic-Owner-Original-01".toCharArray(),staff="Synthetic-Cashier-Original-02".toCharArray(),
+            changed="Synthetic-Cashier-Reset-03".toCharArray(),next="Synthetic-Cashier-Changed-04".toCharArray(),
+            ownerNext="Synthetic-Owner-Changed-05".toCharArray(),wrong="Synthetic-Wrong-Proof-06".toCharArray();
+        String cashierId,ownerId;
+        try{
+            try(CatalogStore ordinary=new CatalogStore(context)){
+                rejectStock(()->ordinary.changeFixturePassphrase("bad",owner,next));
+                rejectStock(()->ordinary.resetFixtureCashierPassphrase("bad",owner,"fixture-cashier",next));
+            }
+            try(CatalogStore store=CatalogStore.checkoutFixture(context,fixture)){
+                ownerId=store.bootstrapFixtureOwner("fixture-owner",owner).id;
+                String ownerToken=store.signInFixture("fixture-owner",owner),ownerParallel=store.signInFixture("fixture-owner",owner);
+                cashierId=store.createFixtureCashier(ownerToken,"fixture-cashier",staff).id;
+                String cashier=store.signInFixture("fixture-cashier",staff),parallel=store.signInFixture("fixture-cashier",staff);
+                CatalogEntry service=store.create(CatalogEntry.Kind.SERVICE,"Synthetic credential test","page","2.50");
+                store.openFixtureShift(cashier,shift,1000);
+                CheckoutPlan.Proposal proposal=store.prepareCheckout(request,service.id,1,0,0,
+                    new CheckoutPlan.Inputs(2,1,1,null,null,null,CheckoutPlan.UsageBasis.NONE,600));
+                store.stageAuthorizedFixtureCheckout(cashier,shift,proposal);
+                rejectStock(()->store.resetFixtureCashierPassphrase(cashier,staff,"fixture-owner",changed));
+                rejectStock(()->store.resetFixtureCashierPassphrase(ownerToken,owner,"fixture-owner",changed));
+                rejectStock(()->store.resetFixtureCashierPassphrase(ownerToken,wrong,"fixture-cashier",changed));
+                rejectStock(()->store.changeFixturePassphrase(cashier,staff,staff));
+                for(int i=0;i<CashierSecurity.FAILURE_LIMIT;i++)rejectStock(()->store.changeFixturePassphrase(cashier,wrong,next));
+                rejectStock(()->store.changeFixturePassphrase(cashier,staff,next));
+                require(trainingCount(store,"SELECT COUNT(*) FROM cashier_accounts WHERE username='fixture-cashier' AND failures=5 AND locked_until>0")==1,"proof lockout not persisted");
+                require(trainingCount(store,"SELECT COUNT(*) FROM cashier_credential_events")==0,"failed updates created audit");
+                store.resetFixtureCashierPassphrase(ownerToken,owner,"fixture-cashier",changed);
+                rejectStock(()->store.fixturePrincipal(cashier));rejectStock(()->store.fixturePrincipal(parallel));
+                rejectStock(()->store.signInFixture("fixture-cashier",staff));
+                String recovered=store.signInFixture("fixture-cashier",changed);
+                CashierJournal.Principal p=store.fixturePrincipal(recovered);
+                require(p.id.equals(cashierId)&&p.revision==2,"reset changed cashier identity");
+                require(store.activeFixtureShift(recovered).id.equals(shift),"reset lost shift");
+                require(store.pendingAuthorizedFixtureCheckouts(recovered,shift,10).get(0).id.equals(request),"reset lost original pending checkout");
+                require(store.expectedFixtureCash(recovered,shift)==1000,"reset altered drawer");
+                store.changeFixturePassphrase(recovered,changed,next);
+                rejectStock(()->store.fixturePrincipal(recovered));rejectStock(()->store.signInFixture("fixture-cashier",changed));
+                String newSession=store.signInFixture("fixture-cashier",next);
+                require(store.fixturePrincipal(newSession).id.equals(cashierId)&&store.fixturePrincipal(newSession).revision==3,"self change identity/revision");
+                require(store.applyAuthorizedFixtureCheckout(newSession,request,proposal.fingerprint()).total==500,"original request not recoverable");
+                require(store.expectedFixtureCash(newSession,shift)==1500,"cash after recovery incorrect");
+                store.closeFixtureShift(newSession,shift,1500);
+                store.changeFixturePassphrase(ownerToken,owner,ownerNext);
+                rejectStock(()->store.fixturePrincipal(ownerToken));rejectStock(()->store.fixturePrincipal(ownerParallel));
+                rejectStock(()->store.signInFixture("fixture-owner",owner));
+                String newOwner=store.signInFixture("fixture-owner",ownerNext);
+                require(store.fixturePrincipal(newOwner).id.equals(ownerId),"owner identity changed");
+                store.signOutFixture(newOwner);store.signOutFixture(newSession);
+                require(trainingCount(store,"SELECT COUNT(*) FROM cashier_credential_events")==3,"credential audit count");
+                require(trainingCount(store,"SELECT COUNT(*) FROM cashier_credential_events WHERE action='OWNER_RESET' AND actor_id<>account_id")==1,"owner reset audit");
+                require(trainingCount(store,"SELECT COUNT(*) FROM cashier_credential_events WHERE action='SELF_CHANGE' AND actor_id=account_id")==2,"self change audit");
+                require(trainingCount(store,"SELECT COUNT(*) FROM cashier_sessions WHERE revoked_ms IS NULL")==0,"stale session survived");
+                require(trainingCount(store,"SELECT COUNT(*) FROM checkout_sales")==1,"credential change duplicated sale");
+            }
+            try(CatalogStore reopened=CatalogStore.checkoutFixture(context,fixture)){
+                String token=reopened.signInFixture("fixture-cashier",next);
+                require(reopened.fixturePrincipal(token).id.equals(cashierId),"new credential not durable");
+                require(reopened.authorizedFixtureCheckout(token,request).state.equals("APPLIED"),"receipt not durable after reset");
+                reopened.signOutFixture(token);
+            }
+        }finally{
+            for(char[] secret:new char[][]{owner,staff,changed,next,ownerNext,wrong})java.util.Arrays.fill(secret,'\0');
+            context.deleteDatabase(filename);
+        }
+    }
+
     private void verifyDurableCheckout(){
         android.content.Context context=getTargetContext();
         String fixture=stockId(),filename="checkout-fixture-"+fixture+".db";
@@ -987,7 +1118,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             }
             java.util.List<PricingMath.Tier> tiers=java.util.Arrays.asList(new PricingMath.Tier(2000,200),new PricingMath.Tier(1000,250));
             try(CatalogStore store=new CatalogStore(context,filename)){
-                require(store.getReadableDatabase().getVersion()==7,"v3-to-v7 migration version wrong");
+                require(store.getReadableDatabase().getVersion()==8,"v3-to-v8 migration version wrong");
                 require(store.pricing(service).revision==0&&!store.pricing(service).needsAdvancedQuote(),"legacy default changed");
                 require(store.recipeRevision(service)==1&&store.stockBalance(material).quantity==1500,"migration changed recipe or stock");
                 PricingProfile saved=store.savePricing(service,1,0,PricingMath.Method.PER_PAGE,true,tiers);

@@ -129,6 +129,49 @@ final class CashierJournal {
         ContentValues v=new ContentValues();v.put("active",0);v.put("revision",Math.addExact(a.principal.revision,1));
         if(db.update("cashier_accounts",v,"id=? AND active=1",new String[]{id})!=1)throw new IllegalStateException("Account changed");
     }
+
+    /** Verify the active operator's current credential; denial is returned to commit lockout state.
+     * Session authorization is performed by the fixture transaction before this method is reached.
+     */
+    private static boolean confirmCredential(SQLiteDatabase db,Account a,Principal actor,char[] current,long now){
+        if(a==null||!a.active||a.principal.revision!=actor.revision||now<a.lockedUntil)return false;
+        boolean verified=CashierSecurity.verify(current,a.salt,a.hash);
+        ContentValues v=new ContentValues();
+        if(verified){v.put("failures",0);v.put("locked_until",0L);}
+        else{
+            CashierSecurity.Failure next=CashierSecurity.failedAttempt(a.failures,a.lockedUntil,now);
+            v.put("failures",next.count);v.put("locked_until",next.lockedUntil);
+        }
+        if(db.update("cashier_accounts",v,"id=? AND revision=? AND active=1",new String[]{actor.id,Long.toString(actor.revision)})!=1)
+            throw new IllegalStateException("Credential state changed");
+        return verified;
+    }
+    private static void rotateCredential(SQLiteDatabase db,Account target,Principal actor,char[] replacement,String action,long now){
+        if(CashierSecurity.verify(replacement,target.salt,target.hash))
+            throw new IllegalArgumentException("Choose a different synthetic passphrase");
+        CashierSecurity.Credential fresh=CashierSecurity.createCredential(replacement);
+        CredentialJournal.append(db,target.principal,actor,action,now);
+        ContentValues v=new ContentValues();v.put("salt",fresh.saltHex);v.put("password_hash",fresh.hashHex);
+        v.put("revision",Math.addExact(target.principal.revision,1));v.put("failures",0);v.put("locked_until",0L);
+        if(db.update("cashier_accounts",v,"id=? AND revision=? AND active=1",new String[]{target.principal.id,Long.toString(target.principal.revision)})!=1)
+            throw new IllegalStateException("Credential state changed");
+        // v8 trigger revokes every target session in the same transaction. No shift or checkout write.
+    }
+    static boolean changeOwnCredential(SQLiteDatabase db,Principal actor,char[] current,char[] replacement,long now){
+        CashierSecurity.validatePassword(replacement);
+        Account target=account(db,"id",actor.id);
+        if(!confirmCredential(db,target,actor,current,now))return false;
+        rotateCredential(db,target,actor,replacement,"SELF_CHANGE",now);return true;
+    }
+    static boolean resetCashierCredential(SQLiteDatabase db,Principal actor,char[] current,String username,char[] replacement,long now){
+        if(actor.role!=CashierSecurity.Role.OWNER)throw new IllegalStateException("Owner authorization required");
+        String normalized=CashierSecurity.username(username);CashierSecurity.validatePassword(replacement);
+        if(!confirmCredential(db,account(db,"id",actor.id),actor,current,now))return false;
+        Account target=account(db,"username",normalized);
+        if(target==null||!target.active||target.principal.role!=CashierSecurity.Role.CASHIER)
+            throw new IllegalStateException("Active cashier required");
+        rotateCredential(db,target,actor,replacement,"OWNER_RESET",now);return true;
+    }
     static final class Shift {
         final String id,operatorId,state;
         final long openingCash,openedMs;
