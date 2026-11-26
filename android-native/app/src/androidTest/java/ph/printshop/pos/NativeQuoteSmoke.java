@@ -55,12 +55,13 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "stock screen"; verifyStockScreen();
             phase = "durable stock recovery"; verifyStockRecovery();
             phase = "durable stock screen"; verifyStockRecoveryScreen();
+            phase = "checkout read-only confirmation plan"; verifyCheckoutConfirmationPlan();
             phase = "material costing"; verifyMaterials();
             phase = "recipe and quote screen"; verifyRecipeScreen(screen);
             phase = "pricing store migration"; verifyPricingStore();
             phase = "pricing settings and document quote"; verifyPricingScreen(screen);
             phase = "measured quote"; verifyMeasuredQuote(screen);
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\n");
+            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\n");
             result = Activity.RESULT_OK;
         } catch (Throwable error) {
             evidence.putString("stream", failureDetails(phase, error));
@@ -360,6 +361,44 @@ public final class NativeQuoteSmoke extends Instrumentation {
             store.moveStock(stockId(),material.id,material.revision,1,-2500,"Synthetic cleanup");
             store.archive(material.id,material.revision,true);
         }
+    }
+
+    private void verifyCheckoutConfirmationPlan() {
+        android.content.Context context=getTargetContext();
+        String filename="checkout-plan-"+stockId()+".db";
+        try(CatalogStore store=new CatalogStore(context,filename)){
+            CatalogEntry print=store.create(CatalogEntry.Kind.SERVICE,"Synthetic checkout print","page","2.50");
+            CatalogEntry paper=store.create(CatalogEntry.Kind.MATERIAL,"Synthetic checkout paper","sheet","1.99");
+            String receipt=stockId(),request=stockId();
+            store.moveStock(receipt,paper.id,paper.revision,0,5000,"Synthetic initial stock");
+            store.setMaterialUsage(print.id,print.revision,paper.id,paper.revision,0,500);
+            store.savePricing(print.id,print.revision,0,PricingMath.Method.PER_PAGE,true,
+                java.util.Collections.singletonList(new PricingMath.Tier(1000,225)));
+            CheckoutPlan.Inputs input=new CheckoutPlan.Inputs(1,5,2,null,null,null,CheckoutPlan.UsageBasis.BILLABLE_UNIT,2500);
+            CheckoutPlan.Proposal proposed=store.prepareCheckout(request,print.id,1,1,1,input);
+            require(proposed.totalCentavos==2250&&proposed.changeCentavos==250&&proposed.materialCostCentavos==995,"checkout total or cost not authoritative");
+            require(proposed.materials.size()==1&&proposed.materials.get(0).afterMilli==0,"checkout stock calculation wrong");
+            require(proposed.sameSnapshot(store.prepareCheckout(request,print.id,1,1,1,input)),"repeat plan differs");
+            require(store.stockBalance(paper.id).quantity==5000&&store.stockBalance(paper.id).revision==1&&store.stockHistory(paper.id,0,5).size()==1,"preview changed stock");
+            rejectStock(()->store.prepareCheckout(request,print.id,0,1,1,input));
+            rejectStock(()->store.prepareCheckout(request,print.id,1,0,1,input));
+            rejectStock(()->store.prepareCheckout(request,print.id,1,1,0,input));
+            String pending=stockId();
+            store.stageStock(pending,paper.id,paper.revision,1,-1,"Synthetic pending");
+            rejectStock(()->store.prepareCheckout(request,print.id,1,1,1,input));
+            store.cancelStagedStock(pending);
+            proposed.requireSameSnapshot(store.prepareCheckout(request,print.id,1,1,1,input));
+            store.moveStock(stockId(),paper.id,paper.revision,1,-1,"Synthetic shortage");
+            rejectStock(()->store.prepareCheckout(request,print.id,1,1,1,input));
+            store.moveStock(stockId(),paper.id,paper.revision,2,1,"Synthetic replenish");
+            CheckoutPlan.Proposal changed=store.prepareCheckout(request,print.id,1,1,1,input);
+            require(!proposed.sameSnapshot(changed),"same balance with changed ledger revision accepted as old confirmation");
+            require(CheckoutPreview.render(changed).contains("NOT A TAX DOCUMENT OR PROOF OF PAYMENT"),"preview disclaimer missing");
+            require(store.stockBalance(paper.id).revision==3&&store.stockBalance(paper.id).quantity==5000,"checkout plan mutated ledger");
+            try(android.database.Cursor c=store.getReadableDatabase().rawQuery("SELECT COUNT(*) FROM stock_requests WHERE request_id=?",new String[]{request})){
+                require(c.moveToFirst()&&c.getInt(0)==0,"checkout proposal created stock request");
+            }
+        }finally{context.deleteDatabase(filename);}
     }
 
     private static void rejectStock(Runnable action) {
