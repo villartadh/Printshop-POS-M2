@@ -53,12 +53,14 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "catalog screen"; verifyCatalogScreen(screen);
             phase = "stock ledger"; verifyStockLedger();
             phase = "stock screen"; verifyStockScreen();
+            phase = "durable stock recovery"; verifyStockRecovery();
+            phase = "durable stock screen"; verifyStockRecoveryScreen();
             phase = "material costing"; verifyMaterials();
             phase = "recipe and quote screen"; verifyRecipeScreen(screen);
             phase = "pricing store migration"; verifyPricingStore();
             phase = "pricing settings and document quote"; verifyPricingScreen(screen);
             phase = "measured quote"; verifyMeasuredQuote(screen);
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\n");
+            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\n");
             result = Activity.RESULT_OK;
         } catch (Throwable error) {
             evidence.putString("stream", failureDetails(phase, error));
@@ -259,6 +261,107 @@ public final class NativeQuoteSmoke extends Instrumentation {
             }
         }
     }
+    private static String stockId(){return java.util.UUID.randomUUID().toString();}
+    private void verifyStockRecovery() {
+        android.content.Context context=getTargetContext();
+        String filename="stock-recovery-"+stockId()+".db";
+        String material=stockId(),service=stockId(),legacy=stockId(),pending=stockId(),cancelled=stockId();
+        try{
+            // Exact existing v4 tables, populated with history, before additive v5 migration.
+            try(android.database.sqlite.SQLiteDatabase db=context.openOrCreateDatabase(filename,0,null)){
+                db.execSQL("CREATE TABLE catalog (id TEXT PRIMARY KEY NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('SERVICE','MATERIAL')), name TEXT NOT NULL, unit TEXT NOT NULL, centavos INTEGER NOT NULL CHECK(centavos BETWEEN 0 AND 99999999999), revision INTEGER NOT NULL CHECK(revision >= 1), archived INTEGER NOT NULL CHECK(archived IN (0,1)))");
+                db.execSQL("CREATE TABLE catalog_history (id TEXT NOT NULL REFERENCES catalog(id), revision INTEGER NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL, unit TEXT NOT NULL, centavos INTEGER NOT NULL, archived INTEGER NOT NULL, action TEXT NOT NULL CHECK(action IN ('CREATE','EDIT','ARCHIVE','RESTORE')), PRIMARY KEY(id,revision))");
+                db.execSQL("CREATE TABLE stock_movements (request_id TEXT PRIMARY KEY NOT NULL, material_id TEXT NOT NULL REFERENCES catalog(id), catalog_revision INTEGER NOT NULL CHECK(catalog_revision>=1), stock_revision INTEGER NOT NULL CHECK(stock_revision>=1), unit TEXT NOT NULL, reason TEXT NOT NULL, delta INTEGER NOT NULL CHECK(delta BETWEEN -999999999999 AND 999999999999 AND delta<>0), before_quantity INTEGER NOT NULL CHECK(before_quantity BETWEEN 0 AND 999999999999), after_quantity INTEGER NOT NULL CHECK(after_quantity BETWEEN 0 AND 999999999999 AND after_quantity=before_quantity+delta), created_ms INTEGER NOT NULL, UNIQUE(material_id,stock_revision))");
+                db.execSQL("CREATE TABLE service_materials (service_id TEXT NOT NULL REFERENCES catalog(id), material_id TEXT NOT NULL REFERENCES catalog(id), quantity_milli INTEGER NOT NULL CHECK(quantity_milli BETWEEN 1 AND 999999999999), unit TEXT NOT NULL, PRIMARY KEY(service_id,material_id))");
+                db.execSQL("CREATE TABLE recipe_history (service_id TEXT NOT NULL REFERENCES catalog(id), revision INTEGER NOT NULL CHECK(revision>=1), material_id TEXT NOT NULL REFERENCES catalog(id), quantity_milli INTEGER NOT NULL CHECK(quantity_milli BETWEEN 0 AND 999999999999), unit TEXT NOT NULL, material_revision INTEGER NOT NULL, service_revision INTEGER NOT NULL, created_ms INTEGER NOT NULL, PRIMARY KEY(service_id,revision))");
+                db.execSQL("CREATE TABLE pricing_profile_versions (service_id TEXT NOT NULL REFERENCES catalog(id), revision INTEGER NOT NULL CHECK(revision>=1), method TEXT NOT NULL CHECK(method IN ('FIXED','PER_UNIT','PER_PAGE','PER_COPY','PER_SHEET','PER_SQFT','PER_LINEAR_FT','PER_METER','TIERED_BULK')), pages_copies INTEGER NOT NULL CHECK(pages_copies IN (0,1) AND (pages_copies=0 OR method IN ('PER_PAGE','PER_COPY','PER_SHEET'))), service_revision INTEGER NOT NULL CHECK(service_revision>=1), catalog_unit TEXT NOT NULL, created_ms INTEGER NOT NULL, PRIMARY KEY(service_id,revision))");
+                db.execSQL("CREATE TABLE pricing_tier_versions (service_id TEXT NOT NULL, profile_revision INTEGER NOT NULL, threshold_hundredths INTEGER NOT NULL CHECK(threshold_hundredths BETWEEN 1 AND 10000000), rate_centavos INTEGER NOT NULL CHECK(rate_centavos BETWEEN 0 AND 99999999999), PRIMARY KEY(service_id,profile_revision,threshold_hundredths), FOREIGN KEY(service_id,profile_revision) REFERENCES pricing_profile_versions(service_id,revision))");
+                db.execSQL("INSERT INTO catalog VALUES(?,?,?,?,?,?,?)",new Object[]{material,"MATERIAL","Synthetic recovery paper","sheet",199,1,0});
+                db.execSQL("INSERT INTO catalog_history VALUES(?,?,?,?,?,?,?,?)",new Object[]{material,1,"MATERIAL","Synthetic recovery paper","sheet",199,0,"CREATE"});
+                db.execSQL("INSERT INTO catalog VALUES(?,?,?,?,?,?,?)",new Object[]{service,"SERVICE","Synthetic recovery print","page",300,1,0});
+                db.execSQL("INSERT INTO catalog_history VALUES(?,?,?,?,?,?,?,?)",new Object[]{service,1,"SERVICE","Synthetic recovery print","page",300,0,"CREATE"});
+                db.execSQL("INSERT INTO stock_movements VALUES(?,?,?,?,?,?,?,?,?,?)",new Object[]{legacy,material,1,1,"sheet","Legacy receipt",1500,0,1500,1});
+                db.execSQL("INSERT INTO service_materials VALUES(?,?,?,?)",new Object[]{service,material,500,"sheet"});
+                db.execSQL("INSERT INTO recipe_history VALUES(?,?,?,?,?,?,?,?)",new Object[]{service,1,material,500,"sheet",1,1,1});
+                db.execSQL("INSERT INTO pricing_profile_versions VALUES(?,?,?,?,?,?,?)",new Object[]{service,1,"PER_PAGE",1,1,"page",1});
+                db.execSQL("INSERT INTO pricing_tier_versions VALUES(?,?,?,?)",new Object[]{service,1,1000,250});
+                db.setVersion(4);
+            }
+            try(CatalogStore store=new CatalogStore(context,filename)){
+                require(store.getReadableDatabase().getVersion()==5,"v4-to-v5 migration version wrong");
+                require(store.stockBalance(material).quantity==1500&&store.stockHistory(material,0,5).size()==1,"v4 stock lost");
+                require(store.recipeBindings(service).get(0).quantityMilli==500&&store.pricing(service).tiers.get(0).rateCentavos==250,"v4 recipe/pricing lost");
+                require(store.pendingStock(material)==null,"unexpected migrated pending request");
+                require(store.stageStock(pending,material,1,1,-500,"Synthetic pending issue").state.equals("PENDING"),"stage wrong");
+                require(store.stageStock(pending,material,1,1,-500,"Synthetic pending issue").id.equals(pending),"stage replay wrong");
+                rejectStock(()->store.stageStock(pending,material,1,1,-501,"Synthetic pending issue"));
+                rejectStock(()->store.stageStock(stockId(),material,1,1,100,"Competing request"));
+                rejectStock(()->store.moveStock(stockId(),material,1,1,100,"Bypass"));
+                rejectStock(()->store.moveStock(pending,material,1,1,-500,"Synthetic pending issue"));
+                rejectStock(()->store.edit(material,1,"Changed","sheet","1.99"));
+                rejectStock(()->store.archive(material,1,true));
+                require(store.stockBalance(material).revision==1,"staging changed ledger");
+            }
+            try(CatalogStore reopened=new CatalogStore(context,filename)){
+                CatalogStore.StockRequest recovered=reopened.pendingStock(material);
+                require(recovered!=null&&recovered.id.equals(pending)&&recovered.delta==-500&&recovered.stockRevision==1&&recovered.catalogRevision==1&&recovered.reason.equals("Synthetic pending issue"),"durable request payload lost");
+                // Simulate a database failure precisely between ledger insertion and resolution.
+                reopened.getWritableDatabase().execSQL("CREATE TRIGGER test_fail_resolution BEFORE UPDATE ON stock_requests BEGIN SELECT RAISE(ABORT,'synthetic interrupted commit'); END");
+                boolean failed=false;
+                try{reopened.applyStagedStock(pending);}catch(android.database.sqlite.SQLiteException expected){failed=true;}
+                require(failed&&reopened.stockBalance(material).quantity==1500&&reopened.pendingStock(material)!=null,"transaction rollback lost request or changed ledger");
+                reopened.getWritableDatabase().execSQL("DROP TRIGGER test_fail_resolution");
+                require(reopened.applyStagedStock(pending).quantity==1000,"recovered adjustment wrong");
+                require(reopened.applyStagedStock(pending).revision==2,"applied historical replay wrong");
+                require(reopened.pendingStock(material)==null&&reopened.stockRequest(pending).state.equals("APPLIED"),"applied state not persisted");
+                rejectStock(()->reopened.cancelStagedStock(pending));
+                reopened.stageStock(cancelled,material,1,2,350,"Synthetic cancellation");
+                reopened.cancelStagedStock(cancelled);reopened.cancelStagedStock(cancelled);
+                require(reopened.stockRequest(cancelled).state.equals("CANCELLED")&&reopened.pendingStock(material)==null,"cancellation state wrong");
+                rejectStock(()->reopened.applyStagedStock(cancelled));
+                rejectStock(()->reopened.moveStock(cancelled,material,1,2,350,"Synthetic cancellation"));
+                require(reopened.stageStock(cancelled,material,1,2,350,"Synthetic cancellation").state.equals("CANCELLED"),"cancelled identity revived");
+                require(reopened.moveStock(legacy,material,1,0,1500,"Legacy receipt").revision==1,"legacy replay lost");
+                require(reopened.stockBalance(material).quantity==1000&&reopened.stockHistory(material,0,10).size()==2,"duplicate or cancelled movement altered ledger");
+            }
+            try(CatalogStore reopened=new CatalogStore(context,filename)){
+                require(reopened.stockRequest(pending).state.equals("APPLIED")&&reopened.stockRequest(cancelled).state.equals("CANCELLED"),"terminal audit states lost after reopen");
+                require(reopened.applyStagedStock(pending).quantity==1000&&reopened.stockBalance(material).revision==2,"restart retry duplicated movement");
+            }
+        }finally{context.deleteDatabase(filename);}
+    }
+    private void verifyStockRecoveryScreen() {
+        android.content.Context context=getTargetContext();
+        try(CatalogStore store=new CatalogStore(context)){
+            CatalogEntry material=store.create(CatalogEntry.Kind.MATERIAL,"Synthetic durable inventory","sheet","1.20");
+            String id=stockId();
+            store.stageStock(id,material.id,material.revision,0,2500,"Recover after reopening");
+            Intent intent=new Intent(Intent.ACTION_MAIN).setClassName(context.getPackageName(),StockActivity.class.getName());
+            intent.putExtra("materialId",material.id);intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            Activity first=startActivitySync(intent);
+            try{
+                runOnMainChecked(()->{
+                    require(!first.findViewById(R.id.stock_receive).isEnabled()&&!first.findViewById(R.id.stock_consume).isEnabled(),"pending did not lock competing actions");
+                    require(first.findViewById(R.id.stock_retry).getVisibility()==View.VISIBLE&&first.findViewById(R.id.stock_cancel).getVisibility()==View.VISIBLE,"recovery actions missing");
+                    require(hasText(first.getWindow().getDecorView(),"On hand: 0 sheet"),"screen staging mutated stock");
+                });
+            }finally{runOnMainChecked(first::finish);}
+            waitForIdleSync();
+            Activity second=startActivitySync(intent);
+            try{
+                runOnMainChecked(()->{
+                    require(second.findViewById(R.id.stock_retry).performClick(),"recovery retry unavailable");
+                    require(hasText(second.getWindow().getDecorView(),"On hand: 2.5 sheet"),"retry did not recover movement");
+                    require(second.findViewById(R.id.stock_retry).getVisibility()==View.GONE,"applied request still pending");
+                    require(second.findViewById(R.id.stock_receive).isEnabled(),"resolved material remained locked");
+                });
+                require(store.applyStagedStock(id).revision==1&&store.stockHistory(material.id,0,5).size()==1,"reopened screen duplicated request");
+            }finally{runOnMainChecked(second::finish);}
+            store.moveStock(stockId(),material.id,material.revision,1,-2500,"Synthetic cleanup");
+            store.archive(material.id,material.revision,true);
+        }
+    }
+
     private static void rejectStock(Runnable action) {
         try { action.run(); } catch (IllegalArgumentException | IllegalStateException expected) { return; }
         throw new AssertionError("invalid stock operation accepted");
@@ -431,7 +534,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             }
             java.util.List<PricingMath.Tier> tiers=java.util.Arrays.asList(new PricingMath.Tier(2000,200),new PricingMath.Tier(1000,250));
             try(CatalogStore store=new CatalogStore(context,filename)){
-                require(store.getReadableDatabase().getVersion()==4,"v3-to-v4 migration version wrong");
+                require(store.getReadableDatabase().getVersion()==5,"v3-to-v5 migration version wrong");
                 require(store.pricing(service).revision==0&&!store.pricing(service).needsAdvancedQuote(),"legacy default changed");
                 require(store.recipeRevision(service)==1&&store.stockBalance(material).quantity==1500,"migration changed recipe or stock");
                 PricingProfile saved=store.savePricing(service,1,0,PricingMath.Method.PER_PAGE,true,tiers);
