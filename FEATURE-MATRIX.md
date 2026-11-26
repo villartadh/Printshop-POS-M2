@@ -26,3 +26,5 @@ Known limitations: legacy replay without a fingerprint requires reconciliation; 
 Virtual PDF output for all five receipt formats passed CI 45734634658 and 45734628690. Browser DPR and Android touch/offline tests have been submitted, not yet verified. Emulation cannot certify native Windows DPI or physical tablet installation.
 
 CI 45737463509 and 45737457229 passed measured 100/125/150% Chromium DPR simulation, Android touch checkout and offline reconciliation, tablet portrait/landscape and PWA readiness checks. A hosted Windows bundled baseline/candidate lifecycle gate is submitted for verification. The baseline is rebuilt from pinned v0.9.5 source and lockfile; it is not a byte-identical historical installer. Actual OS DPI, real devices and physical printer remain unverified.
+
+Durable expense recovery passed CI 45744443359 and 45744436626. A bounded concurrent single-server financial replay and contested-stock/receivable gate is submitted, not yet verified. This is a correctness test, not a production capacity estimate.

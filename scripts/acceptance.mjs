@@ -357,6 +357,82 @@ async function main(){
     assert.deepEqual(verifyResponse(await request('/api/bootstrap',{headers}),200).auditLogs,[]);
     verifyResponse(await request('/api/backup/export',{headers}),403);
   });
+  await check('concurrent financial replays and competing stock and collection requests',async()=>{
+    const prior={shift,customer,stock,service};
+    const parallel=16, results=[];
+    const post=(url,body)=>request('/api'+url,{method:'POST',body,auth:true});
+    const statuses=(responses,expected,label)=>assert.deepEqual(responses.map(r=>r.status).sort((a,b)=>a-b),expected.slice().sort((a,b)=>a-b),label+': '+responses.map(r=>r.status).join(','));
+    const burst=async(label,url,payload,firstStatus)=>{
+      const started=performance.now();
+      const responses=await Promise.all(Array.from({length:parallel},()=>post(url,payload)));
+      statuses(responses,[firstStatus,...Array(parallel-1).fill(200)],label);
+      if(label!=='stock')assert.equal(responses.filter(r=>r.body.duplicate===false).length,1,label+' original');
+      if(label!=='stock')assert.equal(responses.filter(r=>r.body.duplicate===true).length,parallel-1,label+' replay');
+      results.push({label,requests:parallel,elapsedMs:Math.round(performance.now()-started),statusCounts:Object.fromEntries([...new Set(responses.map(r=>r.status))].map(code=>[code,responses.filter(r=>r.status===code).length]))});
+      return responses;
+    };
+    try{
+      shift=await write('/shifts/start',{openingCash:100});
+      const category=await write('/categories',{name:'Concurrent Fixtures'});
+      stock=await write('/inventory',{name:'Concurrent Paper',unit:'sheet',quantityOnHand:2,unitCost:1});
+      service=await write('/services',{name:'Concurrent Print',categoryId:category.id,pricingMethod:'fixed',basePrice:20,requiresProductionJob:true,consumables:[{inventoryItemId:stock.id,quantityPerUnit:1}]});
+      customer=await write('/customers',{name:'Concurrent Customer'});
+      const sale=makeOrder('sale',15);
+      const sales=await burst('sale','/transactions',sale,201);
+      const id=sales[0].body.transaction.id;
+      assert.ok(sales.every(r=>r.body.transaction.id===id&&r.body.transaction.receiptNumber===sales[0].body.transaction.receiptNumber));
+      let data=await state();
+      assert.equal(data.inventory.find(i=>i.id===stock.id).quantityOnHand,0);
+      assert.equal(data.customers.find(c=>c.id===customer.id).outstandingBalance,25);
+      assert.equal(data.shifts.find(s=>s.id===shift.id).expectedCash,115);
+      assert.equal(data.printJobs.filter(j=>j.transactionId===id).length,1);
+      const expense={category:'other',description:'Concurrent Expense',amount:12.34,clientMutationId:randomUUID(),expenseDate:'2026-01-01'};
+      const expenses=await burst('expense','/expenses',expense,201);
+      assert.ok(expenses.every(r=>r.body.id===expenses[0].body.id));
+      const expenseId=expenses[0].body.id;
+      await write('/expenses',{...expense,amount:12.35},409);
+      const movement={type:'cash_in',amount:0.25,reason:'Concurrent Drawer Fixture',clientMutationId:randomUUID()};
+      const drawer=await burst('drawer','/shifts/'+shift.id+'/movement',movement,200);
+      assert.ok(drawer.every(r=>r.body.movementId===drawer[0].body.movementId&&r.body.expectedCash===115.25));
+      const purchase={movementType:'purchase',quantityDelta:2,clientMutationId:randomUUID()};
+      const adjusted=await burst('stock','/inventory/'+stock.id+'/adjust',purchase,200);
+      assert.ok(adjusted.every(r=>JSON.stringify(r.body)===JSON.stringify(adjusted[0].body)));
+      const collection={amount:10,clientMutationId:randomUUID()};
+      const collected=await burst('collection','/customers/'+customer.id+'/pay-balance',collection,200);
+      assert.ok(collected.every(r=>r.body.outstandingBalance===15));
+      // Different references compete for the same final receivable; only one can succeed.
+      const competingCollections=await Promise.all(Array.from({length:2},()=>post('/customers/'+customer.id+'/pay-balance',{amount:15,clientMutationId:randomUUID()})));
+      statuses(competingCollections,[200,409],'competing collection');
+      // Four distinct sales compete for two remaining sheets, two sheets per sale.
+      const competingSales=await Promise.all(Array.from({length:4},()=>post('/transactions',makeOrder('sale',40))));
+      statuses(competingSales,[201,409,409,409],'competing sale');
+      const accepted=competingSales.find(r=>r.status===201).body.transaction;
+      data=await state();
+      assert.equal(data.inventory.find(i=>i.id===stock.id).quantityOnHand,0);
+      assert.equal(data.customers.find(c=>c.id===customer.id).outstandingBalance,0);
+      assert.equal(data.customers.find(c=>c.id===customer.id).totalSpent,80);
+      assert.equal(data.shifts.find(s=>s.id===shift.id).expectedCash,180.25);
+      assert.equal(data.shifts.find(s=>s.id===shift.id).cashMovements.filter(m=>m.id===drawer[0].body.movementId).length,1);
+      assert.equal(data.transactions.filter(t=>t.customerId===customer.id&&t.type==='sale').length,2);
+      assert.equal(data.printJobs.filter(j=>[id,accepted.id].includes(j.transactionId)).length,2);
+      const db=new DatabaseSync(path.join(sandbox,'data','printshop-pos.db'),{readOnly:true});
+      try{
+        const count=(sql,...args)=>db.prepare(sql).get(...args).n;
+        assert.equal(count('SELECT COUNT(*) AS n FROM expenses WHERE client_mutation_id=?',expense.clientMutationId),1);
+        assert.equal(count("SELECT COUNT(*) AS n FROM audit_logs WHERE entity_id=? AND action='EXPENSE_RECORDED'",expenseId),1);
+        assert.equal(count('SELECT COUNT(*) AS n FROM balance_collections WHERE customer_id=?',customer.id),2);
+        assert.equal(count("SELECT COUNT(*) AS n FROM stock_movements WHERE inventory_item_id=? AND movement_type='purchase'",stock.id),1);
+        assert.equal(count('SELECT COUNT(*) AS n FROM drawer_movement_requests WHERE mutation_id=?',movement.clientMutationId),1);
+      }finally{db.close();}
+      await write('/shifts/'+shift.id+'/close',{actualCash:180.25,reconciliationNote:'Synthetic concurrency proof'},200);
+      // The original identities are valid even after the shift is closed.
+      assert.equal((await write('/transactions',sale,200)).duplicate,true);
+      assert.equal((await write('/customers/'+customer.id+'/pay-balance',collection,200)).duplicate,true);
+      assert.equal((await write('/shifts/'+shift.id+'/movement',movement,200)).duplicate,true);
+      await write('/expenses/'+expenseId,{reason:'Synthetic concurrency fixture cleanup'},200,'DELETE');
+      fs.writeFileSync(path.join(evidence,'concurrency-'+randomUUID()+'.json'),JSON.stringify({scope:'Isolated synthetic single-server HTTP concurrency; not production throughput benchmark',parallel,bursts:results,competingCollection:{accepted:1,rejected:1},competingSales:{accepted:1,rejected:3},stockAndFinancialEffectsVerified:true},null,2),{flag:'wx'});
+    }finally{({shift,customer,stock,service}=prior);}
+  });
   await check('read-only ledger review validates actual backup and detects corrupted copy',async()=>{
     const live=path.join(sandbox,'data','printshop-pos.db');
     const backup=path.join(sandbox,'ledger-review-clean.db');
