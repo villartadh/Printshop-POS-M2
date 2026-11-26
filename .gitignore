@@ -12,3 +12,7 @@ backups/
 recovery/
 
 .ldc/
+
+.baseline-v095/
+windows-stage/
+release-output/

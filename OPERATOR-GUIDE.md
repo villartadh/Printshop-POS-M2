@@ -1,4 +1,4 @@
-# Printshop POS 0.9.5 operator guide
+# Printshop POS 0.9.6 software pilot operator guide
 
 Use this candidate with synthetic transactions until the installation, hardware and compliance checks have been completed at the shop.
 
@@ -45,3 +45,16 @@ Set up the first administrator on the local console and use password sign-in on 
 
 ## Development companion (source workspace only)
 Run START-LDC.cmd with Node 22.12+ in the 22 series. Option 1 uses the startup gate (locked dependencies, regression, TypeScript, build and isolated API). Option 10 runs the comprehensive software gate after the same checks; it requires installed Chromium, OpenSSL, and a separately checked-out pinned v0.9.5 source at .baseline-v095 with its locked dependencies installed. CI provisions these prerequisites. Stop the managed server before rebuilding. The comprehensive gate stops on first failure and records remaining steps as blocked. Gate evidence is stored under .ldc; the support ZIP includes only generated allowlisted status, current-session gate summary and SHA-256 checksums. Raw logs, databases, settings, credentials and customer records are excluded. Physical device acceptance is separate.
+
+## Troubleshooting and recovery
+| Symptom | Operator action |
+| --- | --- |
+| Server will not start | Do not delete the database. Check the launcher message, stop any other POS instance normally, and run SUPPORT.cmd. |
+| Offline checkout or sync conflict | Open Offline Record Recovery. Confirm the original record only after resolving the conflict with the manager; never recreate a paid order. |
+| Unconfirmed customer payment | Open Customers; retry the original payment reference. Do not collect cash a second time. |
+| Unconfirmed drawer adjustment | Open Cashier Shifts; retry the original reference. Do not move the cash again. |
+| Changed price on a queued sale | Preserve the original record. Manager must reconcile the original order and actual amount received; no silent repricing or discard. |
+| Invalid backup or schema | Preserve the entire current data directory; do not delete or recreate missing tables. Use a verified backup or escalate. |
+| Printer not listed or receipt cut off | Confirm Windows driver test page and paper width, then repeat the synthetic print test. |
+| Device not trusted | Check configured HTTPS origin and certificate trust. Never bypass browser security warnings. |
+| Shift discrepancies | Count actual cash and record the reconciliation note; never overwrite historical sales to force agreement. |

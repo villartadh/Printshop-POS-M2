@@ -2,6 +2,9 @@
 
 Target: v0.9.6 consolidated software pilot, not a production release. Preserve main, baseline/v0.9.5, and the original Printshop-POS repo. Use develop only; inspect current head and both CI runs before advancing. Make cohesive atomic changes, with tests and evidence; never bypass failing gates.
 
+## Verified at 2291837
+115 regression tests, 33 API scenarios, 14 browser workflows, four actual upgrade/restore scenarios; CI 45732402008 and 45732394799 passed. LDC consolidation accepted. Version 0.9.6, feature matrix, troubleshooting and versioned source/Windows packaging submitted. Source manifest is generated in CI from allowlisted tracked files, excluding old committed manifest. Next: inspect both release CI runs and actual artifact IDs, verify software readiness, update handoff without invalidating the tested artifact identity, and stop automation if software pilot ready. Do not merge/promote or claim physical/BIR acceptance.
+
 ## Verified at 1b34246
 113 regression tests, 33 API scenarios, 14 browser workflows and four actual cross-version upgrade/restore scenarios; both CI 45731676204 and 45731669288 passed. LDC startup vs comprehensive gate, structured session evidence and allowlisted SHA-256 support ZIP submitted. Next: verify LDC, finalize operator documentation/feature matrix and prepare versioned source and Windows candidate packaging. Physical gates remain separate.
 

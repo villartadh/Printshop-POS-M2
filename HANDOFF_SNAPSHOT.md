@@ -10,3 +10,6 @@ CI: software-acceptance.yml runs Linux/Windows build, regression, API and Chromi
 
 ## Verified candidate engineering checkpoint
 At 1b34246: CI 45731676204 and 45731669288 passed on Ubuntu and Windows. 113 regression tests, 33 API checks, 14 Chromium workflows and four actual v0.9.5 upgrade/restore scenarios, Linux HTTPS and staged Windows runtime smoke. LDC structured gate evidence and checksummed support archive submitted for verification. No production promotion; release version and source manifest still need regeneration at packaging.
+
+## v0.9.6 packaging submission
+At 2291837, CI 45732402008 and 45732394799 passed: 115 regression, 33 API, 14 Chromium, four upgrade/restore scenarios. Version 0.9.6 assigned to develop only. The final release workflow must produce versioned Windows ZIP and source ZIP separately, with SHA-256 manifests and software evidence. Check both current runs before reporting availability. Source manifest generated from tested tracked files in CI; the old committed v0.9.5 manifest is historical and excluded from the new source archive. No promotion or deployment authorized.

@@ -20,7 +20,7 @@ const home=path.join(local,'Printshop POS'), data=path.join(home,'data');
 const credentials={username:'windows-acceptance',fullName:'Synthetic Windows Test',password:randomUUID()};
 const version=root=>JSON.parse(fs.readFileSync(path.join(root,'RELEASE-MANIFEST.json'))).version;
 const oldVersion=version(oldRelease), newVersion=version(newRelease);
-if(oldVersion!=='0.9.4' || newVersion!=='0.9.5') throw Error('Expected the v0.9.4 baseline and v0.9.5 candidate.');
+if(!((oldVersion==='0.9.4'&&newVersion==='0.9.5')||(oldVersion==='0.9.5'&&newVersion==='0.9.6')))throw Error('Expected an approved consecutive baseline and candidate pair (0.9.4/0.9.5 or 0.9.5/0.9.6).');
 fs.mkdirSync(evidence);
 const env={...Object.fromEntries(Object.entries(process.env).filter(([key])=>
   /^(SYSTEMROOT|WINDIR|PATH|COMSPEC|TEMP|TMP|USERPROFILE|APPDATA|PROGRAMFILES|PROGRAMFILES\(X86\)|PROGRAMDATA)$/i.test(key))),

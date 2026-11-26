@@ -1,3 +1,16 @@
+# 0.9.6 software pilot candidate
+
+- Guided shop setup, validated settings and immutable historical receipt branding.
+- Complete date-range finance reports and Philippine business dates.
+- Reservation-aware inventory, severity-based notifications, supplier reorder drafts, weighted average purchase costs, paginated stock history, archive and restore.
+- Durable offline queue acknowledgments, original-record conflict retry and lost-response recovery.
+- Immutable sale request identities, cash collection and drawer adjustment replay protection, exact centavo reconciliation.
+- Held-order ownership, privileged customer discounts and restricted staff/audit exposure.
+- Version-marked SQLite backups and actual v0.9.5 upgrade and restoration acceptance.
+- LDC comprehensive gate, structured diagnostics and SHA-256 support archive checksums.
+- Versioned source and bundled Windows x64 artifacts, pending final CI on this release commit.
+- No physical printer, shop installation/display scaling, tablet hardware or BIR acceptance is claimed.
+
 # 0.9.5 candidate
 
 - Add an interactive packaged database restore that acquires exclusive launcher control, validates the selected backup, preserves a pre-restore snapshot, retires the old journal and atomically replaces the stopped database.
