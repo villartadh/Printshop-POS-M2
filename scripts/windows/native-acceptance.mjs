@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
+import {verifyWindowsPackage,requireFreePort} from './native-preflight.mjs';
 import path from 'node:path';
 import {execFileSync,spawn} from 'node:child_process';
 import {once} from 'node:events';
@@ -14,19 +15,24 @@ if(process.env.POS_WINDOWS_ACCEPTANCE!=='disposable-desktop' || args.length!==3)
 }
 const [oldRelease,newRelease,evidence]=args.map(value=>path.resolve(value));
 const {chromium}=await import('playwright');
-const sandbox=fs.mkdtempSync(path.join(os.tmpdir(),'pos-native-'));
-const local=path.join(sandbox,'LocalAppData');
-const home=path.join(local,'Printshop POS'), data=path.join(home,'data');
+
+
 const credentials={username:'windows-acceptance',fullName:'Synthetic Windows Test',password:randomUUID()};
 const version=root=>JSON.parse(fs.readFileSync(path.join(root,'RELEASE-MANIFEST.json'))).version;
 const oldVersion=version(oldRelease), newVersion=version(newRelease);
-if(!((oldVersion==='0.9.4'&&newVersion==='0.9.5')||(oldVersion==='0.9.5'&&newVersion==='0.9.6')))throw Error('Expected an approved consecutive baseline and candidate pair (0.9.4/0.9.5 or 0.9.5/0.9.6).');
+const pairs=new Set(['0.9.4/0.9.5','0.9.5/0.9.6','0.9.5/0.9.7','0.9.6/0.9.7']);
+if(!pairs.has(oldVersion+'/'+newVersion))throw Error('Unsupported baseline/candidate pair. Use 0.9.5 or 0.9.6 with 0.9.7.');
+verifyWindowsPackage(oldRelease,[oldVersion]);
+verifyWindowsPackage(newRelease,[newVersion]);
 fs.mkdirSync(evidence);
+const sandbox=fs.mkdtempSync(path.join(os.tmpdir(),'pos-native-'));
+const local=path.join(sandbox,'LocalAppData');
+const home=path.join(local,'Printshop POS'), data=path.join(home,'data');
 const env={...Object.fromEntries(Object.entries(process.env).filter(([key])=>
   /^(SYSTEMROOT|WINDIR|PATH|COMSPEC|TEMP|TMP|USERPROFILE|APPDATA|PROGRAMFILES|PROGRAMFILES\(X86\)|PROGRAMDATA)$/i.test(key))),
   LOCALAPPDATA:local,POS_NO_BROWSER:'1'};
 const base='http://127.0.0.1:3000';
-const report={version:newVersion,platform:os.platform(),windowsRelease:os.release(),arch:os.arch(),checks:[]};
+const report={baseline:oldVersion,version:newVersion,scope:'Disposable native Windows desktop; synthetic records only',platform:os.platform(),windowsRelease:os.release(),arch:os.arch(),checks:[]};
 let cmd, exited, browser, originalScale;
 const check=async(name,action)=>{
   const item={name,status:'FAIL'};
@@ -54,7 +60,7 @@ const untilOffline=async()=>{
   throw Error('POS remains active.');
 };
 const start=async(root)=>{
-  assert.equal(await health(),null,'The test requires an unused loopback port 3000.');
+  await requireFreePort();
   cmd=spawn(process.env.ComSpec ?? 'cmd.exe',['/d','/c','RUN-POS.cmd'],
     {cwd:root,env,windowsHide:true,stdio:'ignore'});
   exited=once(cmd,'exit');
@@ -93,6 +99,7 @@ function scale(action,percent) {
 }
 
 try {
+  await check('unused loopback test port',requireFreePort);
   await check('native bundled Node and better-sqlite3',()=>{
     const result=JSON.parse(execFileSync(path.join(newRelease,'runtime','node.exe'),['-e',`
       const db=new (require('better-sqlite3'))(':memory:');
@@ -102,7 +109,8 @@ try {
       db.close();
       console.log(JSON.stringify(out));
     `],{cwd:newRelease,env,encoding:'utf8',timeout:10000}));
-    assert.equal(result.node,'v22.23.5');
+    const [major,minor]=result.node.slice(1).split('.').map(Number);
+    assert.equal(major,22);assert.ok(minor>=12,'Bundled runtime requires Node 22.12+');
     assert.equal(result.modules,'127');
     assert.equal(result.platform,'win32');
     assert.equal(result.arch,'x64');
