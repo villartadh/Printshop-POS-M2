@@ -76,7 +76,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "pricing settings and document quote"; verifyPricingScreen(screen);
             phase = "measured quote"; verifyMeasuredQuote(screen);
             phase = "native cashier training UI"; verifyCashierTrainingScreen(screen);
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\n");
+            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\n");
             result = Activity.RESULT_OK;
         } catch (Throwable error) {
             evidence.putString("stream", failureDetails(phase, error));
@@ -353,6 +353,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             }
             verifyOwnerCatalogWorkflow(second,fixtureId,owner,ownerPass);
             verifyDrawerTrainingUI(second,fixtureId,owner,ownerPass);
+            verifyRefundTrainingUI(second,fixtureId,owner,ownerPass);
             try(CatalogStore ordinary=new CatalogStore(context)){
                 java.util.List<CatalogEntry> after=ordinary.list(true);
                 require(before.size()==after.size(),"ordinary catalog changed");
@@ -648,6 +649,70 @@ public final class NativeQuoteSmoke extends Instrumentation {
             require(trainingCount(fixture,"SELECT COUNT(*) FROM cashier_shifts WHERE expected_cash=375 AND counted_cash=375 AND variance=0")==1,"cashier expense shift close wrong");
             require(trainingCount(fixture,"SELECT COUNT(*) FROM checkout_sales")==2&&trainingCount(fixture,"SELECT COUNT(*) FROM stock_movements")==5,"drawer altered sales/inventory");
             require(trainingCount(fixture,"SELECT COUNT(*) FROM cashier_sessions WHERE revoked_ms IS NULL")==0,"drawer session still active");
+        }
+    }
+
+    private void verifyRefundTrainingUI(Activity activity,String fixtureId,String owner,String ownerPass){
+        trainingLogin(activity,owner,ownerPass);awaitText(activity,"No open shift","refund owner login missing");
+        trainingField(activity,R.id.cashier_opening,"30.00");trainingClick(activity,R.id.cashier_open_shift);
+        awaitText(activity,"Shift open · Expected cash: PHP 30.00","refund opening wrong");
+        trainingClick(activity,R.id.cashier_refund_receipts);awaitText(activity,"Training sale refunds / voids","receipt selection missing");
+        trainingSelect(activity,"Select Training document print · PHP 5.00");
+        awaitText(activity,"Original training cash receipt","historic receipt review missing");
+        awaitText(activity,"Remaining: PHP 5.00","original amount wrong");
+        trainingClick(activity,R.id.cashier_refund_new);awaitText(activity,"Prepare training refund","refund form missing");
+        trainingField(activity,R.id.cashier_refund_amount,"5.01");trainingField(activity,R.id.cashier_refund_reason,"Synthetic partial refund");
+        trainingClick(activity,R.id.cashier_refund_review);awaitText(activity,"Original receipt changed or amount is invalid; review again","over-refund allowed");
+        trainingField(activity,R.id.cashier_refund_amount,"2.00");trainingClick(activity,R.id.cashier_refund_review);
+        awaitText(activity,"Proposed after: PHP 28.00","refund reviewed cash wrong");
+        trainingClick(activity,R.id.cashier_refund_stage);awaitText(activity,"Pending training compensation","refund stage missing");
+        trainingClick(activity,R.id.cashier_refund_return);awaitText(activity,"Unresolved training refund/void","refund recovery omitted");
+        awaitText(activity,"Shift open · Expected cash: PHP 30.00","refund stage affected cash");
+        runOnMainChecked(()->require(!activity.findViewById(R.id.cashier_new_checkout).isEnabled()&&!activity.findViewById(R.id.cashier_close_shift).isEnabled(),"refund did not block other pending work"));
+        trainingClick(activity,R.id.cashier_lock);awaitText(activity,"Training sign in","refund lock failed");
+        trainingLogin(activity,owner,ownerPass);awaitText(activity,"Unresolved training refund/void","refund reopen missing");
+        trainingClick(activity,R.id.cashier_drawer);awaitText(activity,"Pending training compensation","generic adjustment bypass");
+        runOnMainChecked(()->require(activity.findViewById(R.id.cashier_drawer_apply)==null,"generic apply visible for refund"));
+        trainingClick(activity,R.id.cashier_refund_apply);awaitText(activity,"Recorded training compensation","refund apply missing");
+        awaitText(activity,"After: PHP 28.00","refund exact cash wrong");
+        trainingClick(activity,R.id.cashier_refund_return);awaitText(activity,"Shift open · Expected cash: PHP 28.00","refund cash missing");
+        trainingClick(activity,R.id.cashier_refund_receipts);awaitText(activity,"Training sale refunds / voids","repeat list missing");
+        trainingSelect(activity,"Select Training document print · PHP 5.00");awaitText(activity,"Remaining: PHP 3.00","refundable amount not reduced");
+        runOnMainChecked(()->require(!activity.findViewById(R.id.cashier_void_new).isEnabled(),"void after refund enabled"));
+        trainingClick(activity,R.id.cashier_refund_new);awaitText(activity,"Prepare training refund","second refund missing");
+        trainingField(activity,R.id.cashier_refund_amount,"3.00");trainingField(activity,R.id.cashier_refund_reason,"Synthetic cancel review");
+        trainingClick(activity,R.id.cashier_refund_review);awaitText(activity,"Review training compensation","second confirmation missing");
+        trainingClick(activity,R.id.cashier_refund_stage);awaitText(activity,"Pending training compensation","second stage missing");
+        trainingField(activity,R.id.cashier_refund_cancel_reason,"Synthetic keep original");trainingClick(activity,R.id.cashier_refund_cancel);
+        awaitText(activity,"Cancelled training compensation","refund cancel missing");
+        trainingClick(activity,R.id.cashier_refund_return);awaitText(activity,"Shift open · Expected cash: PHP 28.00","cancel affected cash");
+        trainingClick(activity,R.id.cashier_refund_receipts);awaitText(activity,"Training sale refunds / voids","void list missing");
+        trainingSelect(activity,"Select Synthetic UI configured · PHP 21.00");awaitText(activity,"Original training cash receipt","void original missing");
+        trainingClick(activity,R.id.cashier_void_new);awaitText(activity,"Full void amount: PHP 21.00","void amount wrong");
+        trainingField(activity,R.id.cashier_refund_reason,"Synthetic full void");trainingClick(activity,R.id.cashier_refund_review);
+        awaitText(activity,"Proposed after: PHP 7.00","void cash review wrong");
+        trainingClick(activity,R.id.cashier_refund_stage);awaitText(activity,"Pending training compensation","void stage missing");
+        trainingClick(activity,R.id.cashier_refund_apply);awaitText(activity,"After: PHP 7.00","void apply wrong");
+        trainingClick(activity,R.id.cashier_refund_history);awaitText(activity,"APPLIED · Void · PHP 21.00","void history missing");
+        awaitText(activity,"APPLIED · Refund · PHP 2.00","partial history missing");
+        awaitText(activity,"CANCELLED · Refund · PHP 3.00","cancel history missing");
+        trainingClick(activity,R.id.cashier_back);awaitText(activity,"Shift open · Expected cash: PHP 7.00","void dashboard cash wrong");
+        trainingClick(activity,R.id.cashier_drawer_history);awaitText(activity,"Training drawer history","ordinary history absent");
+        runOnMainChecked(()->require(findText(activity.getWindow().getDecorView(),"APPLIED · Cash out · PHP 21.00")==null,"void duplicated as ordinary adjustment"));
+        trainingClick(activity,R.id.cashier_back);awaitText(activity,"Shift open · Expected cash: PHP 7.00","history return failed");
+        trainingClick(activity,R.id.cashier_close_shift);awaitText(activity,"Close training shift","refund shift close unavailable");
+        trainingField(activity,R.id.cashier_counted,"7.00");trainingClick(activity,R.id.cashier_confirm_close);
+        awaitText(activity,"Variance: PHP 0.00","refund close mismatch");
+        trainingClick(activity,R.id.cashier_return_home);awaitText(activity,"No open shift","refund shift still open");
+        trainingClick(activity,R.id.cashier_lock);awaitText(activity,"Training sign in","refund owner sign out missing");
+        trainingLogin(activity,"catalog-cashier","Synthetic-Catalog-Cashier-01");awaitText(activity,"No open shift","refund cashier sign in failed");
+        runOnMainChecked(()->require(activity.findViewById(R.id.cashier_refund_receipts)==null&&activity.findViewById(R.id.cashier_refund_history)==null,"cashier compensation controls exposed"));
+        trainingClick(activity,R.id.cashier_lock);awaitText(activity,"Training sign in","cashier sign out failed");
+        try(CatalogStore fixture=CatalogStore.checkoutFixture(getTargetContext(),fixtureId)){
+            require(trainingCount(fixture,"SELECT COUNT(*) FROM cashier_refund_links")==3,"linked request audit wrong");
+            require(trainingCount(fixture,"SELECT COUNT(*) FROM cashier_refund_links l JOIN cashier_drawer_requests d ON d.id=l.drawer_id WHERE d.state='APPLIED'")==2,"applied refund audit wrong");
+            require(trainingCount(fixture,"SELECT SUM(compensated) FROM cashier_refund_totals")==2300,"compensation total wrong");
+            require(trainingCount(fixture,"SELECT COUNT(*) FROM checkout_sales")==2&&trainingCount(fixture,"SELECT COUNT(*) FROM checkout_cash")==2&&trainingCount(fixture,"SELECT COUNT(*) FROM stock_movements")==5,"compensation changed original history");
         }
     }
 
@@ -1280,6 +1345,12 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 reopened.resolveFixtureRefund(token,second,false,"Synthetic cancellation");
                 require(reopened.expectedFixtureCash(token,refundShift)==400&&reopened.reviewFixtureRefund(token,plan.requestId).remaining()==150,"cancel changed cash or cap");
                 require(trainingCount(reopened,"SELECT COUNT(*) FROM checkout_sales")==1&&reopened.stockBalance(plan.materials.get(0).materialId).quantity==49000,"refund changed original history");
+                require(reopened.authorizedFixtureRefundReceipts(token,0,9).size()==1&&reopened.authorizedFixtureRefundReceipts(token,0,9).get(0).review.remaining()==150,"owner original receipt list wrong");
+                require(reopened.authorizedFixtureRefundHistory(token,0,9).size()==2&&reopened.authorizedFixtureRefundHistory(token,1,1).size()==1,"owner linked history pagination wrong");
+                require(reopened.authorizedFixtureDrawerHistory(token,0,9).size()==4,"refund duplicated ordinary drawer history");
+                rejectStock(()->reopened.authorizedFixtureDrawer(token,refund));
+                rejectStock(()->reopened.authorizedFixtureRefundReceipts(cashier,0,9));
+                rejectStock(()->reopened.authorizedFixtureRefundHistory(cashier,0,9));
                 require(reopened.closeFixtureShift(token,refundShift,400).variance==0,"refund close wrong");
 
             }

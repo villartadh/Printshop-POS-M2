@@ -135,6 +135,9 @@ public final class CashierPreviewActivity extends Activity {
             case "Use up to three decimal places.":return message;
             case "Enter a printable reason (1–160 characters).":return message;
             case "Owner authorization required":return message;
+            case "Original receipt changed or amount is invalid; review again":
+            case "Authorized original cash receipt unavailable":
+            case "Use receipt compensation review":
             case "Resolve pending drawer activity first":
             case "Resolve pending checkout before drawer activity":
             case "Drawer changed; reload and review again":
@@ -279,14 +282,16 @@ public final class CashierPreviewActivity extends Activity {
         final long expected;
         final int pending;
         final DrawerJournal.Request pendingDrawer;
-        Dashboard(CashierJournal.Principal a,CashierJournal.Shift s,long e,int p,DrawerJournal.Request drawer){actor=a;shift=s;expected=e;pending=p;pendingDrawer=drawer;}
+        final boolean pendingRefund;
+        Dashboard(CashierJournal.Principal a,CashierJournal.Shift s,long e,int p,DrawerJournal.Request drawer,boolean refund){actor=a;shift=s;expected=e;pending=p;pendingDrawer=drawer;pendingRefund=refund;}
     }
     private Dashboard dashboard(){
         String token=session();CashierJournal.Principal actor=store.fixturePrincipal(token);
         CashierJournal.Shift shift=store.activeFixtureShift(token);
         long expected=shift==null?0:store.expectedFixtureCash(token,shift.id);
         int pending=shift==null?0:store.pendingAuthorizedFixtureCheckouts(token,shift.id,50).size();
-        return new Dashboard(actor,shift,expected,pending,shift==null?null:store.pendingFixtureDrawer(token,shift.id));
+        DrawerJournal.Request drawer=shift==null?null:store.pendingFixtureDrawer(token,shift.id);
+        return new Dashboard(actor,shift,expected,pending,drawer,drawer!=null&&store.isFixtureRefund(token,drawer.id));
     }
     private void refreshDashboard(){
         submit(this::dashboard,v->showDashboard((Dashboard)v));
@@ -306,9 +311,9 @@ public final class CashierPreviewActivity extends Activity {
             Button next=button("New training checkout",R.id.cashier_new_checkout,()->showCheckoutChoices(d.shift.id,0));
             next.setEnabled(d.pending==0&&d.pendingDrawer==null);
             button("Recover pending checkouts",R.id.cashier_pending,()->showPendingList(d.shift.id));
-            if(d.pendingDrawer!=null)label("Unresolved training drawer activity");
-            Button drawer=button(d.pendingDrawer==null?"Training drawer activity":"Recover pending drawer activity",R.id.cashier_drawer,()->{
-                if(d.pendingDrawer==null)showDrawerOptions(d);else openDrawerRequest(d.pendingDrawer.id);
+            if(d.pendingDrawer!=null)label(d.pendingRefund?"Unresolved training refund/void":"Unresolved training drawer activity");
+            Button drawer=button(d.pendingDrawer==null?"Training drawer activity":d.pendingRefund?"Recover pending refund/void":"Recover pending drawer activity",R.id.cashier_drawer,()->{
+                if(d.pendingDrawer==null)showDrawerOptions(d);else if(d.pendingRefund)openRefundRecord(d.pendingDrawer.id);else openDrawerRequest(d.pendingDrawer.id);
             });
             drawer.setEnabled(d.pending==0);
             Button close=button("Close training shift",R.id.cashier_close_shift,()->showClose(d));close.setEnabled(d.pending==0&&d.pendingDrawer==null);
@@ -317,6 +322,8 @@ public final class CashierPreviewActivity extends Activity {
         button("Training drawer history",R.id.cashier_drawer_history,()->showDrawerHistory(0));
         button("Change my training passphrase",R.id.cashier_change_pass,()->showCredentialChange(false));
         if(d.actor.role==CashierSecurity.Role.OWNER){
+            button("Training sale refunds / voids",R.id.cashier_refund_receipts,()->showRefundReceipts(0));
+            button("Refund / void history",R.id.cashier_refund_history,()->showRefundHistory(0));
             button("Create training cashier",R.id.cashier_add_staff,this::showStaff);
             button("Manage training cashiers",R.id.cashier_manage_staff,this::showManageStaff);
             button("Manage training services",R.id.cashier_catalog_services,()->showOwnerCatalog(CatalogEntry.Kind.SERVICE,false,0));
@@ -412,6 +419,108 @@ public final class CashierPreviewActivity extends Activity {
             }
             catalogPages(offset,rows.size()>8,()->showDrawerHistory(offset-8),()->showDrawerHistory(offset+8));
             button("Reload drawer history",R.id.cashier_drawer_history,()->showDrawerHistory(0));back();
+        });
+    }
+    private static String refundLabel(RefundJournal.Kind kind){return kind==RefundJournal.Kind.VOID?"Void":"Refund";}
+    private void showRefundReceipts(int offset){
+        submit(()->store.authorizedFixtureRefundReceipts(session(),offset,9),v->{
+            @SuppressWarnings("unchecked") List<RefundJournal.Receipt> rows=(List<RefundJournal.Receipt>)v;
+            mode="refund-receipts";screen("Training sale refunds / voids","Owner-only. Original receipts remain unchanged. Select a synthetic cash receipt. No automatic stock return or external refund.");
+            if(rows.isEmpty())label("No eligible cash receipts on this page");
+            for(int i=0;i<Math.min(8,rows.size());i++){
+                RefundJournal.Receipt receipt=rows.get(i);
+                label(receipt.serviceName+" · Paid "+QuoteMath.display(receipt.review.originalPaid));
+                label("Receipt: "+receipt.review.checkoutId+" · "+new java.util.Date(receipt.recordedMs));
+                label("Remaining: "+QuoteMath.display(receipt.review.remaining()));
+                Button choose=button("Select "+receipt.serviceName+" · "+QuoteMath.display(receipt.review.originalPaid),0,()->openRefundReview(receipt));
+                choose.setEnabled(receipt.review.remaining()>0);
+            }
+            catalogPages(offset,rows.size()>8,()->showRefundReceipts(offset-8),()->showRefundReceipts(offset+8));
+            button("Reload original receipts",R.id.cashier_refund_receipts,()->showRefundReceipts(0));
+            button("Refund / void history",R.id.cashier_refund_history,()->showRefundHistory(0));back();
+        });
+    }
+    private void openRefundReview(RefundJournal.Receipt receipt){
+        submit(()->new Object[]{dashboard(),store.reviewFixtureRefund(session(),receipt.review.checkoutId)},v->{
+            Object[] values=(Object[])v;
+            Dashboard d=(Dashboard)values[0];RefundJournal.Review review=(RefundJournal.Review)values[1];
+            mode="refund-select";screen("Original training cash receipt",receipt.serviceName);
+            label("Receipt: "+review.checkoutId);label("Original shift: "+receipt.shiftId);
+            label("Original paid: "+QuoteMath.display(review.originalPaid));
+            label("Previously compensated: "+QuoteMath.display(review.compensated));
+            label("Remaining: "+QuoteMath.display(review.remaining()));
+            boolean available=d.shift!=null&&d.pending==0&&d.pendingDrawer==null&&review.remaining()>0;
+            if(!available)label("Open your own training shift and resolve pending activity before compensation.");
+            if(d.shift!=null)label("Expected current drawer cash: "+QuoteMath.display(d.expected));
+            button("Prepare cash refund",R.id.cashier_refund_new,()->showRefundEntry(d,review,RefundJournal.Kind.REFUND)).setEnabled(available);
+            button("Prepare full cash void",R.id.cashier_void_new,()->showRefundEntry(d,review,RefundJournal.Kind.VOID)).setEnabled(available&&review.compensated==0);
+            button("Back to original receipts",R.id.cashier_refund_receipts,()->showRefundReceipts(0));back();
+        });
+    }
+    private void showRefundEntry(Dashboard d,RefundJournal.Review review,RefundJournal.Kind kind){
+        mode="refund-entry";screen("Prepare training "+refundLabel(kind).toLowerCase(java.util.Locale.ROOT),
+            "Compensation only. Original sale and inventory remain unchanged. No actual cash or external payment is moved.");
+        label("Receipt: "+review.checkoutId);label("Remaining: "+QuoteMath.display(review.remaining()));
+        EditText amount=kind==RefundJournal.Kind.REFUND?cashField("Refund amount (PHP)",R.id.cashier_refund_amount,null):null;
+        if(amount==null)label("Full void amount: "+QuoteMath.display(review.originalPaid));
+        EditText reason=field("Synthetic reason",R.id.cashier_refund_reason,InputType.TYPE_CLASS_TEXT,160,null);
+        String id=UUID.randomUUID().toString();
+        button("Review compensation",R.id.cashier_refund_review,()->{
+            try{
+                long value=amount==null?review.originalPaid:QuoteMath.parseCentavos(text(amount));
+                if(value<=0||value>review.remaining())throw new IllegalArgumentException("Original receipt changed or amount is invalid; review again");
+                long after=ShiftMath.drawerAfter(d.expected,ShiftMath.DrawerKind.CASH_OUT,value);
+                showRefundConfirmation(d,review,kind,id,value,StockMath.reason(text(reason)),after);
+            }catch(IllegalArgumentException|IllegalStateException ex){status.setText(safeFailure(ex.getMessage()));}
+        });
+        button("Discard draft",R.id.cashier_refund_return,this::refreshDashboard);back();
+    }
+    private void showRefundConfirmation(Dashboard d,RefundJournal.Review review,RefundJournal.Kind kind,String id,long amount,String reason,long after){
+        mode="refund-review";screen("Review training compensation","Confirm exact original receipt and current drawer balance. Saving does not move cash. No automatic stock return.");
+        label(refundLabel(kind)+" · "+QuoteMath.display(amount));label("Receipt: "+review.checkoutId);
+        label("Original paid: "+QuoteMath.display(review.originalPaid));label("Previously compensated: "+QuoteMath.display(review.compensated));
+        label("Reason: "+reason);label("Before: "+QuoteMath.display(d.expected));label("Proposed after: "+QuoteMath.display(after));
+        button("Save pending compensation",R.id.cashier_refund_stage,()->submit(()->store.stageFixtureRefund(session(),d.shift.id,id,review.checkoutId,kind,review.originalPaid,review.compensated,amount,reason,d.expected),v->showRefundRecord((RefundJournal.Request)v)));
+        button("Discard unsaved review",R.id.cashier_refund_return,this::refreshDashboard);back();
+    }
+    private void openRefundRecord(String id){
+        submit(()->store.authorizedFixtureRefund(session(),id),v->showRefundRecord((RefundJournal.Request)v));
+    }
+    private void showRefundRecord(RefundJournal.Request request){
+        DrawerJournal.Request d=request.drawer;
+        boolean pending="PENDING".equals(d.state),applied="APPLIED".equals(d.state);
+        mode="refund-record";screen(pending?"Pending training compensation":applied?"Recorded training compensation":"Cancelled training compensation",
+            "Immutable original receipt link. No automatic stock return or external refund.");
+        label(refundLabel(request.kind)+" · "+QuoteMath.display(d.amount));label("Receipt: "+request.checkoutId);
+        label("Original paid: "+QuoteMath.display(request.originalPaid));label("Previously compensated: "+QuoteMath.display(request.priorPaid));
+        label("Reason: "+d.reason);label("Before: "+QuoteMath.display(d.before));label((applied?"After: ":"Proposed after: ")+QuoteMath.display(d.after));
+        label("Request: "+d.id);label("Resolution shift: "+d.shiftId);label("Operator: "+d.operatorId+" · Stage account revision "+d.stageRevision);
+        label("Staged: "+new java.util.Date(d.createdMs));
+        if(d.resolvedRevision!=null)label("Resolved account revision "+d.resolvedRevision+" · "+new java.util.Date(d.resolvedMs));
+        if(d.cancelReason!=null)label("Cancellation reason: "+d.cancelReason);
+        if(pending){
+            button("Apply saved compensation",R.id.cashier_refund_apply,()->submit(()->store.resolveFixtureRefund(session(),d.id,true,null),v->showRefundRecord((RefundJournal.Request)v)));
+            EditText reason=field("Cancellation reason",R.id.cashier_refund_cancel_reason,InputType.TYPE_CLASS_TEXT,160,null);
+            button("Cancel saved compensation",R.id.cashier_refund_cancel,()->{
+                String note=text(reason);submit(()->store.resolveFixtureRefund(session(),d.id,false,note),v->showRefundRecord((RefundJournal.Request)v));
+            });
+        }
+        button("Return to training cashier",R.id.cashier_refund_return,this::refreshDashboard);
+        button("Refund / void history",R.id.cashier_refund_history,()->showRefundHistory(0));back();
+    }
+    private void showRefundHistory(int offset){
+        submit(()->store.authorizedFixtureRefundHistory(session(),offset,9),v->{
+            @SuppressWarnings("unchecked") List<RefundJournal.Request> rows=(List<RefundJournal.Request>)v;
+            mode="refund-history";screen("Training refund / void history","Owner-only linked compensation records. Pending, applied and cancelled requests are retained separately from ordinary drawer adjustments.");
+            if(rows.isEmpty())label("No compensation on this page");
+            for(int i=0;i<Math.min(8,rows.size());i++){
+                RefundJournal.Request request=rows.get(i);
+                label(request.drawer.state+" · "+refundLabel(request.kind)+" · "+QuoteMath.display(request.drawer.amount));
+                label("Receipt: "+request.checkoutId+" · "+new java.util.Date(request.drawer.createdMs));
+                button("Review "+request.drawer.id.substring(0,8),0,()->openRefundRecord(request.drawer.id));
+            }
+            catalogPages(offset,rows.size()>8,()->showRefundHistory(offset-8),()->showRefundHistory(offset+8));
+            button("Reload compensation history",R.id.cashier_refund_history,()->showRefundHistory(0));back();
         });
     }
     private void showOwnerCatalog(CatalogEntry.Kind kind,boolean archived,int offset){

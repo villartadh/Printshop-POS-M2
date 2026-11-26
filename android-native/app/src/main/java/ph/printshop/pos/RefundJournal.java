@@ -34,6 +34,36 @@ final class RefundJournal {
             this.checkoutId=checkoutId;this.kind=kind;this.originalPaid=originalPaid;this.priorPaid=priorPaid;this.drawer=drawer;
         }
     }
+    static final class Receipt {
+        final String serviceName,shiftId;
+        final long recordedMs;
+        final Review review;
+        Receipt(Cursor c){
+            review=new Review(c.getString(0),c.getLong(1),c.getLong(2));
+            serviceName=c.getString(3);shiftId=c.getString(4);recordedMs=c.getLong(5);
+        }
+    }
+    private static void page(int offset,int limit){
+        if(offset<0||limit<1||limit>51)throw new IllegalArgumentException("Invalid compensation history page");
+    }
+    static java.util.List<Receipt> receipts(SQLiteDatabase db,CashierJournal.Principal actor,int offset,int limit){
+        CashierSecurity.requireOwner(actor.role);page(offset,limit);
+        java.util.List<Receipt> result=new java.util.ArrayList<>();
+        try(Cursor c=db.rawQuery("SELECT t.checkout_id,t.original_paid,t.compensated,r.service_name,l.shift_id,s.recorded_ms FROM cashier_refund_totals t JOIN checkout_requests r ON r.request_id=t.checkout_id JOIN cashier_shift_checkouts l ON l.request_id=t.checkout_id JOIN checkout_sales s ON s.request_id=t.checkout_id ORDER BY s.recorded_ms DESC,t.checkout_id DESC LIMIT ? OFFSET ?",new String[]{Integer.toString(limit),Integer.toString(offset)})){
+            while(c.moveToNext())result.add(new Receipt(c));
+        }
+        return result;
+    }
+    static java.util.List<Request> history(SQLiteDatabase db,CashierJournal.Principal actor,int offset,int limit){
+        CashierSecurity.requireOwner(actor.role);page(offset,limit);
+        java.util.List<String> ids=new java.util.ArrayList<>();
+        try(Cursor c=db.rawQuery("SELECT l.drawer_id FROM cashier_refund_links l JOIN cashier_drawer_requests d ON d.id=l.drawer_id WHERE d.operator_id=? ORDER BY d.created_ms DESC,d.id DESC LIMIT ? OFFSET ?",new String[]{actor.id,Integer.toString(limit),Integer.toString(offset)})){
+            while(c.moveToNext())ids.add(c.getString(0));
+        }
+        java.util.List<Request> rows=new java.util.ArrayList<>();
+        for(String id:ids)rows.add(read(db,actor,id));
+        return rows;
+    }
     static boolean linked(SQLiteDatabase db,String id){
         try(Cursor c=db.rawQuery("SELECT 1 FROM cashier_refund_links WHERE drawer_id=?",new String[]{id})){return c.moveToFirst();}
     }

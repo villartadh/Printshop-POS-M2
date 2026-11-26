@@ -128,4 +128,16 @@
     <item type="id" name="cashier_drawer_apply"/>
     <item type="id" name="cashier_drawer_cancel_reason"/>
     <item type="id" name="cashier_drawer_cancel"/>
+    <item type="id" name="cashier_refund_receipts"/>
+    <item type="id" name="cashier_refund_history"/>
+    <item type="id" name="cashier_refund_new"/>
+    <item type="id" name="cashier_void_new"/>
+    <item type="id" name="cashier_refund_amount"/>
+    <item type="id" name="cashier_refund_reason"/>
+    <item type="id" name="cashier_refund_review"/>
+    <item type="id" name="cashier_refund_return"/>
+    <item type="id" name="cashier_refund_stage"/>
+    <item type="id" name="cashier_refund_apply"/>
+    <item type="id" name="cashier_refund_cancel_reason"/>
+    <item type="id" name="cashier_refund_cancel"/>
 </resources>

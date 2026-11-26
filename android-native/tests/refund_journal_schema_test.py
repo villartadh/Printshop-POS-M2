@@ -4,6 +4,11 @@ from drawer_journal_schema_test import *
 refund=statements("RefundJournal.java")
 assert len(refund)==7
 start=prior_test.checks
+source=(root/"RefundJournal.java").read_text()
+def query_fragment(prefix):
+    return next(q for q in re.findall(r'db\.rawQuery\("([^"]+)"',source) if q.startswith(prefix))
+receipts_query=query_fragment("SELECT t.checkout_id")
+history_query=query_fragment("SELECT l.drawer_id")
 for former in range(1,12):
     with sqlite3.connect(":memory:") as db:
         db.execute("PRAGMA foreign_keys=ON")
@@ -70,5 +75,12 @@ for former in range(1,12):
         bad_comp("exhausted","sale-a","REFUND",500,500,1,300)
         check(snapshot(db,names[:5])=={n:old[n] for n in names[:5]},"original sale/payment/inventory untouched")
         check(db.execute("SELECT expected_cash,counted_cash,variance FROM cashier_shifts WHERE id='original'").fetchone()==(800,800,0),"original closed shift untouched")
+        rows=db.execute(receipts_query,("9","0")).fetchall()
+        check([(r[0],r[1],r[2]) for r in rows]==[("sale-b",300,300),("sale-a",500,500)],"receipt list preserves fully compensated rows and stable tie-break")
+        check(db.execute(receipts_query,("1","1")).fetchall()==[rows[1]],"receipt pagination")
+        history=db.execute(history_query,("owner","9","0")).fetchall()
+        check(set(history)=={("partial",),("cancel",),("final",),("void",)},"linked history includes all resolutions only")
+        check(db.execute(history_query,("owner","2","2")).fetchall()==history[2:],"history pagination")
+        check(db.execute(history_query,("staff","9","0")).fetchall()==[],"other operator history isolated")
         check(not db.execute("PRAGMA foreign_key_check").fetchall(),"foreign keys")
 print(f"Refund journal actual SQLite: {prior_test.checks-start} additional checks PASS across 11 synthetic migration fixtures")
