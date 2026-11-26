@@ -39,7 +39,7 @@ public final class RecipeActivity extends Activity {
         label(root,"LOCAL PREVIEW — costs are not selling prices",14);
         estimate=label(root,"Estimated cost —",20);
         label(root,"Choose a material",16);
-        chooser=new Spinner(this);chooser.setId(R.id.recipe_material);chooser.setMinHeight(dp(48));root.addView(chooser);
+        chooser=new Spinner(this);chooser.setId(R.id.recipe_material);chooser.setMinimumHeight(dp(48));root.addView(chooser);
         label(root,"Material quantity per service unit",16);
         usage=new EditText(this);usage.setId(R.id.recipe_usage);usage.setSingleLine(true);usage.setHint("Example: 0.5");
         usage.setMinHeight(dp(48));usage.setInputType(InputType.TYPE_CLASS_NUMBER|InputType.TYPE_NUMBER_FLAG_DECIMAL);root.addView(usage);
