@@ -1,6 +1,9 @@
 package ph.printshop.pos;
 
 import android.app.Activity;
+import android.content.Intent;
+import android.widget.Button;
+import android.widget.Toast;
 import android.os.Bundle;
 import android.graphics.Color;
 import android.text.InputType;
@@ -30,6 +33,12 @@ public final class MainActivity extends Activity {
         label(root, "Printshop POS", 28);
         label(root, "Native Android foundation · offline quote calculator", 16);
         label(root, "PREVIEW ONLY — NOT A SALE OR TAX DOCUMENT", 14);
+        Button catalog = new Button(this);
+        catalog.setId(1004);
+        catalog.setText("Open service and material catalog");
+        catalog.setMinHeight(dp(48));
+        root.addView(catalog);
+        catalog.setOnClickListener(v -> startActivityForResult(new Intent(this, CatalogActivity.class), 41));
         price = field(root, "Unit price (PHP)", 1001, true);
         quantity = field(root, "Quantity", 1002, false);
         received = field(root, "Amount received (optional)", 1003, true);
@@ -44,6 +53,14 @@ public final class MainActivity extends Activity {
         quantity.addTextChangedListener(watcher);
         received.addTextChangedListener(watcher);
         calculate();
+    }
+    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != 41 || resultCode != RESULT_OK || data == null) return;
+        long centavos = data.getLongExtra("centavos", -1);
+        if (centavos < 0 || centavos > 99_999_999_999L) return;
+        price.setText(java.math.BigDecimal.valueOf(centavos, 2).toPlainString());
+        Toast.makeText(this, "Service price copied to editable quotation", Toast.LENGTH_SHORT).show();
     }
     private TextView label(LinearLayout root, String text, int size) {
         TextView v = new TextView(this);
