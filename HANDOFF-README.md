@@ -79,9 +79,15 @@ Version 0.9.7 expanded engineering candidate; not a production release.
 - Acceptance and release decision:
 ```
 
-## Immediate next action at this checkpoint
+## Immediate next action — 2026-11-26
 
-Recheck PR #2 and run 45752179676. If it fails, inspect the failed step and repair without weakening assertions. If it passes, verify mergeability and latest base/head, review the six-file diff and remaining physical tooling scope, then integrate only verified work. Confirm fresh integrated CI, update the queue and produce versioned source/Windows packages with checksums. Continue outstanding native Android and original feature parity work; do not declare full project completion at the expanded gate alone.
+Use the latest `DEVELOPMENT_QUEUE.md` entry rather than earlier historical snapshots in this file. Verified v0.9.7 expanded software candidate is preserved; the native Android preview is now advancing toward feature parity independently of production. Current stacked work: integrated stock controls on develop `77f89601c13b7465965b36e1cfc912d877b3a40b`, material-costing PR #8, and branch `feature/native-android-recipe-ui` based on PR #8.
+
+1. Recheck integrated develop software/Android gates (45773865467, 45773865498) and PR #8 gates (45773895129, 45773895108). Confirm exact tested head and all required job results before merging #8.
+2. Inspect the recipe UI pull request's CI. The installed native screen must emit `NATIVE_RECIPE_SCREEN_PASS` along with every preexisting marker and exact successful instrumentation code. Resolve real failures without relaxing checks. Retarget to develop only after #8 is integrated, then run full gates.
+3. For Android local verification, use JDK 17, Gradle 8.9, Android SDK 35/build-tools 34.0.0, an API 34 emulator and the checked-in `.github/workflows/android-native.yml`. Run `gradle -p android-native --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug`; install preview and instrumentation APKs on a disposable emulator only, then use the exact instrumentation command in CI. The native APK is not an official sales application; use synthetic data exclusively.
+4. After recipe UI acceptance, implement pricing-method parity and safe durable pending stock recovery in isolated branches. Preserve the distinction between estimated materials, editable selling price and actual stock movements. Physical devices, printing, and official BIR approval are still external gates.
+ 
 
 ## Protected contracts and release limits
 
