@@ -47,6 +47,16 @@ jobs:
       - run: npm ci --prefix .baseline-v095
       - name: Verify actual baseline database upgrade and restoration
         run: node scripts/upgrade-acceptance.mjs .baseline-v095
+      - name: Build pinned baseline Windows distribution
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npm run build --prefix .baseline-v095
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $nodeDir = Split-Path (Get-Command node.exe).Source
+          node .baseline-v095/scripts/stage-windows.mjs $nodeDir windows-baseline-stage
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Remove baseline checkout before packaging
         run: rm -rf .baseline-v095
       - if: runner.os == 'Linux'
@@ -92,6 +102,8 @@ jobs:
           } finally { Pop-Location }
           node scripts/windows/package-smoke.mjs windows-stage
           if ($LASTEXITCODE -ne 0) { throw 'Isolated packaged application smoke test failed' }
+          node scripts/windows/package-upgrade.mjs windows-baseline-stage windows-stage
+          if ($LASTEXITCODE -ne 0) { throw 'Bundled Windows upgrade and restoration gate failed' }
           Compress-Archive -Path windows-stage\* -DestinationPath Printshop-POS-v0.9.7-Windows-x64.zip
           $hash = (Get-FileHash Printshop-POS-v0.9.7-Windows-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
           Set-Content -Encoding ascii SHA256SUMS.txt "$hash  Printshop-POS-v0.9.7-Windows-x64.zip"
