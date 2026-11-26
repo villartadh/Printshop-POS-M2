@@ -50,7 +50,8 @@ public final class NativeQuoteSmoke extends Instrumentation {
             verifyCatalog();
             verifyCatalogScreen(screen);
             verifyStockLedger();
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\n");
+            verifyStockScreen();
+            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\n");
             finish(Activity.RESULT_OK, evidence);
         } catch (Throwable error) {
             evidence.putString("stream", "NATIVE_QUOTE_SMOKE_FAIL: " + error + "\n");
@@ -59,6 +60,45 @@ public final class NativeQuoteSmoke extends Instrumentation {
             if (activity != null) {
                 final Activity screen = activity;
                 runOnMainSync(screen::finish);
+            }
+        }
+    }
+    private void verifyStockScreen() {
+        android.content.Context context=getTargetContext();
+        try(CatalogStore store=new CatalogStore(context)) {
+            CatalogEntry material=store.create(CatalogEntry.Kind.MATERIAL,"Synthetic inventory","sheet","1.20");
+            Intent intent=new Intent(Intent.ACTION_MAIN);
+            intent.setClassName(context.getPackageName(),StockActivity.class.getName());
+            intent.putExtra("materialId",material.id);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            Activity stock=startActivitySync(intent);
+            try {
+                runOnMainSync(()->{
+                    View root=stock.getWindow().getDecorView();
+                    EditText qty=stock.findViewById(R.id.stock_quantity);
+                    EditText reason=stock.findViewById(R.id.stock_reason);
+                    require(hasText(root,"On hand: 0 sheet"),"initial screen balance missing");
+                    qty.setText("2.500");reason.setText("Synthetic receipt");
+                    require(stock.findViewById(R.id.stock_receive).performClick(),"receipt action unavailable");
+                    require(hasText(root,"On hand: 2.5 sheet"),"receipt screen balance wrong");
+                    require(hasText(root,"#1 +2.5 sheet · Synthetic receipt"),"receipt history absent");
+                    qty.setText("3");reason.setText("Invalid consumption");
+                    stock.findViewById(R.id.stock_consume).performClick();
+                    require(hasText(root,"On hand: 2.5 sheet"),"overdraw changed balance");
+                    qty.setText("2.5");reason.setText("Synthetic usage");
+                    stock.findViewById(R.id.stock_consume).performClick();
+                    require(hasText(root,"On hand: 0 sheet"),"consumption screen balance wrong");
+                    require(hasText(root,"#2 -2.5 sheet · Synthetic usage"),"consumption history absent");
+                    require(stock.findViewById(R.id.stock_older).getVisibility()==View.GONE,"pagination rendered without overflow");
+                });
+                require(store.stockBalance(material.id).revision==2,"screen operation count wrong");
+                java.util.List<CatalogStore.StockMovement> newest=store.stockHistory(material.id,0,1);
+                require(newest.size()==1&&newest.get(0).revision==2,"history newest page wrong");
+                java.util.List<CatalogStore.StockMovement> older=store.stockHistory(material.id,2,1);
+                require(older.size()==1&&older.get(0).revision==1,"history older page wrong");
+            } finally {
+                runOnMainSync(stock::finish);
+                if(store.stockBalance(material.id).quantity==0)store.archive(material.id,material.revision,true);
             }
         }
     }
