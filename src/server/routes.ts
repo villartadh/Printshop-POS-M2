@@ -1,4 +1,5 @@
 import {transactionRequestDigest} from './transactionIdentity.ts';
+import {isLedgerMoney,cents,sumCents,fromCents} from '../shared/money.ts';
 import { attemptGate, validPassword, validPin, removesLastAdmin } from '../shared/securityPolicy.ts';
 import { validateSyncEnvelope, isRetryableSyncError } from '../shared/offlinePolicy.ts';
 import {validatePurchaseCost,weightedPurchaseCost} from '../shared/purchaseCost.ts';
@@ -1067,9 +1068,9 @@ function applyTransactionCreation(
         const pointsEarned = Math.floor(Number(payload.amountPaid) / 10);
         db.prepare(`
           UPDATE customers
-          SET total_spent = total_spent + ?,
+          SET total_spent = ROUND(total_spent + ?,2),
               loyalty_points = loyalty_points + ?,
-              outstanding_balance = outstanding_balance + ?
+              outstanding_balance = ROUND(outstanding_balance + ?,2)
           WHERE id = ?
         `).run(
           Number(payload.amountPaid) || 0,
@@ -1081,19 +1082,14 @@ function applyTransactionCreation(
 
       // Update active cashier shift if linked
       if (payload.shiftId) {
-        const cashPaid = (payload.payments || [])
-          .filter((p) => p.methodType === 'cash')
-          .reduce((s, p) => s + Number(p.amount), 0);
-        const netCashAdded = Math.max(0, cashPaid - (Number(payload.changeAmount) || 0));
-        const electronicPaid = (payload.payments || [])
-          .filter((p) => p.methodType !== 'cash' && p.methodType !== 'credit_balance')
-          .reduce((s, p) => s + Number(p.amount), 0);
+        const netCashAdded=fromCents(sumCents(payload.payments.filter(p=>p.methodType==='cash').map(p=>p.amount))-cents(payload.changeAmount));
+        const electronicPaid=fromCents(sumCents(payload.payments.filter(p=>p.methodType!=='cash').map(p=>p.amount)));
 
         db.prepare(`
           UPDATE cashier_shifts
-          SET cash_sales = cash_sales + ?,
-              electronic_sales = electronic_sales + ?,
-              expected_cash = expected_cash + ?
+          SET cash_sales = ROUND(cash_sales + ?,2),
+              electronic_sales = ROUND(electronic_sales + ?,2),
+              expected_cash = ROUND(expected_cash + ?,2)
           WHERE id = ? AND status = 'open'
         `).run(netCashAdded, electronicPaid, netCashAdded, payload.shiftId);
       }
@@ -2035,8 +2031,8 @@ apiRouter.delete(
 // ---------- CASHIER SHIFTS ----------
 
 apiRouter.post('/shifts/start', requireAuth, (req: AuthenticatedRequest, res) => {
-  const openingCash = Number(req.body?.openingCash);
-  if (!Number.isFinite(openingCash) || openingCash < 0) return res.status(400).json({ error: 'Opening cash must be nonnegative.' });
+  const openingCash=req.body?.openingCash;
+  if(!isLedgerMoney(openingCash))return res.status(400).json({error:'Opening cash must be a non-negative numeric amount in centavos.'});
   const openShift = db
     .prepare("SELECT id FROM cashier_shifts WHERE cashier_id = ? AND status = 'open'")
     .get(req.authUser!.id);
@@ -2082,8 +2078,8 @@ apiRouter.post('/shifts/start', requireAuth, (req: AuthenticatedRequest, res) =>
 apiRouter.post('/shifts/:id/movement', requireAuth, (req: AuthenticatedRequest, res) => {
   const id = String(req.params.id);
   const { type, amount, reason } = req.body || {};
-  const val = Number(amount) || 0;
-  if (!['cash_in', 'cash_out'].includes(type) || !Number.isFinite(val) || val <= 0 || !reason) {
+  const val=amount;
+  if (!['cash_in','cash_out'].includes(type)||!isLedgerMoney(val)||val<=0||typeof reason!=='string'||!reason.trim()) {
     return res.status(400).json({ error: 'Valid movement type, positive amount, and reason required.' });
   }
   const shift = db.prepare("SELECT * FROM cashier_shifts WHERE id = ? AND status = 'open'").get(id) as
@@ -2114,9 +2110,9 @@ apiRouter.post('/shifts/:id/movement', requireAuth, (req: AuthenticatedRequest, 
 
 apiRouter.post('/shifts/:id/close', requireAuth, (req: AuthenticatedRequest, res) => {
   const id = String(req.params.id);
-  const actualCash = Number(req.body?.actualCash);
+  const actualCash = req.body?.actualCash;
   const reconciliationNote = String(req.body?.reconciliationNote || '');
-  if (!Number.isFinite(actualCash) || actualCash < 0) {
+  if (!isLedgerMoney(actualCash)) {
     return res.status(400).json({ error: 'Actual cash count is required.' });
   }
   const shift = db.prepare("SELECT * FROM cashier_shifts WHERE id = ? AND status = 'open'").get(id) as

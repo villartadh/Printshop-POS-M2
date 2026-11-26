@@ -1,11 +1,12 @@
 import type Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
+import {isLedgerMoney,cents,fromCents,sumCents} from '../shared/money.ts';
 const money = (n: number) => Math.round(n * 100) / 100;
 const fail = (message: string, statusCode = 409): never => { throw Object.assign(new Error(message), { statusCode }); };
 export function paymentSplit(payments: {methodType:string;amount:number}[], change: number) {
-  if (!Array.isArray(payments) || !Number.isFinite(change) || change < 0 || payments.some(p => !Number.isFinite(p.amount) || p.amount < 0 || p.methodType === 'credit_balance')) fail('Unsupported or invalid payment entries.');
-  const cash = money(payments.filter(p => p.methodType === 'cash').reduce((s,p)=>s+p.amount,0)-change);
-  const electronic = money(payments.filter(p => p.methodType !== 'cash').reduce((s,p)=>s+p.amount,0));
+  if(!Array.isArray(payments)||!isLedgerMoney(change)||payments.some(p=>!p||!isLedgerMoney(p.amount)||p.methodType==='credit_balance'))fail('Unsupported or invalid payment entries.');
+  const cash=fromCents(sumCents(payments.filter(p=>p.methodType==='cash').map(p=>p.amount))-cents(change));
+  const electronic=fromCents(sumCents(payments.filter(p=>p.methodType!=='cash').map(p=>p.amount)));
   if (cash < 0) fail('Invalid cash change.');
   return {cash,electronic};
 }
@@ -16,11 +17,11 @@ export function reverseSale(db: Database.Database, id: string, kind: 'voided'|'r
   if (!sale) fail('Transaction not found.',404);
   if (sale.type !== 'sale' || ['voided','refunded'].includes(sale.payment_status) || sale.is_demo) fail('Transaction cannot be reversed.');
   const paid = Number(sale.amount_paid), due = Number(sale.balance_due);
-  if (!Number.isFinite(paid) || !Number.isFinite(due) || paid < 0 || due < 0) fail('Invalid original amounts.');
+  if (!isLedgerMoney(paid)||!isLedgerMoney(due))fail('Original amounts require manual reconciliation.');
   if (kind === 'voided' && paid !== 0) fail('Paid or partially paid sales must be refunded, not voided.');
   if (kind === 'refunded' && paid <= 0) fail('Unpaid sales must be voided.');
   const {cash,electronic} = paymentSplit(JSON.parse(sale.payments_json),Number(sale.change_amount));
-  if (Math.abs(cash+electronic-paid)>0.011) fail('Original payment records do not reconcile.');
+  if(cents(cash)+cents(electronic)!==cents(paid))fail('Original payment records do not reconcile.');
   if (db.prepare('SELECT 1 FROM balance_collections WHERE transaction_id=?').get(id)) fail('Sale has later collections; manual reconciliation is required before reversal.');
   let shift: any;
   if (paid > 0) {
@@ -53,8 +54,9 @@ export function collectBalance(db: Database.Database, customerId: string, amount
   const shift = db.prepare("SELECT * FROM cashier_shifts WHERE cashier_id=? AND status='open' ORDER BY started_at DESC LIMIT 1").get(actorId) as any;
   if (!shift) fail('Open your own cashier shift to collect cash.');
   const sales = db.prepare("SELECT * FROM transactions WHERE customer_id=? AND type='sale' AND is_demo=0 AND payment_status IN ('unpaid','partial') AND balance_due>0 ORDER BY created_at,id").all(customerId) as any[];
-  const totalDue = money(sales.reduce((s,t)=>s+Number(t.balance_due),0));
-  if (Math.abs(totalDue-Number(customer.outstanding_balance))>0.011 || amount>totalDue) fail('Amount exceeds balance or customer ledger needs reconciliation.');
+  if(!isLedgerMoney(customer.outstanding_balance)||sales.some(t=>!isLedgerMoney(t.balance_due)||!isLedgerMoney(t.amount_paid)))fail('Customer ledger requires manual reconciliation.');
+  const totalDue=fromCents(sumCents(sales.map(t=>t.balance_due)));
+  if(cents(totalDue)!==cents(customer.outstanding_balance)||cents(amount)>cents(totalDue))fail('Amount exceeds balance or customer ledger needs reconciliation.');
   let left=amount; const now=new Date().toISOString();
   for (const sale of sales) {
     if (left<=0) break;

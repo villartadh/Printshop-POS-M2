@@ -250,6 +250,23 @@ async function main(){
       assert.throws(()=>snapshot(backup,recovery),/refusing to overwrite/);
     } finally {db.close();}
   });
+  await check('centavo precision rejects invalid tender and drawer values without financial side effects',async()=>{
+    const before=await state();
+    const sale=makeOrder('sale',50);
+    for(const patch of [{amountPaid:39.99},{changeAmount:10.01},{payments:[{...sale.payments[0],amount:50.001}]}])await write('/transactions',{...sale,...patch,clientMutationId:randomUUID()},400);
+    for(const value of [null,'10',true,0.001,-1]) {
+      await write('/shifts/start',{openingCash:value},400);
+      await write('/shifts/'+shift.id+'/movement',{type:'cash_in',amount:value,reason:'Invalid fixture'},400);
+      await write('/shifts/'+shift.id+'/close',{actualCash:value},400);
+    }
+    const after=await state();
+    assert.deepEqual(after.shifts,before.shifts);assert.deepEqual(after.customers,before.customers);assert.deepEqual(after.transactions,before.transactions);assert.deepEqual(after.stockMovements,before.stockMovements);
+    await write('/shifts/'+shift.id+'/movement',{type:'cash_in',amount:0.1,reason:'Centavo acceptance'},200);
+    await write('/shifts/'+shift.id+'/movement',{type:'cash_in',amount:0.2,reason:'Centavo acceptance'},200);
+    assert.equal((await state()).shifts.find(s=>s.id===shift.id).expectedCash,540.3);
+    await write('/shifts/'+shift.id+'/movement',{type:'cash_out',amount:0.3,reason:'Centavo acceptance reversal'},200);
+    assert.equal((await state()).shifts.find(s=>s.id===shift.id).expectedCash,540);
+  });
   await check('cashier shift close',async()=>{const x=verifyResponse(await request(`/api/shifts/${shift.id}/close`,{method:'POST',auth:true,body:{actualCash:540}}),200);assert.equal(x.discrepancy,0);});
   await check('database and session persist across restart',async()=>{await stop();await start();const x=verifyResponse(await request('/api/bootstrap',{auth:true}),200);assert.ok(x.shifts.some(s=>s.id===shift.id&&s.status==='closed'));});
   await check('historical receipt snapshot survives settings change, restart and duplicate submission',async()=>{
