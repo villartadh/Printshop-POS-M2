@@ -21,3 +21,6 @@ Engineering checkpoint: commit 22918376a973538ab0bc8815a5103e4c24954d68, CI runs
 | Compliance | Non-tax pilot receipts; BIR review deferred |
 
 Known limitations: legacy replay without a fingerprint requires reconciliation; unconfirmed local records are not centrally locked across terminals; no automatic destructive discard; server backup excludes browser IndexedDB and session.secret; offline price conflicts require operator reconciliation; physical stock is not automatically returned on refunds; no native Android APK or macOS package. Do not use for real sales until shop acceptance and compliance are completed.
+
+## v0.9.7 extended acceptance
+Virtual PDF output for all five receipt formats passed CI 45734634658 and 45734628690. Browser DPR and Android touch/offline tests have been submitted, not yet verified. Emulation cannot certify native Windows DPI or physical tablet installation.

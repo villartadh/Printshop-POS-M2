@@ -479,6 +479,97 @@ try {
     await page.getByText('Unconfirmed drawer adjustment',{exact:true}).waitFor({state:'hidden'});
     assert.deepEqual((await api('/bootstrap')).shifts,accepted.shifts);
   });
+  await check('browser DPI simulation at 100, 125 and 150 percent',async()=>{
+    const measurements=[];
+    for(const scale of [1,1.25,1.5]){
+      const viewport={width:Math.floor(1920/scale),height:Math.floor(1080/scale)};
+      const scaled=await browser.newContext({viewport,deviceScaleFactor:scale});
+      try{
+        const p=await scaled.newPage();
+        await p.goto(origin);
+        await p.getByPlaceholder('Enter username').fill('browser-test');
+        await p.getByPlaceholder('Enter password',{exact:true}).fill(password);
+        await p.getByRole('button',{name:'Sign In',exact:true}).click();
+        const service=p.getByText('Synthetic Print',{exact:true}).filter({visible:true}).first();
+        await service.waitFor();await service.click();
+        const payment=p.getByRole('button',{name:/Receive payment/}).filter({visible:true}).first();
+        await payment.waitFor();
+        const geometry=await p.evaluate(()=>({dpr:devicePixelRatio,width:innerWidth,height:innerHeight,scrollWidth:document.documentElement.scrollWidth}));
+        assert.equal(geometry.dpr,scale);assert.equal(geometry.width,viewport.width);
+        assert.ok(geometry.scrollWidth<=geometry.width+1);
+        const box=await payment.boundingBox();assert.ok(box&&box.width>0&&box.height>=24);
+        await payment.click();
+        const dialog=p.getByRole('dialog').filter({has:p.getByText('Receive Payment',{exact:true})});
+        await dialog.getByLabel(/Amount Tendered/).waitFor();
+        assert.equal(await dialog.getByLabel(/Amount Tendered/).inputValue(),'20.00');
+        const bounds=await dialog.boundingBox();assert.ok(bounds&&bounds.x>=-1&&bounds.y>=-1&&bounds.x+bounds.width<=viewport.width+1&&bounds.y+bounds.height<=viewport.height+1);
+        await p.screenshot({path:path.join(evidence,'simulated-dpi-'+Math.round(scale*100)+'.png'),animations:'disabled'});
+        measurements.push({scale:scale*100,...geometry,scope:'Chromium device scale simulation; not native Windows display setting'});
+        await dialog.getByRole('button',{name:'Cancel',exact:true}).click();
+      }finally{await scaled.close();}
+    }
+    await fs.writeFile(path.join(evidence,'simulated-dpi.json'),JSON.stringify(measurements,null,2));
+  });
+  await check('mobile touch checkout and offline synchronization with PWA readiness',async()=>{
+    const mobile=await browser.newContext({viewport:{width:390,height:844},deviceScaleFactor:3,isMobile:true,hasTouch:true,userAgent:'Mozilla/5.0 (Linux; Android 14; Synthetic Test) AppleWebKit/537.36 Chrome/130.0.0.0 Mobile Safari/537.36'});
+    try{
+      const p=await mobile.newPage();
+      await p.goto(origin);
+      await p.getByPlaceholder('Enter username').fill('browser-test');
+      await p.getByPlaceholder('Enter password',{exact:true}).fill(password);
+      await p.getByRole('button',{name:'Sign In',exact:true}).tap();
+      const service=p.getByText('Synthetic Print',{exact:true}).filter({visible:true}).first();
+      await service.waitFor();
+      assert.equal(await p.evaluate(()=>navigator.maxTouchPoints>0),true);
+      const nav=p.getByRole('navigation',{name:'Mobile navigation'});
+      await nav.getByRole('button',{name:'POS',exact:true}).waitFor();
+      const navSize=await nav.getByRole('button',{name:'POS',exact:true}).boundingBox();
+      assert.ok(navSize&&navSize.height>=44);
+      const manifest=await p.evaluate(async()=>{
+        const link=document.querySelector('link[rel="manifest"]');
+        if(!link)throw Error('Manifest missing');
+        const response=await fetch(link.href);if(!response.ok)throw Error('Manifest unavailable');
+        return response.json();
+      });
+      assert.equal(manifest.display,'standalone');assert.equal(manifest.start_url,'/');
+      assert.ok(manifest.icons.some(i=>i.sizes==='192x192'));assert.ok(manifest.icons.some(i=>i.sizes==='512x512'));
+      await p.waitForFunction(async()=>Boolean((await navigator.serviceWorker.getRegistration())?.active));
+      const before=await api('/bootstrap');
+      await mobile.setOffline(true);
+      await service.tap();
+      await p.getByRole('button',{name:/View cart/}).tap();
+      const cart=p.getByRole('dialog').filter({has:p.getByText('Current Order',{exact:true})});
+      await cart.getByRole('button',{name:/Receive payment/}).tap();
+      const checkout=p.getByRole('dialog').filter({has:p.getByText('Receive Payment',{exact:true})});
+      await checkout.getByLabel(/Amount Tendered/).waitFor();
+      assert.equal(await checkout.getByLabel(/Amount Tendered/).inputValue(),'20.00');
+      await p.screenshot({path:path.join(evidence,'mobile-touch-checkout.png'),animations:'disabled'});
+      await checkout.getByRole('button',{name:'Complete Payment',exact:true}).tap();
+      const receipt=p.getByRole('dialog').filter({has:p.getByText('Document & Receipt Preview',{exact:true})});
+      await receipt.waitFor();
+      assert.match(await receipt.locator('#printable-document').innerText(),/20\.00/);
+      await receipt.getByRole('button',{name:'Close',exact:true}).tap();
+      assert.equal((await api('/bootstrap')).transactions.length,before.transactions.length);
+      await mobile.setOffline(false);
+      const deadline=Date.now()+25000;
+      let after;
+      do{after=await api('/bootstrap');if(after.transactions.length===before.transactions.length+1)break;await delay(500);}while(Date.now()<deadline);
+      assert.equal(after.transactions.length,before.transactions.length+1);
+      const added=after.transactions.find(t=>!before.transactions.some(old=>old.id===t.id));
+      assert.ok(added&&added.totalAmount===20&&added.paymentStatus==='paid');
+      assert.equal(after.shifts.find(s=>s.status==='open').expectedCash,before.shifts.find(s=>s.status==='open').expectedCash+20);
+      assert.ok(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+      await p.screenshot({path:path.join(evidence,'mobile-touch-recovered.png'),animations:'disabled'});
+      // Tablet portrait and landscape are geometry checks in the same touch context.
+      for(const viewport of [{width:768,height:1024},{width:1024,height:768}]){
+        await p.setViewportSize(viewport);
+        await service.waitFor();
+        assert.ok(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+        await p.screenshot({path:path.join(evidence,'tablet-'+viewport.width+'x'+viewport.height+'.png'),animations:'disabled'});
+      }
+      await fs.writeFile(path.join(evidence,'mobile-acceptance.json'),JSON.stringify({scope:'Android Chromium touch emulation, not physical device or installed PWA',manifestDisplay:manifest.display,serviceWorker:true,touchCheckout:true,offlineSaleReconciled:true,tabletViewports:[[768,1024],[1024,768]]},null,2));
+    }finally{await mobile.close();}
+  });
   await check('logout and password login',async()=>{
     await page.getByRole('button',{name:'Lock Terminal / Switch User',exact:true}).filter({visible:true}).first().click();
     await click('Sign Out Completely');
