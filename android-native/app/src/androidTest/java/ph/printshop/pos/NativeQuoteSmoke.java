@@ -61,11 +61,13 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "v7 credential migration"; verifyCheckoutMigration(7);
             phase = "v8 staff audit migration"; verifyCheckoutMigration(8);
             phase = "v9 administrative audit migration"; verifyCheckoutMigration(9);
+            phase = "v10 drawer migration"; verifyCheckoutMigration(10);
             phase = "durable atomic checkout fixture"; verifyDurableCheckout();
             phase = "cashier authorization and shift fixture"; verifyCashierAuthShift();
             phase = "audited credential lifecycle"; verifyCredentialLifecycle();
             phase = "owner-only fixture administration"; verifyOwnerAdministration();
             phase = "authenticated dynamic catalog selection"; verifyCatalogSelectionAccess();
+            phase = "durable audited drawer fixture"; verifyDrawerLedger();
             phase = "owner-controlled cashier disable"; verifyStaffDisable();
             phase = "material costing"; verifyMaterials();
             phase = "recipe and quote screen"; verifyRecipeScreen(screen);
@@ -73,7 +75,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "pricing settings and document quote"; verifyPricingScreen(screen);
             phase = "measured quote"; verifyMeasuredQuote(screen);
             phase = "native cashier training UI"; verifyCashierTrainingScreen(screen);
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\n");
+            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\n");
             result = Activity.RESULT_OK;
         } catch (Throwable error) {
             evidence.putString("stream", failureDetails(phase, error));
@@ -349,6 +351,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 require(trainingCount(fixture,"SELECT COUNT(*) FROM cashier_accounts WHERE role='CASHIER' AND active=0 AND revision=4")==1,"UI cashier not disabled");
             }
             verifyOwnerCatalogWorkflow(second,fixtureId,owner,ownerPass);
+            verifyDrawerTrainingUI(second,fixtureId,owner,ownerPass);
             try(CatalogStore ordinary=new CatalogStore(context)){
                 java.util.List<CatalogEntry> after=ordinary.list(true);
                 require(before.size()==after.size(),"ordinary catalog changed");
@@ -571,6 +574,82 @@ public final class NativeQuoteSmoke extends Instrumentation {
         }
     }
 
+    private void verifyDrawerTrainingUI(Activity activity,String fixtureId,String owner,String ownerPass){
+        trainingLogin(activity,owner,ownerPass);
+        awaitText(activity,"No open shift","drawer owner sign-in failed");
+        trainingField(activity,R.id.cashier_opening,"10.00");trainingClick(activity,R.id.cashier_open_shift);
+        awaitText(activity,"Shift open · Expected cash: PHP 10.00","drawer opening mismatch");
+        trainingClick(activity,R.id.cashier_drawer);
+        trainingClick(activity,R.id.cashier_drawer_in);
+        awaitText(activity,"Prepare training cash in","owner cash-in form missing");
+        trainingField(activity,R.id.cashier_drawer_amount,"5.00");trainingField(activity,R.id.cashier_drawer_reason,"Synthetic UI float");
+        trainingClick(activity,R.id.cashier_drawer_review);
+        awaitText(activity,"Review training drawer activity","drawer review missing");
+        awaitText(activity,"Proposed after: PHP 15.00","cash-in review mismatch");
+        trainingClick(activity,R.id.cashier_drawer_stage);awaitText(activity,"Pending training drawer activity","drawer request not staged");
+        trainingClick(activity,R.id.cashier_drawer_return);awaitText(activity,"Unresolved training drawer activity","pending drawer omitted");
+        awaitText(activity,"Shift open · Expected cash: PHP 10.00","drawer stage counted as cash");
+        runOnMainChecked(()->require(!activity.findViewById(R.id.cashier_new_checkout).isEnabled()&&!activity.findViewById(R.id.cashier_close_shift).isEnabled(),"pending drawer did not block checkout/close"));
+        trainingClick(activity,R.id.cashier_lock);awaitText(activity,"Training sign in","owner drawer lock failed");
+        trainingLogin(activity,owner,ownerPass);awaitText(activity,"Unresolved training drawer activity","drawer request not recovered after lock");
+        trainingClick(activity,R.id.cashier_drawer);awaitText(activity,"Pending training drawer activity","original drawer request absent");
+        trainingClick(activity,R.id.cashier_drawer_apply);awaitText(activity,"Recorded training drawer activity","cash-in not applied");
+        awaitText(activity,"After: PHP 15.00","cash-in result incorrect");
+        trainingClick(activity,R.id.cashier_drawer_return);awaitText(activity,"Shift open · Expected cash: PHP 15.00","cash-in total missing");
+        trainingClick(activity,R.id.cashier_drawer);trainingClick(activity,R.id.cashier_drawer_out);
+        awaitText(activity,"Prepare training cash out","owner cash-out form missing");
+        trainingField(activity,R.id.cashier_drawer_amount,"100.00");trainingField(activity,R.id.cashier_drawer_reason,"Synthetic UI removal");
+        trainingClick(activity,R.id.cashier_drawer_review);awaitText(activity,"Insufficient expected drawer cash","overdraw allowed");
+        trainingField(activity,R.id.cashier_drawer_amount,"2.00");trainingClick(activity,R.id.cashier_drawer_review);
+        awaitText(activity,"Review training drawer activity","cash-out review missing");trainingClick(activity,R.id.cashier_drawer_stage);
+        awaitText(activity,"Pending training drawer activity","cash-out not saved");
+        trainingField(activity,R.id.cashier_drawer_cancel_reason,"Synthetic UI cancel");
+        trainingClick(activity,R.id.cashier_drawer_cancel);awaitText(activity,"Cancelled training drawer activity","cash-out cancellation missing");
+        trainingClick(activity,R.id.cashier_drawer_return);awaitText(activity,"Shift open · Expected cash: PHP 15.00","cancelled cash-out affected cash");
+        trainingClick(activity,R.id.cashier_drawer);trainingClick(activity,R.id.cashier_drawer_out);
+        awaitText(activity,"Prepare training cash out","cash-out form missing after cancellation");
+        trainingField(activity,R.id.cashier_drawer_amount,"2.00");trainingField(activity,R.id.cashier_drawer_reason,"Synthetic UI cash removal");
+        trainingClick(activity,R.id.cashier_drawer_review);awaitText(activity,"Review training drawer activity","cash-out review missing");
+        trainingClick(activity,R.id.cashier_drawer_stage);awaitText(activity,"Pending training drawer activity","cash-out stage missing");
+        trainingClick(activity,R.id.cashier_drawer_apply);awaitText(activity,"After: PHP 13.00","cash-out result incorrect");
+        trainingClick(activity,R.id.cashier_drawer_return);awaitText(activity,"Shift open · Expected cash: PHP 13.00","cash-out expected incorrect");
+        trainingClick(activity,R.id.cashier_close_shift);awaitText(activity,"Close training shift","drawer close missing");
+        trainingField(activity,R.id.cashier_counted,"12.50");trainingClick(activity,R.id.cashier_confirm_close);
+        awaitText(activity,"Variance: PHP -0.50","drawer close variance incorrect");
+        trainingClick(activity,R.id.cashier_return_home);awaitText(activity,"No open shift","drawer owner shift open");
+        trainingClick(activity,R.id.cashier_lock);awaitText(activity,"Training sign in","drawer owner lock failed");
+        trainingLogin(activity,"catalog-cashier","Synthetic-Catalog-Cashier-01");awaitText(activity,"No open shift","drawer cashier sign-in failed");
+        trainingField(activity,R.id.cashier_opening,"5.00");trainingClick(activity,R.id.cashier_open_shift);
+        awaitText(activity,"Shift open · Expected cash: PHP 5.00","cashier expense opening wrong");
+        trainingClick(activity,R.id.cashier_drawer);
+        runOnMainChecked(()->require(activity.findViewById(R.id.cashier_drawer_in)==null&&activity.findViewById(R.id.cashier_drawer_out)==null,"cashier adjustment actions visible"));
+        trainingClick(activity,R.id.cashier_drawer_expense);awaitText(activity,"Prepare training expense","cashier expense unavailable");
+        trainingField(activity,R.id.cashier_drawer_amount,"1.25");trainingField(activity,R.id.cashier_drawer_category,"Synthetic UI supplies");
+        trainingField(activity,R.id.cashier_drawer_reason,"Synthetic UI expense");
+        trainingClick(activity,R.id.cashier_drawer_review);awaitText(activity,"Proposed after: PHP 3.75","expense review incorrect");
+        trainingClick(activity,R.id.cashier_drawer_stage);awaitText(activity,"Pending training drawer activity","expense stage missing");
+        trainingClick(activity,R.id.cashier_drawer_apply);awaitText(activity,"Recorded training drawer activity","expense record missing");
+        trainingClick(activity,R.id.cashier_drawer_return);awaitText(activity,"Shift open · Expected cash: PHP 3.75","expense expected wrong");
+        trainingClick(activity,R.id.cashier_close_shift);awaitText(activity,"Close training shift","expense shift close missing");
+        trainingField(activity,R.id.cashier_counted,"3.75");trainingClick(activity,R.id.cashier_confirm_close);awaitText(activity,"Variance: PHP 0.00","expense close variance wrong");
+        trainingClick(activity,R.id.cashier_return_home);awaitText(activity,"No open shift","cashier expense shift not closed");
+        trainingClick(activity,R.id.cashier_drawer_history);awaitText(activity,"APPLIED · Expense · PHP 1.25 · Synthetic UI supplies","expense history missing");
+        runOnMainChecked(()->require(findText(activity.getWindow().getDecorView(),"APPLIED · Cash in · PHP 5.00")==null,"cross-operator history visible"));
+        trainingClick(activity,R.id.cashier_back);awaitText(activity,"No open shift","expense history return failed");
+        trainingClick(activity,R.id.cashier_lock);awaitText(activity,"Training sign in","expense cashier did not sign out");
+        try(CatalogStore fixture=CatalogStore.checkoutFixture(getTargetContext(),fixtureId)){
+            require(trainingCount(fixture,"SELECT COUNT(*) FROM cashier_drawer_requests")==4,"drawer UI request count wrong");
+            require(trainingCount(fixture,"SELECT COUNT(*) FROM cashier_drawer_requests WHERE state='APPLIED'")==3,"drawer UI apply count wrong");
+            require(trainingCount(fixture,"SELECT COUNT(*) FROM cashier_drawer_requests WHERE state='CANCELLED'")==1,"drawer UI cancel count wrong");
+            require(trainingCount(fixture,"SELECT COUNT(*) FROM cashier_drawer_effects WHERE drawer_id IS NOT NULL")==3,"drawer effect count wrong");
+            require(trainingCount(fixture,"SELECT COUNT(*) FROM cashier_drawer_effects WHERE checkout_id IS NOT NULL")==2,"historical checkout effects wrong");
+            require(trainingCount(fixture,"SELECT COUNT(*) FROM cashier_shifts WHERE expected_cash=1300 AND counted_cash=1250 AND variance=-50")==1,"owner drawer shift close audit wrong");
+            require(trainingCount(fixture,"SELECT COUNT(*) FROM cashier_shifts WHERE expected_cash=375 AND counted_cash=375 AND variance=0")==1,"cashier expense shift close wrong");
+            require(trainingCount(fixture,"SELECT COUNT(*) FROM checkout_sales")==2&&trainingCount(fixture,"SELECT COUNT(*) FROM stock_movements")==5,"drawer altered sales/inventory");
+            require(trainingCount(fixture,"SELECT COUNT(*) FROM cashier_sessions WHERE revoked_ms IS NULL")==0,"drawer session still active");
+        }
+    }
+
     /** Preserve exceptions from the UI thread without terminating instrumentation. */
     private void runOnMainChecked(Runnable operation) {
         java.util.concurrent.atomic.AtomicReference<Throwable> fault = new java.util.concurrent.atomic.AtomicReference<>();
@@ -783,7 +862,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 db.setVersion(4);
             }
             try(CatalogStore store=new CatalogStore(context,filename)){
-                require(store.getReadableDatabase().getVersion()==10,"v4-to-v10 migration version wrong");
+                require(store.getReadableDatabase().getVersion()==11,"v4-to-v11 migration version wrong");
                 require(store.stockBalance(material).quantity==1500&&store.stockHistory(material,0,5).size()==1,"v4 stock lost");
                 require(store.recipeBindings(service).get(0).quantityMilli==500&&store.pricing(service).tiers.get(0).rateCentavos==250,"v4 recipe/pricing lost");
                 require(store.pendingStock(material)==null,"unexpected migrated pending request");
@@ -950,6 +1029,13 @@ public final class NativeQuoteSmoke extends Instrumentation {
                                     StaffJournal.upgrade(db);
                                     CashierJournal.Principal disabled=CashierJournal.createCashier(db,owner,"v9-disabled",synthetic,now);
                                     require(CashierJournal.disableCashier(db,owner,disabled.id,1,synthetic,"Synthetic v9 historical disable",now),"v9 disable fixture failed");
+                                    if(former>=10){
+                                        AdminJournal.upgrade(db);
+                                        CatalogEntry audited=CatalogEntry.create(CatalogEntry.Kind.MATERIAL,"Synthetic v10 audited paper","sheet","1.00");
+                                        db.execSQL("INSERT INTO catalog VALUES(?,?,?,?,?,?,?)",new Object[]{audited.id,"MATERIAL",audited.name,audited.unit,audited.centavos,1,0});
+                                        db.execSQL("INSERT INTO catalog_history VALUES(?,?,?,?,?,?,?,?)",new Object[]{audited.id,1,"MATERIAL",audited.name,audited.unit,audited.centavos,0,"CREATE"});
+                                        AdminJournal.append(db,owner,"CATALOG_CREATE",audited.id,1,null);
+                                    }
                                 }
                             }
                         }finally{java.util.Arrays.fill(synthetic,'\0');}
@@ -966,11 +1052,13 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 db.setVersion(former);
             }
             try(CatalogStore store=former>=7?CatalogStore.checkoutFixture(context,fixture):new CatalogStore(context,filename)){
-                require(store.getReadableDatabase().getVersion()==10,"v5/v6/v7/v8/v9 migration failed");
+                require(store.getReadableDatabase().getVersion()==11,"v5/v6/v7/v8/v9/v10 migration failed");
                 require(store.stockBalance(material).quantity==1500&&store.stockHistory(material,0,10).size()==1,"v5 stock changed");
                 require(store.pendingStock(material)!=null&&store.pendingStock(material).id.equals(pending),"v5 pending stock lost");
                 require(store.get(material).centavos==199,"v5 catalog changed");
-                require(trainingCount(store,"SELECT COUNT(*) FROM cashier_admin_events")==0,"migration invented administrative audit");
+                require(trainingCount(store,"SELECT COUNT(*) FROM cashier_admin_events")== (former>=10?1:0),"migration changed administrative audit");
+                require(trainingCount(store,"SELECT COUNT(*) FROM cashier_drawer_requests")==0&&trainingCount(store,"SELECT COUNT(*) FROM cashier_drawer_effects")==0,"migration invented drawer activity");
+                require(trainingCount(store,"SELECT COUNT(*) FROM cashier_drawer_legacy_sales")== (former>=7?1:0),"migration legacy sale provenance wrong");
                 if(former>=7){
                     rejectStock(()->store.applyStagedStock(pending));
                     require(store.applyAuthorizedFixtureStock(migratedToken,pending).quantity==1000,"authenticated v7 pending stock not recoverable");
@@ -981,7 +1069,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 require(CashierJournal.initialized(store.getReadableDatabase())==(former>=7),"migration changed account initialization");
                 require(trainingCount(store,"SELECT COUNT(*) FROM cashier_credential_events")==(former>=8?1:0),"migration changed credential audit");
                 require(trainingCount(store,"SELECT COUNT(*) FROM cashier_disable_events")== (former>=9?1:0),"migration changed disable events");
-                require(trainingCount(store,"SELECT COUNT(*) FROM cashier_admin_events")== (former>=7?1:0),"only post-migration authenticated resolution should be audited");
+                require(trainingCount(store,"SELECT COUNT(*) FROM cashier_admin_events")== (former>=7?1:0)+(former>=10?1:0),"only post-migration authenticated resolution should be audited");
                 if(former>=8){
                     require(trainingCount(store,"SELECT COUNT(*) FROM cashier_accounts WHERE username='legacy-disabled' AND active=0 AND revision=2")==1,"v8 disabled identity lost");
                     require(trainingCount(store,"SELECT COUNT(*) FROM cashier_accounts WHERE username='legacy-rotated' AND active=1 AND revision=2")==1,"v8 credential revision lost");
@@ -992,6 +1080,9 @@ public final class NativeQuoteSmoke extends Instrumentation {
                     require(CashierJournal.activeShift(store.getReadableDatabase(),owner).id.equals(migratedShift),"v7 open shift lost");
                     require(CheckoutJournal.read(store.getReadableDatabase(),pendingCheckout).state.equals("PENDING"),"v7 pending checkout lost");
                     require(CashierJournal.expected(store.getReadableDatabase(),CashierJournal.shift(store.getReadableDatabase(),migratedShift))==1250,"v7 drawer changed");
+                    CheckoutJournal.Record unresolved=store.authorizedFixtureCheckout(migratedToken,pendingCheckout);
+                    require(store.applyAuthorizedFixtureCheckout(migratedToken,pendingCheckout,unresolved.fingerprint).state.equals("APPLIED"),"migrated pending checkout did not apply");
+                    require(store.expectedFixtureCash(migratedToken,migratedShift)==1500&&trainingCount(store,"SELECT COUNT(*) FROM cashier_drawer_effects")==1,"migrated pending checkout did not add exactly one new effect");
                 }
             }
         }finally{context.deleteDatabase(filename);}
@@ -1071,6 +1162,101 @@ public final class NativeQuoteSmoke extends Instrumentation {
         }finally{
             java.util.Arrays.fill(owner,'\0');java.util.Arrays.fill(staff,'\0');java.util.Arrays.fill(wrong,'\0');java.util.Arrays.fill(replacement,'\0');context.deleteDatabase(filename);
         }
+    }
+
+    private void verifyDrawerLedger(){
+        android.content.Context context=getTargetContext();String fixture=stockId(),filename="checkout-fixture-"+fixture+".db";
+        char[] owner="Synthetic-Drawer-Owner-01".toCharArray(),staff="Synthetic-Drawer-Cashier-02".toCharArray(),next="Synthetic-Drawer-Changed-03".toCharArray();
+        String ownerShift=stockId(),cashierShift=stockId(),expense=stockId();
+        ShiftMath.DrawerKind out=ShiftMath.DrawerKind.CASH_OUT,in=ShiftMath.DrawerKind.CASH_IN,exp=ShiftMath.DrawerKind.EXPENSE;
+        try{
+            try(CatalogStore ordinary=new CatalogStore(context)){
+                rejectStock(()->ordinary.stageFixtureDrawer("bad",ownerShift,expense,exp,100,"Synthetic","Synthetic",1000));
+                rejectStock(()->ordinary.authorizedFixtureDrawerHistory("bad",0,10));
+            }
+            try(CatalogStore store=CatalogStore.checkoutFixture(context,fixture)){
+                store.bootstrapDemoFixtureOwner("drawer-owner",owner);
+                String token=store.signInFixture("drawer-owner",owner);
+                store.createFixtureCashier(token,"drawer-cashier",staff);
+                String cashier=store.signInFixture("drawer-cashier",staff);
+                store.openFixtureShift(token,ownerShift,1500);store.openFixtureShift(cashier,cashierShift,500);
+                rejectStock(()->store.stageFixtureDrawer(cashier,ownerShift,expense,exp,200,"Synthetic","Synthetic",1500));
+                rejectStock(()->store.stageFixtureDrawer(token,cashierShift,expense,exp,100,"Synthetic","Synthetic",500));
+                rejectStock(()->store.stageFixtureDrawer(cashier,cashierShift,expense,in,200,null,"Synthetic",500));
+                rejectStock(()->store.stageFixtureDrawer(cashier,cashierShift,expense,out,100,null,"Synthetic",500));
+                rejectStock(()->store.stageFixtureDrawer(token,ownerShift,expense,exp,1501,"Synthetic","Synthetic",1500));
+                rejectStock(()->store.stageFixtureDrawer(token,ownerShift,expense,exp,0,"Synthetic","Synthetic",1500));
+                rejectStock(()->store.stageFixtureDrawer(token,ownerShift,expense,exp,200,"Synthetic","Synthetic",1400));
+                CheckoutPlan.Proposal blocked=store.prepareDemoFixtureCheckout(token,ownerShift,stockId(),1,300);
+                store.stageAuthorizedFixtureCheckout(token,ownerShift,blocked);
+                rejectStock(()->store.stageFixtureDrawer(token,ownerShift,expense,exp,200,"Synthetic supplies","Synthetic expense",1500));
+                store.cancelAuthorizedFixtureCheckout(token,blocked.requestId,blocked.fingerprint(),"Synthetic cancelled");
+                CheckoutPlan.Proposal reviewed=store.prepareDemoFixtureCheckout(token,ownerShift,stockId(),1,300);
+                DrawerJournal.Request original=store.stageFixtureDrawer(token,ownerShift,expense,exp,200,"Synthetic supplies","Synthetic expense",1500);
+                require(original.after==1300&&original.state.equals("PENDING")&&store.expectedFixtureCash(token,ownerShift)==1500,"drawer stage changed cash");
+                require(store.stageFixtureDrawer(token,ownerShift,expense,exp,200,"Synthetic supplies","Synthetic expense",1500).id.equals(expense),"drawer stage replay failed");
+                rejectStock(()->store.stageFixtureDrawer(token,ownerShift,expense,exp,201,"Synthetic supplies","Synthetic expense",1500));
+                rejectStock(()->store.stageFixtureDrawer(token,ownerShift,stockId(),exp,100,"Synthetic supplies","Synthetic competing",1500));
+                rejectStock(()->store.stageAuthorizedFixtureCheckout(token,ownerShift,reviewed));
+                rejectStock(()->store.closeFixtureShift(token,ownerShift,1500));
+                rejectStock(()->store.resolveFixtureDrawer(cashier,expense,true,null));
+                rejectStock(()->store.authorizedFixtureDrawer(cashier,expense));
+                require(store.authorizedFixtureDrawerHistory(cashier,0,10).isEmpty(),"drawer history leaked cross operator");
+                store.getWritableDatabase().execSQL("CREATE TRIGGER fault_drawer_native BEFORE INSERT ON cashier_drawer_effects BEGIN SELECT RAISE(ABORT,'synthetic drawer fault'); END");
+                boolean fault=false;
+                try{store.resolveFixtureDrawer(token,expense,true,null);}
+                catch(android.database.sqlite.SQLiteException expected){fault=true;}
+                finally{store.getWritableDatabase().execSQL("DROP TRIGGER fault_drawer_native");}
+                require(fault&&store.pendingFixtureDrawer(token,ownerShift).id.equals(expense)&&store.expectedFixtureCash(token,ownerShift)==1500,"drawer fault stranded effect or state");
+                store.changeFixturePassphrase(token,owner,next);
+                rejectStock(()->store.resolveFixtureDrawer(token,expense,true,null));
+                store.signOutFixture(cashier);
+            }
+            try(CatalogStore reopened=CatalogStore.checkoutFixture(context,fixture)){
+                String token=reopened.signInFixture("drawer-owner",next),cashier=reopened.signInFixture("drawer-cashier",staff);
+                require(reopened.pendingFixtureDrawer(token,ownerShift).id.equals(expense),"drawer recovery lost original identity");
+                DrawerJournal.Request applied=reopened.resolveFixtureDrawer(token,expense,true,null);
+                require(applied.state.equals("APPLIED")&&applied.stageRevision==1&&applied.resolvedRevision==2&&reopened.expectedFixtureCash(token,ownerShift)==1300,"drawer revision or cash effect wrong");
+                require(reopened.resolveFixtureDrawer(token,expense,true,null).id.equals(expense),"drawer replay failed");
+                rejectStock(()->reopened.resolveFixtureDrawer(token,expense,true,"Synthetic ignored reason"));
+                rejectStock(()->reopened.resolveFixtureDrawer(token,expense,false,"Synthetic denied"));
+                require(trainingCount(reopened,"SELECT COUNT(*) FROM cashier_drawer_effects")==1,"drawer replay duplicated cash");
+                CheckoutPlan.Proposal plan=reopened.prepareDemoFixtureCheckout(token,ownerShift,stockId(),1,300);
+                reopened.stageAuthorizedFixtureCheckout(token,ownerShift,plan);
+                reopened.getWritableDatabase().execSQL("CREATE TRIGGER fault_sale_effect BEFORE INSERT ON cashier_drawer_effects BEGIN SELECT RAISE(ABORT,'synthetic checkout effect fault'); END");
+                boolean fault=false;
+                try{reopened.applyAuthorizedFixtureCheckout(token,plan.requestId,plan.fingerprint());}
+                catch(android.database.sqlite.SQLiteException expected){fault=true;}
+                finally{reopened.getWritableDatabase().execSQL("DROP TRIGGER fault_sale_effect");}
+                require(fault&&reopened.authorizedFixtureCheckout(token,plan.requestId).state.equals("PENDING")&&reopened.expectedFixtureCash(token,ownerShift)==1300&&trainingCount(reopened,"SELECT COUNT(*) FROM checkout_sales")==0,"checkout effect fault changed cash or sale");
+                require(reopened.stockBalance(plan.materials.get(0).materialId).quantity==50000,"checkout effect fault changed inventory");
+                reopened.applyAuthorizedFixtureCheckout(token,plan.requestId,plan.fingerprint());
+                require(reopened.expectedFixtureCash(token,ownerShift)==1550,"checkout after expense wrong");
+                String cashIn=stockId(),cashOut=stockId(),cancel=stockId(),cashierExpense=stockId();
+                reopened.stageFixtureDrawer(token,ownerShift,cashIn,in,500,null,"Synthetic incoming",1550);
+                reopened.resolveFixtureDrawer(token,cashIn,true,null);
+                reopened.stageFixtureDrawer(token,ownerShift,cashOut,out,300,null,"Synthetic outgoing",2050);
+                reopened.resolveFixtureDrawer(token,cashOut,true,null);
+                reopened.stageFixtureDrawer(token,ownerShift,cancel,out,100,null,"Synthetic cancellation",1750);
+                reopened.resolveFixtureDrawer(token,cancel,false,"Synthetic unchanged");
+                require(reopened.resolveFixtureDrawer(token,cancel,false,"Synthetic unchanged").state.equals("CANCELLED"),"cancel replay wrong");
+                rejectStock(()->reopened.resolveFixtureDrawer(token,cancel,false,"Synthetic different"));
+                rejectStock(()->reopened.resolveFixtureDrawer(token,cancel,true,null));
+                require(reopened.expectedFixtureCash(token,ownerShift)==1750,"cancel changed drawer");
+                reopened.stageFixtureDrawer(cashier,cashierShift,cashierExpense,exp,100,"Synthetic supplies","Synthetic cashier expense",500);
+                reopened.resolveFixtureDrawer(cashier,cashierExpense,true,null);
+                require(reopened.expectedFixtureCash(cashier,cashierShift)==400,"cashier own expense wrong");
+                rejectStock(()->reopened.closeFixtureShift(token,ownerShift,1700,2050));
+                require(reopened.closeFixtureShift(token,ownerShift,1700,1750).variance==-50,"owner close variance wrong");
+                require(reopened.closeFixtureShift(cashier,cashierShift,400).variance==0,"cashier close variance wrong");
+                require(reopened.resolveFixtureDrawer(token,expense,true,null).state.equals("APPLIED"),"closed-shift exact replay failed");
+                rejectStock(()->reopened.stageFixtureDrawer(token,ownerShift,stockId(),exp,100,"Synthetic supplies","Closed shift",1750));
+                require(reopened.authorizedFixtureDrawerHistory(token,0,10).size()==4&&reopened.authorizedFixtureDrawerHistory(cashier,0,10).size()==1,"drawer own history counts wrong");
+                require(trainingCount(reopened,"SELECT COUNT(*) FROM cashier_drawer_effects")==5,"incorrect final cash effects");
+                require(trainingCount(reopened,"SELECT COUNT(*) FROM cashier_drawer_requests WHERE state='CANCELLED'")==1,"cancelled audit missing");
+                require(trainingCount(reopened,"SELECT COUNT(*) FROM checkout_sales")==1&&reopened.stockBalance(plan.materials.get(0).materialId).quantity==49000,"final sale or material wrong");
+            }
+        }finally{java.util.Arrays.fill(owner,'\0');java.util.Arrays.fill(staff,'\0');java.util.Arrays.fill(next,'\0');context.deleteDatabase(filename);}
     }
 
     private void verifyCatalogSelectionAccess(){
@@ -1708,7 +1894,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             }
             java.util.List<PricingMath.Tier> tiers=java.util.Arrays.asList(new PricingMath.Tier(2000,200),new PricingMath.Tier(1000,250));
             try(CatalogStore store=new CatalogStore(context,filename)){
-                require(store.getReadableDatabase().getVersion()==10,"v3-to-v10 migration version wrong");
+                require(store.getReadableDatabase().getVersion()==11,"v3-to-v11 migration version wrong");
                 require(store.pricing(service).revision==0&&!store.pricing(service).needsAdvancedQuote(),"legacy default changed");
                 require(store.recipeRevision(service)==1&&store.stockBalance(material).quantity==1500,"migration changed recipe or stock");
                 PricingProfile saved=store.savePricing(service,1,0,PricingMath.Method.PER_PAGE,true,tiers);

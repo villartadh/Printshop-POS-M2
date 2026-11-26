@@ -114,4 +114,18 @@
     <item type="id" name="cashier_checkout_unit"/>
     <item type="id" name="cashier_checkout_basis"/>
     <item type="id" name="cashier_checkout_choose"/>
+    <item type="id" name="cashier_drawer"/>
+    <item type="id" name="cashier_drawer_history"/>
+    <item type="id" name="cashier_drawer_expense"/>
+    <item type="id" name="cashier_drawer_in"/>
+    <item type="id" name="cashier_drawer_out"/>
+    <item type="id" name="cashier_drawer_amount"/>
+    <item type="id" name="cashier_drawer_category"/>
+    <item type="id" name="cashier_drawer_reason"/>
+    <item type="id" name="cashier_drawer_review"/>
+    <item type="id" name="cashier_drawer_return"/>
+    <item type="id" name="cashier_drawer_stage"/>
+    <item type="id" name="cashier_drawer_apply"/>
+    <item type="id" name="cashier_drawer_cancel_reason"/>
+    <item type="id" name="cashier_drawer_cancel"/>
 </resources>

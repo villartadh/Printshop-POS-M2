@@ -135,6 +135,19 @@ public final class CashierPreviewActivity extends Activity {
             case "Use up to three decimal places.":return message;
             case "Enter a printable reason (1–160 characters).":return message;
             case "Owner authorization required":return message;
+            case "Resolve pending drawer activity first":
+            case "Resolve pending checkout before drawer activity":
+            case "Drawer changed; reload and review again":
+            case "Drawer request identity already used for different review":
+            case "Drawer request already resolved differently":
+            case "Drawer request belongs to another operator or is unavailable":
+            case "Drawer amount must be positive":
+            case "Insufficient expected drawer cash":
+            case "Drawer amount outside supported range":
+            case "Enter an expense category (1–80 printable characters)":
+            case "Category is only for expenses":
+            case "Operator's open shift required":
+                return message;
             case "Creation already recorded or changed; reload catalog":
             case "Catalog entry changed; reload before editing":
             case "Catalog or recipe changed; reload before editing":
@@ -265,14 +278,15 @@ public final class CashierPreviewActivity extends Activity {
         final CashierJournal.Shift shift;
         final long expected;
         final int pending;
-        Dashboard(CashierJournal.Principal a,CashierJournal.Shift s,long e,int p){actor=a;shift=s;expected=e;pending=p;}
+        final DrawerJournal.Request pendingDrawer;
+        Dashboard(CashierJournal.Principal a,CashierJournal.Shift s,long e,int p,DrawerJournal.Request drawer){actor=a;shift=s;expected=e;pending=p;pendingDrawer=drawer;}
     }
     private Dashboard dashboard(){
         String token=session();CashierJournal.Principal actor=store.fixturePrincipal(token);
         CashierJournal.Shift shift=store.activeFixtureShift(token);
         long expected=shift==null?0:store.expectedFixtureCash(token,shift.id);
         int pending=shift==null?0:store.pendingAuthorizedFixtureCheckouts(token,shift.id,50).size();
-        return new Dashboard(actor,shift,expected,pending);
+        return new Dashboard(actor,shift,expected,pending,shift==null?null:store.pendingFixtureDrawer(token,shift.id));
     }
     private void refreshDashboard(){
         submit(this::dashboard,v->showDashboard((Dashboard)v));
@@ -290,11 +304,17 @@ public final class CashierPreviewActivity extends Activity {
             label("Shift open · Expected cash: "+QuoteMath.display(d.expected),18,Color.rgb(27,39,58));
             label(d.pending==0?"No pending training checkouts":"Unresolved training requests: "+d.pending+(d.pending==50?"+":""));
             Button next=button("New training checkout",R.id.cashier_new_checkout,()->showCheckoutChoices(d.shift.id,0));
-            next.setEnabled(d.pending==0);
+            next.setEnabled(d.pending==0&&d.pendingDrawer==null);
             button("Recover pending checkouts",R.id.cashier_pending,()->showPendingList(d.shift.id));
-            Button close=button("Close training shift",R.id.cashier_close_shift,()->showClose(d));close.setEnabled(d.pending==0);
+            if(d.pendingDrawer!=null)label("Unresolved training drawer activity");
+            Button drawer=button(d.pendingDrawer==null?"Training drawer activity":"Recover pending drawer activity",R.id.cashier_drawer,()->{
+                if(d.pendingDrawer==null)showDrawerOptions(d);else openDrawerRequest(d.pendingDrawer.id);
+            });
+            drawer.setEnabled(d.pending==0);
+            Button close=button("Close training shift",R.id.cashier_close_shift,()->showClose(d));close.setEnabled(d.pending==0&&d.pendingDrawer==null);
         }
         button("Recorded training receipts",R.id.cashier_history,this::showHistory);
+        button("Training drawer history",R.id.cashier_drawer_history,()->showDrawerHistory(0));
         button("Change my training passphrase",R.id.cashier_change_pass,()->showCredentialChange(false));
         if(d.actor.role==CashierSecurity.Role.OWNER){
             button("Create training cashier",R.id.cashier_add_staff,this::showStaff);
@@ -306,6 +326,93 @@ public final class CashierPreviewActivity extends Activity {
             button("Reset training cashier passphrase",R.id.cashier_reset_pass,()->showCredentialChange(true));
         }
         button("Lock / sign out",R.id.cashier_lock,this::lockAndReload);
+    }
+    private static String drawerLabel(ShiftMath.DrawerKind kind){
+        switch(kind){case EXPENSE:return "Expense";case CASH_IN:return "Cash in";case CASH_OUT:return "Cash out";default:throw new IllegalArgumentException("Select a drawer activity");}
+    }
+    private void showDrawerOptions(Dashboard dashboard){
+        mode="drawer-options";screen("Training drawer activity","Expected cash: "+QuoteMath.display(dashboard.expected)+". Record synthetic expenses on your own open shift. Owner-only cash-in/out adjustments.");
+        button("New training expense",R.id.cashier_drawer_expense,()->showDrawerEntry(dashboard,ShiftMath.DrawerKind.EXPENSE));
+        if(dashboard.actor.role==CashierSecurity.Role.OWNER){
+            button("Training cash in",R.id.cashier_drawer_in,()->showDrawerEntry(dashboard,ShiftMath.DrawerKind.CASH_IN));
+            button("Training cash out",R.id.cashier_drawer_out,()->showDrawerEntry(dashboard,ShiftMath.DrawerKind.CASH_OUT));
+        }
+        button("Review drawer history",R.id.cashier_drawer_history,()->showDrawerHistory(0));back();
+    }
+    private static final class DrawerDraft {
+        final String id,shift,category,reason;
+        final ShiftMath.DrawerKind kind;
+        final long amount,before,after;
+        DrawerDraft(String id,String shift,ShiftMath.DrawerKind kind,long amount,String category,String reason,long before){
+            this.id=id;this.shift=shift;this.kind=kind;this.amount=amount;this.category=ShiftMath.category(kind,category);
+            this.reason=StockMath.reason(reason);this.before=before;after=ShiftMath.drawerAfter(before,kind,amount);
+        }
+    }
+    private void showDrawerEntry(Dashboard dashboard,ShiftMath.DrawerKind kind){
+        mode="drawer-entry";screen("Prepare training "+drawerLabel(kind).toLowerCase(java.util.Locale.ROOT),
+            "Expected cash: "+QuoteMath.display(dashboard.expected)+". No actual cash is moved.");
+        EditText amount=cashField("Amount (PHP)",R.id.cashier_drawer_amount,null);
+        EditText category=kind==ShiftMath.DrawerKind.EXPENSE?field("Synthetic expense category",R.id.cashier_drawer_category,InputType.TYPE_CLASS_TEXT,80,null):null;
+        EditText reason=field("Synthetic reason",R.id.cashier_drawer_reason,InputType.TYPE_CLASS_TEXT,160,null);
+        String id=UUID.randomUUID().toString();
+        button("Review drawer activity",R.id.cashier_drawer_review,()->{
+            try{showDrawerReview(new DrawerDraft(id,dashboard.shift.id,kind,QuoteMath.parseCentavos(text(amount)),text(category),text(reason),dashboard.expected));}
+            catch(IllegalArgumentException|IllegalStateException ex){status.setText(safeFailure(ex.getMessage()));}
+        });
+        button("Discard draft",R.id.cashier_drawer_return,this::refreshDashboard);back();
+    }
+    private void showDrawerReview(DrawerDraft draft){
+        mode="drawer-review";screen("Review training drawer activity","No financial change has been recorded. Save the exact reviewed request before applying.");
+        label(drawerLabel(draft.kind)+" · "+QuoteMath.display(draft.amount));
+        if(draft.category!=null)label("Category: "+draft.category);
+        label("Reason: "+draft.reason);label("Before: "+QuoteMath.display(draft.before));label("Proposed after: "+QuoteMath.display(draft.after));
+        button("Save pending drawer request",R.id.cashier_drawer_stage,()->submit(()->store.stageFixtureDrawer(session(),draft.shift,draft.id,draft.kind,
+            draft.amount,draft.category,draft.reason,draft.before),v->showDrawerRecord((DrawerJournal.Request)v)));
+        button("Discard unsaved review",R.id.cashier_drawer_return,this::refreshDashboard);back();
+    }
+    private void openDrawerRequest(String id){
+        submit(()->store.authorizedFixtureDrawer(session(),id),v->showDrawerRecord((DrawerJournal.Request)v));
+    }
+    private void showDrawerRecord(DrawerJournal.Request request){
+        mode="drawer-record";boolean pending="PENDING".equals(request.state),applied="APPLIED".equals(request.state);
+        screen(pending?"Pending training drawer activity":applied?"Recorded training drawer activity":"Cancelled training drawer activity",
+            pending?"Review the original saved request. Apply once or cancel without affecting cash.":
+                applied?"Immutable synthetic cash-effect record.":"Original reviewed request retained. Cancellation did not change drawer cash.");
+        label(drawerLabel(request.kind)+" · "+QuoteMath.display(request.amount));
+        if(request.category!=null)label("Category: "+request.category);
+        label("Reason: "+request.reason);label("Before: "+QuoteMath.display(request.before));
+        label((applied?"After: ":"Proposed after: ")+QuoteMath.display(request.after));
+        label("Request: "+request.id);label("Shift: "+request.shiftId);
+        label("Operator: "+request.operatorId+" · Stage account revision "+request.stageRevision);
+        label("Staged: "+new java.util.Date(request.createdMs));
+        if(request.resolvedRevision!=null)label("Resolved account revision "+request.resolvedRevision+" · "+new java.util.Date(request.resolvedMs));
+        if(request.cancelReason!=null)label("Cancellation reason: "+request.cancelReason);
+        if(pending){
+            button("Apply saved drawer activity",R.id.cashier_drawer_apply,()->submit(()->store.resolveFixtureDrawer(session(),request.id,true,null),
+                v->showDrawerRecord((DrawerJournal.Request)v)));
+            EditText reason=field("Cancellation reason",R.id.cashier_drawer_cancel_reason,InputType.TYPE_CLASS_TEXT,160,null);
+            button("Cancel saved drawer activity",R.id.cashier_drawer_cancel,()->{
+                String note=text(reason);submit(()->store.resolveFixtureDrawer(session(),request.id,false,note),v->showDrawerRecord((DrawerJournal.Request)v));
+            });
+        }
+        button("Return to training cashier",R.id.cashier_drawer_return,this::refreshDashboard);
+        button("Review drawer history",R.id.cashier_drawer_history,()->showDrawerHistory(0));back();
+    }
+    private void showDrawerHistory(int offset){
+        submit(()->store.authorizedFixtureDrawerHistory(session(),offset,9),v->{
+            @SuppressWarnings("unchecked") List<DrawerJournal.Request> rows=(List<DrawerJournal.Request>)v;
+            mode="drawer-history";screen("Training drawer history","Your own synthetic expenses and adjustments across shifts. Pending, applied and cancelled records are retained.");
+            if(rows.isEmpty())label("No drawer activity on this page");
+            int count=Math.min(8,rows.size());
+            for(int i=0;i<count;i++){
+                DrawerJournal.Request request=rows.get(i);
+                label(request.state+" · "+drawerLabel(request.kind)+" · "+QuoteMath.display(request.amount)+(request.category==null?"":" · "+request.category));
+                label(new java.util.Date(request.createdMs)+" · "+request.id.substring(0,8));
+                button("Review "+request.id.substring(0,8),0,()->openDrawerRequest(request.id));
+            }
+            catalogPages(offset,rows.size()>8,()->showDrawerHistory(offset-8),()->showDrawerHistory(offset+8));
+            button("Reload drawer history",R.id.cashier_drawer_history,()->showDrawerHistory(0));back();
+        });
     }
     private void showOwnerCatalog(CatalogEntry.Kind kind,boolean archived,int offset){
         submit(()->store.authorizedFixtureOwnerCatalog(session(),kind,archived,offset),v->{
@@ -684,7 +791,7 @@ public final class CashierPreviewActivity extends Activity {
         EditText counted=cashField("Counted training cash (PHP)",R.id.cashier_counted,null);
         button("Confirm training shift close",R.id.cashier_confirm_close,()->{
             String raw=counted.getText().toString();
-            submit(()->store.closeFixtureShift(session(),d.shift.id,QuoteMath.parseCentavos(raw)),v->{
+            submit(()->store.closeFixtureShift(session(),d.shift.id,QuoteMath.parseCentavos(raw),d.expected),v->{
                 CashierJournal.Shift s=(CashierJournal.Shift)v;
                 mode="closed";screen("Training shift closed","Audited cash reconciliation");
                 label("Expected: "+QuoteMath.display(s.expectedCash));

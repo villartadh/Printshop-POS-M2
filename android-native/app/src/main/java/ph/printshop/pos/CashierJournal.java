@@ -229,11 +229,7 @@ final class CashierJournal {
         v.put("opening_cash",opening);v.put("state","OPEN");db.insertOrThrow("cashier_shifts",null,v);return shift(db,id);
     }
     static long expected(SQLiteDatabase db,Shift s){
-        long result=s.openingCash;
-        try(Cursor c=db.rawQuery("SELECT c.paid FROM cashier_shift_checkouts l JOIN checkout_cash c ON l.request_id=c.request_id JOIN checkout_requests r ON r.request_id=l.request_id WHERE l.shift_id=? AND r.state='APPLIED'",new String[]{s.id})){
-            while(c.moveToNext())result=ShiftMath.addPayment(result,c.getLong(0));
-        }
-        return result;
+        return DrawerJournal.expected(db,s.id);
     }
     static Shift closeShift(SQLiteDatabase db,Principal operator,String id,long counted,long now){
         ShiftMath.money(counted);Shift s=requireShift(db,operator,id,false);
@@ -243,6 +239,7 @@ final class CashierJournal {
         }
         if(exists(db,"SELECT 1 FROM cashier_shift_checkouts l JOIN checkout_requests r ON r.request_id=l.request_id WHERE l.shift_id=? AND r.state='PENDING'",new String[]{id}))
             throw new IllegalStateException("Resolve pending checkout before closing shift");
+        DrawerJournal.requireNoPending(db,id);
         long expected=expected(db,s);
         ContentValues v=new ContentValues();v.put("state","CLOSED");v.put("closed_ms",now);
         v.put("expected_cash",expected);v.put("counted_cash",counted);v.put("variance",ShiftMath.variance(expected,counted));
