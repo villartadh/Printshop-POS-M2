@@ -47,7 +47,8 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 require(hasText(root, "Total: PHP 0.01"), "centavo total mismatch");
                 require(hasText(root, "Change: PHP 0.00"), "exact tender mismatch");
             });
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\n");
+            verifyCatalog();
+            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\n");
             finish(Activity.RESULT_OK, evidence);
         } catch (Throwable error) {
             evidence.putString("stream", "NATIVE_QUOTE_SMOKE_FAIL: " + error + "\n");
@@ -57,6 +58,39 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 final Activity screen = activity;
                 runOnMainSync(screen::finish);
             }
+        }
+    }
+    private void verifyCatalog() {
+        android.content.Context context = getTargetContext();
+        String filename = "catalog-test-" + java.util.UUID.randomUUID() + ".db";
+        try {
+            String id;
+            try (CatalogStore store = new CatalogStore(context, filename)) {
+                CatalogEntry entry = store.create(CatalogEntry.Kind.SERVICE, "Synthetic print", "page", "1.99");
+                id = entry.id;
+                require(store.list(false).size() == 1, "catalog create missing");
+                CatalogEntry edited = store.edit(id, 1, "Synthetic color", "page", "2.01");
+                require(edited.revision == 2 && edited.centavos == 201, "catalog update mismatch");
+                try {
+                    store.edit(id, 1, "Stale", "page", "1");
+                    throw new AssertionError("stale catalog edit accepted");
+                } catch (IllegalStateException expected) { }
+                require(store.get(id).revision == 2, "stale edit changed record");
+                store.archive(id, 2, true);
+                require(store.list(false).isEmpty() && store.list(true).size() == 1, "archive visibility mismatch");
+            }
+            try (CatalogStore reopened = new CatalogStore(context, filename)) {
+                CatalogEntry archived = reopened.get(id);
+                require(archived.archived && archived.revision == 3 && archived.centavos == 201, "catalog persistence mismatch");
+                reopened.archive(id, 3, false);
+                CatalogEntry restored = reopened.get(id);
+                require(!restored.archived && restored.revision == 4 && restored.name.equals("Synthetic color"), "restore mismatch");
+                try (android.database.Cursor cursor = reopened.getReadableDatabase().rawQuery("SELECT count(*) FROM catalog_history WHERE id=?", new String[]{id})) {
+                    require(cursor.moveToFirst() && cursor.getInt(0) == 4, "catalog history mismatch");
+                }
+            }
+        } finally {
+            context.deleteDatabase(filename);
         }
     }
     private static boolean hasText(View view, String value) {
