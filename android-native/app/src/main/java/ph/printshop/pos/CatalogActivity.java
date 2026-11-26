@@ -77,6 +77,15 @@ public final class CatalogActivity extends Activity {
                             catch (RuntimeException ex) { error(ex); refresh(); }
                         }).show();
                 });
+                if (entry.kind == CatalogEntry.Kind.MATERIAL) {
+                    StockMath.Balance stock = store.stockBalance(entry.id);
+                    label(rows, "On hand: " + StockMath.display(stock.quantity) + " " + entry.unit, 16);
+                    button(rows, "Open stock movements", () -> {
+                        Intent intent = new Intent(this, StockActivity.class);
+                        intent.putExtra("materialId", entry.id);
+                        startActivity(intent);
+                    });
+                }
                 if (!entry.archived && entry.kind == CatalogEntry.Kind.SERVICE) {
                     button(rows, "Use in quotation", () -> {
                         try {
@@ -121,6 +130,10 @@ public final class CatalogActivity extends Activity {
     private void error(RuntimeException ex) {
         String message = ex instanceof IllegalArgumentException || ex instanceof IllegalStateException ? ex.getMessage() : "Catalog operation failed; no confirmation was recorded.";
         Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+    }
+    @Override protected void onResume() {
+        super.onResume();
+        if (rows != null) refresh();
     }
     @Override protected void onDestroy() {
         if (store != null) store.close();
