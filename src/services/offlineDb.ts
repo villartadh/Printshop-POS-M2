@@ -231,3 +231,32 @@ export async function acknowledgePendingCollection(record:PendingBalanceCollecti
   req.onsuccess=()=>{if(req.result?.clientMutationId===record.clientMutationId)store.delete(collectionKey(record.ownerId));};
  });}finally{db.close();}
 }
+
+export interface PendingDrawerMovement {ownerId:string;shiftId:string;type:'cash_in'|'cash_out';amount:number;reason:string;clientMutationId:string;createdAt:string}
+const drawerKey=(owner:string)=>'pending_drawer_movement:'+owner;
+export async function readPendingDrawerMovement(owner:string):Promise<PendingDrawerMovement|null>{
+ const db=await openDb();
+ try{return await new Promise((resolve,reject)=>{
+  const tx=db.transaction('kv','readonly'),req=tx.objectStore('kv').get(drawerKey(owner));
+  req.onsuccess=()=>resolve(req.result??null);req.onerror=()=>reject(req.error);
+  tx.onabort=()=>reject(tx.error||new Error('Drawer recovery read aborted'));
+ });}finally{db.close();}
+}
+export async function reserveDrawerMovement(owner:string,shiftId:string,type:PendingDrawerMovement['type'],amount:number,reason:string):Promise<PendingDrawerMovement>{
+ if(!owner||!shiftId||!['cash_in','cash_out'].includes(type)||!Number.isFinite(amount)||amount<=0||amount>1e9||Math.abs(amount*100-Math.round(amount*100))>=0.0001||!reason.trim()||reason.trim().length>500)throw new Error('Enter a valid cash adjustment and reason.');
+ const candidate={ownerId:owner,shiftId,type,amount,reason:reason.trim(),clientMutationId:crypto.randomUUID?.()??Array.from(crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join(''),createdAt:new Date().toISOString()};
+ const db=await openDb();
+ try{return await new Promise((resolve,reject)=>{
+  const tx=db.transaction('kv','readwrite'),store=tx.objectStore('kv');let failure:unknown;
+  tx.oncomplete=()=>resolve(candidate);tx.onerror=()=>reject(failure||tx.error||new Error('Drawer reservation failed'));tx.onabort=()=>reject(failure||tx.error||new Error('Drawer reservation aborted'));
+  const req=store.get(drawerKey(owner));req.onsuccess=()=>{if(req.result){failure=new Error('Confirm the previous drawer adjustment before recording another.');tx.abort();return;}store.put(candidate,drawerKey(owner));};
+ });}finally{db.close();}
+}
+export async function acknowledgeDrawerMovement(record:PendingDrawerMovement):Promise<void>{
+ const db=await openDb();
+ try{await new Promise<void>((resolve,reject)=>{
+  const tx=db.transaction('kv','readwrite'),store=tx.objectStore('kv');
+  tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error||new Error('Drawer acknowledgment failed'));tx.onabort=()=>reject(tx.error||new Error('Drawer acknowledgment aborted'));
+  const req=store.get(drawerKey(record.ownerId));req.onsuccess=()=>{if(req.result?.clientMutationId===record.clientMutationId)store.delete(drawerKey(record.ownerId));};
+ });}finally{db.close();}
+}

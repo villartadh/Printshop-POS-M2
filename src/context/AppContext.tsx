@@ -46,6 +46,9 @@ import {
   retryOutboxConflict,
   acknowledgePendingCollection,
   type PendingBalanceCollection,
+  type PendingDrawerMovement,
+  acknowledgeDrawerMovement,
+  readPendingDrawerMovement,
   saveOfflineSnapshot,
 } from '../services/offlineDb.ts';
 import {validatePurchaseCost,weightedPurchaseCost} from '../shared/purchaseCost.ts';
@@ -203,7 +206,7 @@ interface AppContextValue {
   createExpense: (expense: Partial<ExpenseRecord>) => Promise<void>;
   deleteExpense: (id: string) => Promise<void>;
   startShift: (openingCash: number) => Promise<void>;
-  recordCashMovement: (shiftId: string, type: 'cash_in' | 'cash_out', amount: number, reason: string) => Promise<void>;
+  recordCashMovement: (record:PendingDrawerMovement) => Promise<void>;
   closeShift: (shiftId: string, actualCash: number, reconciliationNote: string) => Promise<void>;
   seedDemo: () => Promise<void>;
   clearDemo: () => Promise<void>;
@@ -962,21 +965,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     notify('Cashier shift started.', 'success');
   };
 
-  const recordCashMovement = async (
-    shiftId: string,
-    type: 'cash_in' | 'cash_out',
-    amount: number,
-    reason: string,
-  ) => {
-    await apiRequest(`/api/shifts/${shiftId}/movement`, {
-      method: 'POST',
-      body: JSON.stringify({ type, amount, reason }),
+  const recordCashMovement=async(record:PendingDrawerMovement)=>{
+    if(!session||record.ownerId!==session.user.id||!isOnline)throw new Error('Connect and sign in as the original operator to confirm the adjustment.');
+    const result=await apiRequest<{id:string;clientMutationId:string;type:string;amount:number;reason:string;movementId:string;expectedCash:number;duplicate:boolean}>(`/api/shifts/${encodeURIComponent(record.shiftId)}/movement`,{
+      method:'POST',body:JSON.stringify({type:record.type,amount:record.amount,reason:record.reason,clientMutationId:record.clientMutationId}),
     });
-    await refreshBootstrap();
-    notify(`Recorded ${type === 'cash_in' ? 'Cash In' : 'Cash Out'}.`, 'success');
+    if(result.id!==record.shiftId||result.clientMutationId!==record.clientMutationId||result.type!==record.type||result.amount!==record.amount||result.reason!==record.reason||typeof result.movementId!=='string'||!result.movementId||typeof result.duplicate!=='boolean'||!Number.isFinite(result.expectedCash)||result.expectedCash<0)throw new Error('Drawer confirmation could not be verified. Retry the original reference.');
+    await acknowledgeDrawerMovement(record);await refreshBootstrap();
+    notify(result.duplicate?'Original drawer adjustment confirmed.':'Drawer adjustment recorded.','success');
   };
 
   const closeShift = async (shiftId: string, actualCash: number, reconciliationNote: string) => {
+    if(!session||await readPendingDrawerMovement(session.user.id))throw new Error('Confirm the outstanding drawer adjustment before closing the shift.');
     await apiRequest(`/api/shifts/${shiftId}/close`, {
       method: 'POST',
       body: JSON.stringify({ actualCash, reconciliationNote }),

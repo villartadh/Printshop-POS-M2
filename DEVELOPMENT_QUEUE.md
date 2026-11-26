@@ -2,6 +2,9 @@
 
 Target: v0.9.6 consolidated software pilot, not a production release. Preserve main, baseline/v0.9.5, and the original Printshop-POS repo. Use develop only; inspect current head and both CI runs before advancing. Make cohesive atomic changes, with tests and evidence; never bypass failing gates.
 
+## Verified at 58602b0
+112 regression tests, 32 API scenarios, 13 browser workflows; CI 45727403146 and 45727394780 passed. Centavo precision accepted. Durable cash drawer movement references, atomic audit and recovery UI submitted; new browser recovery test. Pending local adjustment blocks same-operator drawer changes and closure; other terminals remain independent. Next: security/authorization and backup completeness audit.
+
 ## Verified at 8eb6efe
 108 regression tests, 31 API scenarios, 13 browser workflows; CI 45724461293 and 45724453844 passed. Durable customer payment recovery passed. Exact centavo validation and drawer precision submitted; no historical balances are rewritten. Next: audit monetary adjustment idempotency, role authorization and backup completeness.
 

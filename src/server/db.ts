@@ -268,6 +268,11 @@ export function initDatabase() {
       actor_id TEXT NOT NULL, shift_id TEXT, cash_amount REAL NOT NULL,
       electronic_amount REAL NOT NULL, cancelled_receivable REAL NOT NULL, created_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS drawer_movement_requests (
+      mutation_id TEXT PRIMARY KEY, actor_id TEXT NOT NULL, shift_id TEXT NOT NULL,
+      movement_type TEXT NOT NULL, amount REAL NOT NULL, reason TEXT NOT NULL,
+      movement_id TEXT NOT NULL, expected_after REAL NOT NULL, created_at TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS balance_collection_requests (
       mutation_id TEXT PRIMARY KEY, actor_id TEXT NOT NULL, customer_id TEXT NOT NULL,
       amount REAL NOT NULL, outstanding_after REAL NOT NULL, created_at TEXT NOT NULL

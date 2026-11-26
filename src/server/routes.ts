@@ -2076,36 +2076,33 @@ apiRouter.post('/shifts/start', requireAuth, (req: AuthenticatedRequest, res) =>
 });
 
 apiRouter.post('/shifts/:id/movement', requireAuth, (req: AuthenticatedRequest, res) => {
-  const id = String(req.params.id);
-  const { type, amount, reason } = req.body || {};
-  const val=amount;
-  if (!['cash_in','cash_out'].includes(type)||!isLedgerMoney(val)||val<=0||typeof reason!=='string'||!reason.trim()) {
-    return res.status(400).json({ error: 'Valid movement type, positive amount, and reason required.' });
-  }
-  const shift = db.prepare("SELECT * FROM cashier_shifts WHERE id = ? AND status = 'open'").get(id) as
-    | Record<string, unknown>
-    | undefined;
-  if (!shift) return res.status(404).json({ error: 'Open shift not found.' });
-  if (shift.cashier_id !== req.authUser!.id && !['admin','manager'].includes(req.authUser!.role)) return res.status(403).json({ error: 'Cannot manage another cashier’s shift.' });
-
-  const movements = parseJsonSafe<Array<Record<string, unknown>>>(shift.cash_movements_json as string, []);
-  movements.push({
-    id: genId('cm'),
-    type,
-    amount: val,
-    reason: String(reason),
-    timestamp: new Date().toISOString(),
-  });
-  const delta = type === 'cash_in' ? val : -val;
-  const expected = Number(((Number(shift.expected_cash) || 0) + delta).toFixed(2));
-  if (expected < 0) return res.status(409).json({ error: 'Cash withdrawal exceeds expected drawer cash.' });
-
-  db.prepare('UPDATE cashier_shifts SET cash_movements_json = ?, expected_cash = ? WHERE id = ?').run(
-    JSON.stringify(movements),
-    expected,
-    id,
-  );
-  res.json({ id, cashMovements: movements, expectedCash: expected });
+  const id=String(req.params.id);
+  const {type,amount,reason,clientMutationId}=req.body||{};
+  if(!['cash_in','cash_out'].includes(type)||!isLedgerMoney(amount)||amount<=0||typeof reason!=='string'||!reason.trim()||reason.trim().length>500||typeof clientMutationId!=='string'||!clientMutationId.trim()||clientMutationId.length>200)return res.status(400).json({error:'Valid payment reference, movement type, positive centavo amount and reason required.'});
+  const actor=req.authUser!, note=reason.trim();
+  const result=db.transaction(()=>{
+    const fail=(message:string,statusCode=409):never=>{throw Object.assign(new Error(message),{statusCode});};
+    const existing=db.prepare('SELECT * FROM drawer_movement_requests WHERE mutation_id=?').get(clientMutationId) as {actor_id:string;shift_id:string;movement_type:string;amount:number;reason:string;movement_id:string;expected_after:number}|undefined;
+    if(existing){
+      if(existing.actor_id!==actor.id||existing.shift_id!==id||existing.movement_type!==type||existing.amount!==amount||existing.reason!==note)return fail('Cash movement reference belongs to a different adjustment.');
+      return {movementId:existing.movement_id,expectedCash:existing.expected_after,duplicate:true};
+    }
+    const shift=db.prepare("SELECT * FROM cashier_shifts WHERE id=? AND status='open'").get(id) as Record<string,unknown>|undefined;
+    if(!shift)return fail('Open shift not found.',404);
+    if(shift.cashier_id!==actor.id&&!['admin','manager'].includes(actor.role))return fail('Cannot manage another cashier’s shift.',403);
+    if(!isLedgerMoney(shift.expected_cash))return fail('Drawer balance requires manual reconciliation.');
+    const expected=fromCents(cents(shift.expected_cash)+(type==='cash_in'?1:-1)*cents(amount));
+    if(!isLedgerMoney(expected))return fail('Cash movement would exceed supported drawer balance.');
+    const movements=parseJsonSafe<Array<Record<string,unknown>>>(shift.cash_movements_json as string,[]);
+    const movementId=genId('cm'),now=new Date().toISOString();
+    movements.push({id:movementId,type,amount,reason:note,timestamp:now});
+    db.prepare('UPDATE cashier_shifts SET cash_movements_json=?,expected_cash=? WHERE id=?').run(JSON.stringify(movements),expected,id);
+    db.prepare('INSERT INTO drawer_movement_requests(mutation_id,actor_id,shift_id,movement_type,amount,reason,movement_id,expected_after,created_at) VALUES (?,?,?,?,?,?,?,?,?)').run(clientMutationId,actor.id,id,type,amount,note,movementId,expected,now);
+    writeAuditLog(actor.id,actor.fullName,'SHIFT_CASH_MOVEMENT','shift',id,`${type} ${amount}; ${note}; reference ${clientMutationId}`);
+    return {movementId,expectedCash:expected,duplicate:false};
+  })();
+  res.setHeader('Cache-Control','no-store');
+  res.json({id,clientMutationId,type,amount,reason:note,...result});
 });
 
 apiRouter.post('/shifts/:id/close', requireAuth, (req: AuthenticatedRequest, res) => {

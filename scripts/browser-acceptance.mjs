@@ -409,6 +409,37 @@ try {
     assert.deepEqual(final.printJobs,accepted.printJobs);
     assert.equal(final.customers.find(c=>c.id===customer.id).outstandingBalance,0);
   });
+  await check('drawer adjustment survives incomplete acknowledgment and reload',async()=>{
+    const before=await api('/bootstrap');
+    const shift=before.shifts.find(s=>s.status==='open');
+    assert.ok(shift);
+    await click('Cashier Shifts');
+    await click('Cash In / Cash Out');
+    const dialog=page.getByRole('dialog');
+    await dialog.getByLabel('Movement Type').selectOption('cash_in');
+    await dialog.getByLabel(/^Amount /).fill('0.25');
+    await dialog.getByLabel('Reason',{exact:true}).fill('Synthetic drawer recovery');
+    let forwarded;
+    await page.route('**/api/shifts/*/movement',async route=>{
+      const upstream=await route.fetch();
+      forwarded={request:route.request().postDataJSON(),response:await upstream.json()};
+      await route.fulfill({response:upstream,json:{...forwarded.response,clientMutationId:'invalid-ack'}});
+    });
+    await dialog.getByRole('button',{name:'Record',exact:true}).click();
+    await dialog.getByText('Drawer confirmation could not be verified. Retry the original reference.',{exact:true}).waitFor();
+    assert.equal(forwarded.response.duplicate,false);
+    const accepted=await api('/bootstrap');
+    assert.equal(accepted.shifts.find(s=>s.id===shift.id).expectedCash,Math.round((shift.expectedCash+0.25)*100)/100);
+    await page.reload();await signIn();await click('Cashier Shifts');
+    await waitText('Unconfirmed drawer adjustment');await waitText('Reference: '+forwarded.request.clientMutationId);
+    assert.equal(await button('End & Reconcile Shift').isEnabled(),false);
+    await page.unroute('**/api/shifts/*/movement');
+    const retried=page.waitForResponse(r=>r.url().endsWith('/movement'));
+    await click('Retry Original Drawer Adjustment');
+    const response=await retried;assert.equal((await response.json()).duplicate,true);assert.deepEqual(response.request().postDataJSON(),forwarded.request);
+    await page.getByText('Unconfirmed drawer adjustment',{exact:true}).waitFor({state:'hidden'});
+    assert.deepEqual((await api('/bootstrap')).shifts,accepted.shifts);
+  });
   await check('logout and password login',async()=>{
     await page.getByRole('button',{name:'Lock Terminal / Switch User',exact:true}).filter({visible:true}).first().click();
     await click('Sign Out Completely');

@@ -261,10 +261,19 @@ async function main(){
     }
     const after=await state();
     assert.deepEqual(after.shifts,before.shifts);assert.deepEqual(after.customers,before.customers);assert.deepEqual(after.transactions,before.transactions);assert.deepEqual(after.stockMovements,before.stockMovements);
-    await write('/shifts/'+shift.id+'/movement',{type:'cash_in',amount:0.1,reason:'Centavo acceptance'},200);
-    await write('/shifts/'+shift.id+'/movement',{type:'cash_in',amount:0.2,reason:'Centavo acceptance'},200);
+    const movementUrl='/shifts/'+shift.id+'/movement';
+    const movement={type:'cash_in',amount:0.1,reason:'Centavo acceptance',clientMutationId:randomUUID()};
+    await write(movementUrl,{type:'cash_in',amount:0.1,reason:'Missing reference'},400);
+    const first=await write(movementUrl,movement,200);
+    const accepted=await state();
+    const replay=await write(movementUrl,movement,200);
+    assert.equal(first.duplicate,false);assert.equal(replay.duplicate,true);assert.equal(replay.movementId,first.movementId);
+    await write(movementUrl,{...movement,amount:0.2},409);
+    await write(movementUrl,{...movement,reason:'Changed'},409);
+    assert.deepEqual((await state()).shifts,accepted.shifts);
+    await write('/shifts/'+shift.id+'/movement',{type:'cash_in',amount:0.2,reason:'Centavo acceptance',clientMutationId:randomUUID()},200);
     assert.equal((await state()).shifts.find(s=>s.id===shift.id).expectedCash,540.3);
-    await write('/shifts/'+shift.id+'/movement',{type:'cash_out',amount:0.3,reason:'Centavo acceptance reversal'},200);
+    await write('/shifts/'+shift.id+'/movement',{type:'cash_out',amount:0.3,reason:'Centavo acceptance reversal',clientMutationId:randomUUID()},200);
     assert.equal((await state()).shifts.find(s=>s.id===shift.id).expectedCash,540);
   });
   await check('cashier shift close',async()=>{const x=verifyResponse(await request(`/api/shifts/${shift.id}/close`,{method:'POST',auth:true,body:{actualCash:540}}),200);assert.equal(x.discrepancy,0);});
