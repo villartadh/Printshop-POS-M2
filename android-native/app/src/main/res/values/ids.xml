@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="quote_price" type="id"/>
+    <item name="quote_quantity" type="id"/>
+    <item name="quote_received" type="id"/>
+    <item name="open_catalog" type="id"/>
+</resources>
