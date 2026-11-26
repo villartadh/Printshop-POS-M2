@@ -105,3 +105,6 @@ CI 45746004831 and 45746000146 passed Ubuntu and Windows, including 118 regressi
 
 ## Mixed-schema restore failure at 80c1ef0
 CI 45747776409 passed regression, type check, build and API on both operating systems, then failed the version 1 projection after all four actual v0.9.5 upgrade/restore scenarios passed. Root cause: verify() mutated module-level schema requirements during version 2 validation, contaminating subsequent version 1 checks in the same process. Derive version-specific tables and columns locally; preserve strict schema 2, foreign-key and integrity checks. Existing mixed-version upgrade scenario reproduces the defect. Await full CI before further features or promotion.
+
+## Verified at e0987b3
+PR CI 45750255433 passed both Ubuntu and Windows jobs, including regression, API, actual baseline upgrade/restore, browser, Linux HTTPS and Windows package gates. Mixed schema verification repair confirmed by full workflow. Cancellation ledger is included in this tested revision. Push-triggered counterpart has not been independently located; do not infer a second passing run. Next: validate native acceptance branch via PR against develop (shared package/port safeguards and seven tests); preserve physical and BIR gates separately. Do not promote production.
