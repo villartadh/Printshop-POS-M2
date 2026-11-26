@@ -48,15 +48,31 @@ try {
   const button = (name) => page.getByRole('button',{name,exact:typeof name==='string'}).filter({visible:true});
   const click = (name) => button(name).first().click();
   const waitText = (text) => page.getByText(text,{exact:typeof text==='string'}).filter({visible:true}).first().waitFor();
-  const signIn = async () => {
-    await page.getByPlaceholder('Enter username').fill('browser-test');
-    await page.getByPlaceholder('Enter password',{exact:true}).fill(password);
-    const login=page.waitForResponse(r=>r.url().endsWith('/api/auth/login'));
-    await click('Sign In');
-    const response=await login;
-    assert.equal(response.status(),200);
-    session=await response.json();
+  // Respect the real global credential throttle when a large suite creates many sessions.
+  // Never bypass it, change its configuration, or retry invalid credentials.
+  const authenticate = async (p,touch=false) => {
+    await p.getByPlaceholder('Enter username').fill('browser-test');
+    await p.getByPlaceholder('Enter password',{exact:true}).fill(password);
+    for(let attempt=0;attempt<2;attempt++){
+      const pending=p.waitForResponse(r=>r.url().endsWith('/api/auth/login')&&r.request().method()==='POST');
+      const submit=p.getByRole('button',{name:'Sign In',exact:true});
+      if(touch)await submit.tap();else await submit.click();
+      const response=await pending;
+      if(response.status()===429&&attempt===0){
+        const seconds=Number(response.headers()['retry-after']);
+        assert.ok(Number.isInteger(seconds)&&seconds>=1&&seconds<=60,'Valid credential throttle Retry-After');
+        const message=await response.json();
+        assert.match(message.error,/Too many authentication attempts/);
+        console.log('Credential throttle enforced; respecting Retry-After ('+seconds+' seconds)');
+        await delay((seconds+1)*1000);
+        continue;
+      }
+      assert.equal(response.status(),200,'Password authentication');
+      const result=await response.json();assert.ok(result.token);return result;
+    }
+    throw Error('Authentication remained throttled after Retry-After');
   };
+  const signIn=async()=>{session=await authenticate(page);};
   const api = async (url, body, expected = body===undefined?200:201) => {
     const response = await context.request.fetch(origin+'/api'+url,{
       method:body===undefined?'GET':'POST', data:body,
@@ -489,11 +505,7 @@ try {
         p=await scaled.newPage();
         p.setDefaultTimeout(10000);
         await p.goto(origin);
-        await p.getByPlaceholder('Enter username').fill('browser-test');
-        await p.getByPlaceholder('Enter password',{exact:true}).fill(password);
-        const login=p.waitForResponse(r=>r.url().endsWith('/api/auth/login')&&r.request().method()==='POST');
-        await p.getByRole('button',{name:'Sign In',exact:true}).click();
-        assert.equal((await login).status(),200,'Scaled browser authentication');
+        await authenticate(p);
         const pos=p.getByRole('button',{name:'POS Terminal',exact:true}).filter({visible:true}).first();
         await pos.waitFor();await pos.click();
         const service=p.getByText('Synthetic Print',{exact:true}).filter({visible:true}).first();
@@ -522,11 +534,7 @@ try {
     try{
       p=await mobile.newPage();p.setDefaultTimeout(10000);
       await p.goto(origin);
-      await p.getByPlaceholder('Enter username').fill('browser-test');
-      await p.getByPlaceholder('Enter password',{exact:true}).fill(password);
-      const login=p.waitForResponse(r=>r.url().endsWith('/api/auth/login')&&r.request().method()==='POST');
-      await p.getByRole('button',{name:'Sign In',exact:true}).tap();
-      assert.equal((await login).status(),200,'Touch browser authentication');
+      await authenticate(p,true);
       const nav=p.getByRole('navigation',{name:'Mobile navigation'});
       await nav.getByRole('button',{name:'POS',exact:true}).tap();
       const service=p.getByText('Synthetic Print',{exact:true}).filter({visible:true}).first();

@@ -72,3 +72,6 @@ Both CI runs 45734634658 and 45734628690 passed the actual receipt virtual PDF c
 
 ## Expanded gate failure at 7c8ab7e
 CI 45735694564 and 45735685964 failed Windows and Linux before new DPI measurement, waiting for Synthetic Print in a fresh browser context. Earlier gates passed. Fresh contexts now await actual password authentication response and explicitly select POS (desktop sidebar or mobile navigation), with scoped failure screenshots; offline test awaits offline indicator before checkout. Suspected navigation/initialization issue, not confirmed until CI passes. Preserve all existing DPR, geometry, touch and reconciliation assertions.
+
+## Confirmed acceptance blocker at 85c7e27
+Both CI runs 45736550714 and 45736544035 failed at DPR 1.25 with HTTP 429, confirming the real global credential throttle (10 attempts/60 seconds) triggered by repeated synthetic logins. DPR 1.0 reached and completed its assertions. The browser harness now uses a shared password authentication helper, validates the bounded Retry-After and error message, waits for the real window to expire, and retries once only on 429; invalid credentials fail immediately. No production security settings changed. Retest both platforms; mobile scenario still not executed to completion. Continue remaining milestones after the gate passes.
