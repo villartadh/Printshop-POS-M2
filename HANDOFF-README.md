@@ -96,6 +96,10 @@ Use the latest `DEVELOPMENT_QUEUE.md` entry rather than earlier historical snaps
 - Keep physical Windows scaling, actual printer output, actual tablet/phone/PWA tests, native Android acceptance and formal BIR review separate from hosted CI. Use disposable Windows desktop for native harness; never run scaling tests on live shop PC. TCP preflight does not prove server identity.
 - Reproducible candidates require exact tested SHA, package manifest/checksums, installation and recovery instructions, and documented acceptance limitations. Do not promote production until required gates pass and applicable approvals exist.
 
+## Self-hosted runner transition (connectivity only)
+
+Owner registered a Windows x64 runner (DJ-PC) and started it interactively; the console must stay running and the PC must remain awake and connected to accept jobs. The develop-only, path-filtered `.github/workflows/self-hosted-runner-smoke.yml` checks just routing and architecture, without checkout, credentials, installation or application execution. Its success is NOT a software acceptance gate. Do not enable regular builds on the live printshop PC: use a disposable isolated Windows VM/test machine, synthetic data and a restricted runner; verify environment and each original test. Do not substitute Windows for Linux/KVM Android acceptance. Preserve all hosted and independent gates until an equivalent verified lane is established; no production or BIR claims.
+
 ## Copy-ready continuation prompt
 
 Continue Printshop POS M2 from the current GitHub repository. Read HANDOFF-README.md, AGENTS.md and the latest DEVELOPMENT_QUEUE.md checkpoint. Reconcile live branches, PRs and CI before changing code. Implement the next eligible task, test with synthetic data, preserve protected baselines, commit verified work and append the exact next action to the queue. Continue eligible milestones without routine approval; report genuine blockers and never claim unexecuted tests or production readiness. Preserve this handoff in all future source packages.

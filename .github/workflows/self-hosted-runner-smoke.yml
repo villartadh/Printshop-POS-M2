@@ -1,0 +1,22 @@
+name: Self-hosted Windows connectivity smoke
+on:
+  push:
+    branches: [develop]
+    paths:
+      - '.github/workflows/self-hosted-runner-smoke.yml'
+permissions: {}
+jobs:
+  windows-connectivity:
+    if: github.repository == 'villartadh/Printshop-POS-M2' && github.ref == 'refs/heads/develop'
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 3
+    steps:
+      # Intentionally no checkout, external actions, secrets, data access, or installation.
+      - name: Check Windows runner routing
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
+            throw 'Expected registered Windows x64 runner'
+          }
+          Write-Output 'SELF_HOSTED_WINDOWS_CONNECTIVITY_PASS'
