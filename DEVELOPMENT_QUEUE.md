@@ -228,3 +228,24 @@ PR CI 45750255433 passed both Ubuntu and Windows jobs, including regression, API
 - Owner confirms runner Idle and DJ-PC serves both development/testing and everyday printshop operations, authorizes use of same physical computer. Ordinary shop instance is not an isolated host; keep real data/printer/credentials untouched. Use dedicated disposable guest on DJ-PC for full acceptance, reserve generic runner for read-only diagnostics.
 - Extend existing develop-only, path-triggered connectivity smoke with coarse read-only readiness: tooling presence, workspace drive free GiB, RAM/firmware virtualization/SLAT/hypervisor, elevated status; no checkout, app code, installs, secrets, personal folders or machine changes. SELF_HOSTED_WINDOWS_READINESS_PASS indicates completed diagnostic, not full acceptance. No new branch or settings change; existing optional isolated Windows route remains disabled.
 - Next: inspect exact readiness result and choose dedicated Windows VM setup. Register only the guest with custom isolation label and environment, enable owner switch when ready; preserve all acceptance gates. Reconcile #10 then subsequent stacked PRs against current develop once complete gates available; #13 v8 credential lifecycle work remains draft. No unverified merge, production change or physical/BIR claim.
+
+
+## Checkpoint 2026-11-26 — owner-approved redundant branch cleanup
+
+Owner explicitly approved removal of the nine verified redundant branches and the permanent cleanup procedure. Immediately before deletion, GitHub compared each exact branch tip against develop `05a3a165ddf7df15fb681ab93d8df943f4735b72`: every branch was behind with zero commits ahead and no open PR using it as head or base. PRs #2–#9 are already merged. The diagnostics repair is in develop ancestry. GitHub branch-list deletion was individually verified, then a fresh branch inventory confirmed exactly eight branches remain. The original commits remain reachable through develop; no content, PR history, tags, active features or protected baseline references deleted.
+
+| Deleted temporary branch | Exact recovery tip SHA | Commits ahead of develop |
+|---|---|---:|
+| `feature/native-android-foundation` | `818723cb3481c75113ba9dd47bfe6e3eb45fc8ef` | 0 |
+| `feature/native-android-catalog` | `0b916e9aa1ee6dcbe77379d5599498c8908d4d97` | 0 |
+| `feature/native-android-catalog-ui` | `ea5722aa48a5a78afb5935c75562fa445771a6bd` | 0 |
+| `feature/native-android-stock-ledger` | `19ad3b3380d64ae089eb6bff8a60292728891a06` | 0 |
+| `feature/native-android-stock-ui` | `5e25bf6bb1a8861047ff490d30a8c3cd63697c7b` | 0 |
+| `feature/native-android-material-costing` | `9cfa8fb5810f3ba52d769a8a6167a68e6e009373` | 0 |
+| `feature/native-android-recipe-ui` | `cc43d420fd3b68f13d9d82be916325f234d73394` | 0 |
+| `prepare/native-acceptance-v097` | `74258658b5fadf5ad22a0bc10896ea10d0b2d4b4` | 0 |
+| `repair/native-recipe-build-diagnostics` | `64941e9a6bf915c430d4047cad4453247e62d080` | 0 |
+
+Retained: `main`, `develop`, `baseline/v0.9.5`, `pilot/v0.9.6`, `feature/native-android-pricing-math` (#10), `feature/native-android-pricing-settings` (#11), `feature/native-android-stock-recovery` (#12), and `feature/native-android-checkout` (#13). PRs #1 and #10–#13 remain open. No merge or promotion performed. Recovery, only if required and authorized: create the original branch name at its exact recorded SHA. No reason to restore redundant branches for routine continuation.
+
+Next: follow revised AGENTS.md cleanup rule after each accepted feature integrates; keep active stacked base branches until descendants are retargeted and all required gates pass. Owner installing VMware; do not route application tasks to live-shop DJ-PC. Exact existing Android/Windows/Linux gates for #10–#13 remain blocked/pending. Continue major checkout milestone and integrate sequentially only with verified acceptance. Documentation-only policy change; not application acceptance.

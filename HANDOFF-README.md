@@ -5,7 +5,7 @@ This is the permanent continuation entry point for any developer, Codex session,
 ## Canonical source and authority
 
 - Repository: https://github.com/villartadh/Printshop-POS-M2
-- Active integration branch: `develop`; use isolated feature branches for unverified work.
+- Active integration branch: `develop`; reserve feature branches for major/critical changes. Merge only after exact head/base acceptance. Remove a redundant temporary branch only after verified integration, zero unique commits, no open PR head/base or active dependencies, and recorded recovery SHA. Preserve `main`, `develop`, accepted versioned branches/tags, and protected baselines/pilots. See AGENTS.md and latest DEVELOPMENT_QUEUE checkpoint.
 - Protected historical reference: `main` and `baseline/v0.9.5`, commit `255518ed388bcee3d63ee211e17c199ba984547e`. Do not rewrite history.
 - Verified v0.9.6 pilot: `pilot/v0.9.6`, commit `b681596d50ee2fb31d40b5ef087bf58169350429`.
 - Original feature reference: https://github.com/villartadh/Printshop-POS (read-only comparison).
@@ -88,6 +88,10 @@ Use the latest `DEVELOPMENT_QUEUE.md` entry rather than earlier historical snaps
 3. For Android local verification, use JDK 17, Gradle 8.9, Android SDK 35/build-tools 34.0.0, an API 34 emulator and the checked-in `.github/workflows/android-native.yml`. Run `gradle -p android-native --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug`; install preview and instrumentation APKs on a disposable emulator only, then use the exact instrumentation command in CI. The native APK is not an official sales application; use synthetic data exclusively.
 4. After recipe UI acceptance, implement pricing-method parity and safe durable pending stock recovery in isolated branches. Preserve the distinction between estimated materials, editable selling price and actual stock movements. Physical devices, printing, and official BIR approval are still external gates.
  
+
+## Current branch cleanup — owner-approved 2026-11-26
+
+Nine redundant branches were removed after ancestry and open-PR dependency checks; all nine exact tips remain reachable through develop. The recovery hashes and deletion evidence are in [DEVELOPMENT_QUEUE.md](DEVELOPMENT_QUEUE.md). Only main, develop, baseline/v0.9.5, pilot/v0.9.6 and four active native PR branches (#10 pricing math, #11 pricing settings, #12 stock recovery, #13 checkout) remain. Never recreate deleted branches for routine work. Retarget stacked PRs before removing any accepted parent branch, and verify current acceptance before each integration. No feature merge or release promotion was made by this cleanup.
 
 ## Protected contracts and release limits
 
