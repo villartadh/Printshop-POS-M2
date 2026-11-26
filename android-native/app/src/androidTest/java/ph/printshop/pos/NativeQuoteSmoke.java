@@ -55,7 +55,9 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "stock screen"; verifyStockScreen();
             phase = "material costing"; verifyMaterials();
             phase = "recipe and quote screen"; verifyRecipeScreen(screen);
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\n");
+            phase = "pricing store migration"; verifyPricingStore();
+            phase = "pricing settings screen"; verifyPricingScreen(screen);
+            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\n");
             result = Activity.RESULT_OK;
         } catch (Throwable error) {
             evidence.putString("stream", failureDetails(phase, error));
@@ -84,6 +86,138 @@ public final class NativeQuoteSmoke extends Instrumentation {
         java.io.StringWriter trace = new java.io.StringWriter();
         error.printStackTrace(new java.io.PrintWriter(trace));
         return "NATIVE_QUOTE_SMOKE_FAIL: " + phase + "\n" + trace + "\n";
+    }
+    private void verifyPricingStore() {
+        android.content.Context context=getTargetContext();
+        String filename="pricing-v3-migration-"+java.util.UUID.randomUUID()+".db";
+        String service=java.util.UUID.randomUUID().toString(),material=java.util.UUID.randomUUID().toString();
+        String movement=java.util.UUID.randomUUID().toString();
+        try{
+            // Exact former v3 schema, including existing ledger and recipe.
+            try(android.database.sqlite.SQLiteDatabase db=context.openOrCreateDatabase(filename,0,null)){
+                db.execSQL("CREATE TABLE catalog (id TEXT PRIMARY KEY NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('SERVICE','MATERIAL')), name TEXT NOT NULL, unit TEXT NOT NULL, centavos INTEGER NOT NULL CHECK(centavos BETWEEN 0 AND 99999999999), revision INTEGER NOT NULL CHECK(revision >= 1), archived INTEGER NOT NULL CHECK(archived IN (0,1)))");
+                db.execSQL("CREATE TABLE catalog_history (id TEXT NOT NULL REFERENCES catalog(id), revision INTEGER NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL, unit TEXT NOT NULL, centavos INTEGER NOT NULL, archived INTEGER NOT NULL, action TEXT NOT NULL CHECK(action IN ('CREATE','EDIT','ARCHIVE','RESTORE')), PRIMARY KEY(id,revision))");
+                db.execSQL("CREATE TABLE stock_movements (request_id TEXT PRIMARY KEY NOT NULL, material_id TEXT NOT NULL REFERENCES catalog(id), catalog_revision INTEGER NOT NULL CHECK(catalog_revision>=1), stock_revision INTEGER NOT NULL CHECK(stock_revision>=1), unit TEXT NOT NULL, reason TEXT NOT NULL, delta INTEGER NOT NULL CHECK(delta BETWEEN -999999999999 AND 999999999999 AND delta<>0), before_quantity INTEGER NOT NULL CHECK(before_quantity BETWEEN 0 AND 999999999999), after_quantity INTEGER NOT NULL CHECK(after_quantity BETWEEN 0 AND 999999999999 AND after_quantity=before_quantity+delta), created_ms INTEGER NOT NULL, UNIQUE(material_id,stock_revision))");
+                db.execSQL("CREATE TABLE service_materials (service_id TEXT NOT NULL REFERENCES catalog(id), material_id TEXT NOT NULL REFERENCES catalog(id), quantity_milli INTEGER NOT NULL CHECK(quantity_milli BETWEEN 1 AND 999999999999), unit TEXT NOT NULL, PRIMARY KEY(service_id,material_id))");
+                db.execSQL("CREATE TABLE recipe_history (service_id TEXT NOT NULL REFERENCES catalog(id), revision INTEGER NOT NULL CHECK(revision>=1), material_id TEXT NOT NULL REFERENCES catalog(id), quantity_milli INTEGER NOT NULL CHECK(quantity_milli BETWEEN 0 AND 999999999999), unit TEXT NOT NULL, material_revision INTEGER NOT NULL, service_revision INTEGER NOT NULL, created_ms INTEGER NOT NULL, PRIMARY KEY(service_id,revision))");
+                db.execSQL("INSERT INTO catalog VALUES(?,?,?,?,?,?,?)",new Object[]{service,"SERVICE","Synthetic document","page",300,1,0});
+                db.execSQL("INSERT INTO catalog VALUES(?,?,?,?,?,?,?)",new Object[]{material,"MATERIAL","Synthetic paper","sheet",199,1,0});
+                db.execSQL("INSERT INTO catalog_history VALUES(?,?,?,?,?,?,?,?)",new Object[]{service,1,"SERVICE","Synthetic document","page",300,0,"CREATE"});
+                db.execSQL("INSERT INTO catalog_history VALUES(?,?,?,?,?,?,?,?)",new Object[]{material,1,"MATERIAL","Synthetic paper","sheet",199,0,"CREATE"});
+                db.execSQL("INSERT INTO stock_movements VALUES(?,?,?,?,?,?,?,?,?,?)",new Object[]{movement,material,1,1,"sheet","Synthetic receipt",1500,0,1500,1});
+                db.execSQL("INSERT INTO service_materials VALUES(?,?,?,?)",new Object[]{service,material,500,"sheet"});
+                db.execSQL("INSERT INTO recipe_history VALUES(?,?,?,?,?,?,?,?)",new Object[]{service,1,material,500,"sheet",1,1,1});
+                db.setVersion(3);
+            }
+            java.util.List<PricingMath.Tier> tiers=java.util.Arrays.asList(new PricingMath.Tier(2000,200),new PricingMath.Tier(1000,250));
+            try(CatalogStore store=new CatalogStore(context,filename)){
+                require(store.getReadableDatabase().getVersion()==4,"v3-to-v4 migration version wrong");
+                require(store.pricing(service).revision==0&&!store.pricing(service).needsAdvancedQuote(),"legacy default changed");
+                require(store.recipeRevision(service)==1&&store.stockBalance(material).quantity==1500,"migration changed recipe or stock");
+                PricingProfile saved=store.savePricing(service,1,0,PricingMath.Method.PER_PAGE,true,tiers);
+                require(saved.revision==1&&saved.tiers.size()==2&&saved.tiers.get(0).minQuantityHundredths==1000,"pricing saved incorrectly");
+                rejectStock(()->store.savePricing(service,1,0,PricingMath.Method.PER_PAGE,true,tiers));
+                rejectStock(()->store.savePricing(service,1,1,PricingMath.Method.PER_PAGE,true,tiers));
+                rejectStock(()->store.savePricing(service,1,1,PricingMath.Method.PER_SQFT,true,tiers));
+                rejectStock(()->store.edit(service,1,"Synthetic document","sq ft","3.00"));
+                rejectStock(()->store.pricing(material));
+                CatalogEntry revised=store.edit(service,1,"Synthetic document","page","3.50");
+                require(revised.revision==2,"ordinary price edit blocked");
+                rejectStock(()->store.savePricing(service,1,1,PricingMath.Method.PER_UNIT,false,java.util.Collections.emptyList()));
+                require(store.savePricing(service,2,1,PricingMath.Method.PER_UNIT,false,java.util.Collections.emptyList()).revision==2,"pricing reset revision wrong");
+                store.archive(service,2,true);
+                rejectStock(()->store.savePricing(service,3,2,PricingMath.Method.PER_PAGE,true,tiers));
+            }
+            try(CatalogStore reopened=new CatalogStore(context,filename)){
+                PricingProfile profile=reopened.pricing(service);
+                require(profile.revision==2&&profile.tiers.isEmpty()&&!profile.needsAdvancedQuote(),"latest pricing snapshot not preserved");
+                require(reopened.get(service).archived&&reopened.get(service).centavos==350,"catalog changed by pricing");
+                require(reopened.recipeRevision(service)==1&&reopened.stockBalance(material).quantity==1500,"pricing changed recipe or ledger");
+                try(android.database.Cursor c=reopened.getReadableDatabase().rawQuery("SELECT COUNT(*) FROM pricing_profile_versions WHERE service_id=?",new String[]{service})){
+                    require(c.moveToFirst()&&c.getInt(0)==2,"pricing history changed");
+                }
+                try(android.database.Cursor c=reopened.getReadableDatabase().rawQuery("SELECT COUNT(*) FROM pricing_tier_versions WHERE service_id=? AND profile_revision=1",new String[]{service})){
+                    require(c.moveToFirst()&&c.getInt(0)==2,"historical bulk tiers lost");
+                }
+                try(android.database.Cursor c=reopened.getReadableDatabase().rawQuery("PRAGMA foreign_key_check",null)){
+                    require(!c.moveToFirst(),"migration foreign key violations");
+                }
+            }
+        }finally{context.deleteDatabase(filename);}
+    }
+    private void verifyPricingScreen(Activity screen) {
+        android.content.Context context=getTargetContext();
+        try(CatalogStore store=new CatalogStore(context)){
+            CatalogEntry service=store.create(CatalogEntry.Kind.SERVICE,"Synthetic pricing configuration","page","3.00");
+            Activity catalog=null,editor=null;
+            ActivityMonitor cm=addMonitor(CatalogActivity.class.getName(),null,false);
+            ActivityMonitor pm=addMonitor(PricingSettingsActivity.class.getName(),null,false);
+            try{
+                runOnMainChecked(()->screen.findViewById(R.id.open_catalog).performClick());
+                catalog=waitForMonitorWithTimeout(cm,10000);
+                require(catalog!=null,"pricing fixture catalog did not open");
+                final Activity initial=catalog;
+                runOnMainChecked(()->{
+                    View select=findText(initial.getWindow().getDecorView(),"Use in quotation");
+                    require(select!=null&&select.performClick(),"unconfigured service selection failed");
+                });
+                waitForIdleSync();
+                removeMonitor(cm);
+                cm=addMonitor(CatalogActivity.class.getName(),null,false);
+                runOnMainChecked(()->screen.findViewById(R.id.open_catalog).performClick());
+                catalog=waitForMonitorWithTimeout(cm,10000);
+                require(catalog!=null,"pricing catalog did not reopen");
+                final Activity shown=catalog;
+                runOnMainChecked(()->{
+                    View configure=findText(shown.getWindow().getDecorView(),"Configure service pricing");
+                    require(configure!=null&&configure.performClick(),"pricing configuration action missing");
+                });
+                editor=waitForMonitorWithTimeout(pm,10000);
+                require(editor!=null,"pricing settings Activity did not open");
+                final Activity form=editor;
+                waitForIdleSync();
+                runOnMainChecked(()->{
+                    android.widget.Spinner method=form.findViewById(R.id.pricing_method);
+                    method.setSelection(PricingMath.Method.PER_PAGE.ordinal());
+                });
+                waitForIdleSync();
+                runOnMainChecked(()->{
+                    View root=form.getWindow().getDecorView();
+                    android.widget.CheckBox pages=form.findViewById(R.id.pricing_pages);
+                    require(pages.isEnabled(),"document page option disabled");
+                    pages.setChecked(true);
+                    ((EditText)form.findViewById(R.id.pricing_threshold)).setText("10");
+                    ((EditText)form.findViewById(R.id.pricing_rate)).setText("2.25");
+                    require(form.findViewById(R.id.pricing_add).performClick(),"tier add disabled");
+                    require(hasText(root,"10+ units · PHP 2.25 per unit"),"draft tier missing");
+                    require(form.findViewById(R.id.pricing_save).performClick(),"pricing save disabled");
+                    require(hasText(root,"Pricing settings saved."),"pricing save not confirmed");
+                });
+                PricingProfile saved=store.pricing(service.id);
+                require(saved.revision==1&&saved.method==PricingMath.Method.PER_PAGE&&saved.pagesAndCopies&&saved.tiers.size()==1&&saved.tiers.get(0).rateCentavos==225,"editor profile not persisted");
+                runOnMainChecked(form::finish);waitForIdleSync();
+                runOnMainChecked(()->{
+                    View root=shown.getWindow().getDecorView();
+                    require(hasText(root,"Pricing: Per page · 1 tier(s)"),"catalog pricing summary not refreshed");
+                    require(findText(root,"Use in quotation")==null,"advanced profile incorrectly offered legacy quote");
+                });
+                runOnMainChecked(shown::finish);waitForIdleSync();
+                runOnMainChecked(()->{
+                    View root=screen.getWindow().getDecorView();
+                    require(hasText(root,"Total — advanced quotation controls pending"),"stale legacy quote not blocked");
+                    View clear=findText(root,"Clear service link");
+                    require(clear!=null&&clear.performClick(),"clear stale service unavailable");
+                    ((EditText)screen.findViewById(R.id.quote_quantity)).setText("2");
+                    require(hasText(root,"Total: PHP 6.00"),"manual quote altered by profile");
+                });
+                require(store.get(service.id).centavos==300,"pricing settings changed the base catalog price");
+            }finally{
+                removeMonitor(cm);removeMonitor(pm);
+                if(editor!=null){final Activity form=editor;runOnMainChecked(form::finish);}
+                if(catalog!=null){final Activity shown=catalog;runOnMainChecked(shown::finish);}
+                store.archive(service.id,service.revision,true);
+            }
+        }
     }
     private void verifyRecipeScreen(Activity screen) {
         android.content.Context context = getTargetContext();
