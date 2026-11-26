@@ -1,3 +1,9 @@
+# 0.9.7 expanded acceptance candidate
+
+- Preserve v0.9.6 software pilot on a dedicated reference branch.
+- Add actual receipt-preview virtual PDF evidence for 58mm, 80mm, A4, Letter and custom formats, with geometry, non-tax marking, amounts and overflow checks.
+- Physical printer and regulatory acceptance remain separate.
+
 # 0.9.6 software pilot candidate
 
 - Guided shop setup, validated settings and immutable historical receipt branding.

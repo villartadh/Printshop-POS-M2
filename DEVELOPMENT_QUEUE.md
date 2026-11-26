@@ -1,6 +1,6 @@
 # M2 autonomous development queue
 
-Target: v0.9.6 consolidated software pilot, not a production release. Preserve main, baseline/v0.9.5, and the original Printshop-POS repo. Use develop only; inspect current head and both CI runs before advancing. Make cohesive atomic changes, with tests and evidence; never bypass failing gates.
+Target: v0.9.7 expanded automated acceptance following the verified v0.9.6 software pilot, not a production release. Preserve main, baseline/v0.9.5, and the original Printshop-POS repo. Use develop only; inspect current head and both CI runs before advancing. Make cohesive atomic changes, with tests and evidence; never bypass failing gates.
 
 ## Verified at 2291837
 115 regression tests, 33 API scenarios, 14 browser workflows, four actual upgrade/restore scenarios; CI 45732402008 and 45732394799 passed. LDC consolidation accepted. Version 0.9.6, feature matrix, troubleshooting and versioned source/Windows packaging submitted. Source manifest is generated in CI from allowlisted tracked files, excluding old committed manifest. Next: inspect both release CI runs and actual artifact IDs, verify software readiness, update handoff without invalidating the tested artifact identity, and stop automation if software pilot ready. Do not merge/promote or claim physical/BIR acceptance.
@@ -63,3 +63,6 @@ Physical Windows installation/display scaling, physical receipt printer, tablets
 
 ## Working method
 Use GitHub connector and actual source/CI evidence. Update this queue after meaningful progress. Avoid speculative claims, mock dashboards or repetitive status reports. If CI is running, do not push unrelated changes that cancel it. If blocked, explain accurately. Do not invent artifact paths.
+
+## Expanded acceptance checkpoint
+v0.9.6 b681596d50ee2fb31d40b5ef087bf58169350429 verified by CI 45733269332 and 45733263601; preserved at pilot/v0.9.6. Artifacts (30-day retention): Windows 15078390589, source 15078020902, Windows evidence 15078320811, Linux evidence 15077557213 in run 45733269332. User authorized continuing feasible deferred milestones. v0.9.7 candidate begins virtual receipt PDF geometry checks on actual rendered previews for all five supported formats. Next: verify CI, add mobile/touch and DPR acceptance, hosted Windows upgrade/restore and BIR gap analysis with official sources. Do not stop at software pilot; continue until feasible expanded acceptance is complete. Physical hardware and official approval cannot be inferred from simulation.

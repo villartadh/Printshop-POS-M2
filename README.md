@@ -1,4 +1,4 @@
-# Printshop POS 0.9.6 software pilot candidate
+# Printshop POS 0.9.7 expanded acceptance candidate
 
 Use the separately staged Windows x64 distribution for installation and the [operator guide](OPERATOR-GUIDE.md) for setup, backups and device checks. The software acceptance checks use synthetic data. Windows, actual devices, a physical printer and BIR review require independent acceptance.
 
@@ -106,3 +106,5 @@ Run `node scripts/readiness.mjs` for a fail-closed evidence report in `.ldc/rele
 After installing, open RUN-POS.cmd to validate, build, start and open the Windows browser application automatically. Keep its console open; Ctrl+C stops the supervised server. INSTALLED-LDC.cmd remains available for diagnostics. The source START-PRINTSHOP-POS.cmd uses the source data location unless POS_DATA_DIR is supplied. Initial npm provisioning still needs network access and a compatible Node.js 22 runtime. No production acceptance is claimed.
 
 The GitHub Actions artifacts are the tested distribution, not the raw development checkout. The versioned source archive contains its regenerated SHA-256 release manifest. The Windows distribution includes Node.js and SQLite; installation does not require npm. Physical acceptance remains deferred. See [feature matrix](FEATURE-MATRIX.md).
+
+The verified v0.9.6 software pilot is preserved at pilot/v0.9.6; v0.9.7 extends automated deferred acceptance. Virtual print evidence is not physical printer evidence.

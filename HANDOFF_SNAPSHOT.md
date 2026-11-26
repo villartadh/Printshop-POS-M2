@@ -13,3 +13,6 @@ At 1b34246: CI 45731676204 and 45731669288 passed on Ubuntu and Windows. 113 reg
 
 ## v0.9.6 packaging submission
 At 2291837, CI 45732402008 and 45732394799 passed: 115 regression, 33 API, 14 Chromium, four upgrade/restore scenarios. Version 0.9.6 assigned to develop only. The final release workflow must produce versioned Windows ZIP and source ZIP separately, with SHA-256 manifests and software evidence. Check both current runs before reporting availability. Source manifest generated from tested tracked files in CI; the old committed v0.9.5 manifest is historical and excluded from the new source archive. No promotion or deployment authorized.
+
+## Verified v0.9.6 pilot reference
+Commit b681596d50ee2fb31d40b5ef087bf58169350429; both CI 45733269332 and 45733263601 passed; preserved at pilot/v0.9.6. Run 45733269332 artifacts: Windows 15078390589, source 15078020902, Windows evidence 15078320811, Linux evidence 15077557213. v0.9.7 is a separate expanded-acceptance candidate. No production approval.

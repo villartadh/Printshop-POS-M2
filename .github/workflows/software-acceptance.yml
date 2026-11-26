@@ -61,17 +61,17 @@ jobs:
         run: |
           node scripts/package-source.mjs release-output/source
           cd release-output/source
-          zip -q -r ../Printshop-POS-v0.9.6-Source.zip .
+          zip -q -r ../Printshop-POS-v0.9.7-Source.zip .
           cd ..
-          sha256sum Printshop-POS-v0.9.6-Source.zip > SOURCE-SHA256SUMS.txt
+          sha256sum Printshop-POS-v0.9.7-Source.zip > SOURCE-SHA256SUMS.txt
           sha256sum -c SOURCE-SHA256SUMS.txt
       - name: Upload versioned source candidate
         if: runner.os == 'Linux' && success()
         uses: actions/upload-artifact@v4
         with:
-          name: v0.9.6-source-candidate
+          name: v0.9.7-source-candidate
           path: |
-            release-output/Printshop-POS-v0.9.6-Source.zip
+            release-output/Printshop-POS-v0.9.7-Source.zip
             release-output/SOURCE-SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 30
@@ -92,16 +92,16 @@ jobs:
           } finally { Pop-Location }
           node scripts/windows/package-smoke.mjs windows-stage
           if ($LASTEXITCODE -ne 0) { throw 'Isolated packaged application smoke test failed' }
-          Compress-Archive -Path windows-stage\* -DestinationPath Printshop-POS-v0.9.6-Windows-x64.zip
-          $hash = (Get-FileHash Printshop-POS-v0.9.6-Windows-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
-          Set-Content -Encoding ascii SHA256SUMS.txt "$hash  Printshop-POS-v0.9.6-Windows-x64.zip"
+          Compress-Archive -Path windows-stage\* -DestinationPath Printshop-POS-v0.9.7-Windows-x64.zip
+          $hash = (Get-FileHash Printshop-POS-v0.9.7-Windows-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content -Encoding ascii SHA256SUMS.txt "$hash  Printshop-POS-v0.9.7-Windows-x64.zip"
       - name: Upload Windows candidate
         if: runner.os == 'Windows' && success()
         uses: actions/upload-artifact@v4
         with:
-          name: v0.9.6-windows-x64-candidate
+          name: v0.9.7-windows-x64-candidate
           path: |
-            Printshop-POS-v0.9.6-Windows-x64.zip
+            Printshop-POS-v0.9.7-Windows-x64.zip
             SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 30

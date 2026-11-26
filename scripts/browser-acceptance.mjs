@@ -7,6 +7,7 @@ import {spawn} from 'node:child_process';
 import {setTimeout as delay} from 'node:timers/promises';
 import {chromium} from 'playwright';
 import {acceptanceEnv, assertInstance, freePort} from './acceptance.mjs';
+import {paperLayout} from '../src/shared/printDocument.ts';
 
 const root = path.resolve(import.meta.dirname, '..');
 const sandbox = await fs.mkdtemp(path.join(os.tmpdir(), 'printshop-pos-browser-'));
@@ -179,12 +180,49 @@ try {
     await click('Close');
     await click('Receipt');
     await waitText('Document & Receipt Preview');
-    const popupPromise=page.waitForEvent('popup');
-    await click('Print / Save as PDF');
-    const popup=await popupPromise;
-    await popup.locator('#print-now').waitFor();
-    assert.match(await popup.locator('body').innerText(), /OR-/);
-    await popup.close();
+    // Exercise the real receipt preview, not a reconstructed test document.
+    const receiptState=await api('/bootstrap');
+    const recorded=receiptState.transactions[0];
+    const custom=receiptState.settings.receiptTemplate.customWidthMm;
+    const currency=receiptState.settings.taxAndCurrency.currencySymbol;
+    const measurements=[];
+    for(const format of ['58mm','80mm','A4','Letter','Custom']){
+      await page.getByLabel('Paper Format',{exact:true}).selectOption(format);
+      const popupPromise=page.waitForEvent('popup');
+      await click('Print / Save as PDF');
+      const popup=await popupPromise;
+      try{
+        await popup.locator('#print-now').waitFor();
+        const main=popup.locator('main');
+        const content=await main.innerText();
+        assert.ok(content.includes(recorded.receiptNumber));
+        assert.match(content,/NOT A TAX INVOICE/);
+        for(const [label,amount] of [['TOTAL',40],['Amount Paid',40],['Change',10]]){
+          const row=main.locator('div.flex').filter({has:popup.getByText(label,{exact:true})}).last();
+          assert.ok((await row.innerText()).includes(currency+amount.toFixed(2)),label+' '+format);
+        }
+        const p=paperLayout(format,custom);
+        const widthMm=format==='A4'?210:format==='Letter'?215.9:p.width+8;
+        // Chromium virtual PDF: explicit roll width; physical roll length remains printer-dependent.
+        await popup.setViewportSize({width:Math.ceil(widthMm*96/25.4),height:1100});
+        await popup.emulateMedia({media:'print'});
+        const m=await main.evaluate(el=>({width:el.getBoundingClientRect().width,scrollWidth:el.scrollWidth,clientWidth:el.clientWidth,height:el.scrollHeight}));
+        assert.ok(Math.abs(m.width-p.width*96/25.4)<2,format+' content width');
+        assert.ok(m.scrollWidth<=m.clientWidth+1,format+' receipt overflow');
+        assert.equal(await popup.locator('aside').isVisible(),false);
+        const heightMm=format==='A4'?297:format==='Letter'?279.4:Math.max(100,Math.ceil(m.height*25.4/96+16));
+        const pdf=await popup.pdf({width:widthMm+'mm',height:heightMm+'mm',preferCSSPageSize:true,printBackground:true,path:path.join(evidence,'virtual-receipt-'+format+'.pdf')});
+        assert.equal(pdf.subarray(0,5).toString(),'%PDF-');
+        const boxes=[...pdf.toString('latin1').matchAll(/\/MediaBox\s*\[\s*0\s+0\s+([\d.]+)\s+([\d.]+)\s*\]/g)];
+        assert.equal(boxes.length,1,format+' expected one page');
+        const [actualWidth,actualHeight]=boxes[0].slice(1).map(Number);
+        assert.ok(Math.abs(actualWidth-widthMm*72/25.4)<2,format+' PDF width');
+        assert.ok(Math.abs(actualHeight-heightMm*72/25.4)<2,format+' PDF height');
+        measurements.push({format,widthMm,heightMm,pdfWidthPt:actualWidth,pdfHeightPt:actualHeight,scope:'virtual Chromium PDF, not physical printer'});
+      }finally{await popup.close();}
+    }
+    await fs.writeFile(path.join(evidence,'virtual-receipt-geometry.json'),JSON.stringify(measurements,null,2));
+    await page.getByLabel('Paper Format',{exact:true}).selectOption('58mm');
     const download=page.waitForEvent('download');
     await click('Export File');
     assert.match((await download).suggestedFilename(),/\.html$/);
