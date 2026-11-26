@@ -99,16 +99,14 @@ public final class CatalogActivity extends Activity {
                         intent.putExtra("serviceId",entry.id);
                         startActivity(intent);
                     });
-                    if(profile.needsAdvancedQuote()) {
-                        label(rows,"Advanced quotation controls are not connected yet. Saved settings are preserved.",15);
-                        continue;
-                    }
                     button(rows, "Use in quotation", () -> {
                         try {
                             CatalogEntry current = store.get(entry.id);
                             if (current.archived || current.revision != entry.revision) throw new IllegalStateException("Service changed; reload and select again");
-                            if(store.pricing(current.id).needsAdvancedQuote())throw new IllegalStateException("Advanced quotation controls are not connected yet");
+                            PricingProfile currentProfile=store.pricing(current.id);
+                            if(currentProfile.revision!=profile.revision)throw new IllegalStateException("Pricing settings changed; reload and select again");
                             Intent result = new Intent();
+                            result.putExtra("pricingRevision",currentProfile.revision);
                             result.putExtra("centavos", current.centavos);
                             result.putExtra("serviceName", current.name);
                             result.putExtra("serviceId", current.id);
