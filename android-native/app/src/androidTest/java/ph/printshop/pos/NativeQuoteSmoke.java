@@ -56,14 +56,16 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "durable stock recovery"; verifyStockRecovery();
             phase = "durable stock screen"; verifyStockRecoveryScreen();
             phase = "checkout read-only confirmation plan"; verifyCheckoutConfirmationPlan();
-            phase = "v5 checkout migration"; verifyCheckoutV5Migration();
+            phase = "v5 checkout migration"; verifyCheckoutMigration(5);
+            phase = "v6 cashier migration"; verifyCheckoutMigration(6);
             phase = "durable atomic checkout fixture"; verifyDurableCheckout();
+            phase = "cashier authorization and shift fixture"; verifyCashierAuthShift();
             phase = "material costing"; verifyMaterials();
             phase = "recipe and quote screen"; verifyRecipeScreen(screen);
             phase = "pricing store migration"; verifyPricingStore();
             phase = "pricing settings and document quote"; verifyPricingScreen(screen);
             phase = "measured quote"; verifyMeasuredQuote(screen);
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\n");
+            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\n");
             result = Activity.RESULT_OK;
         } catch (Throwable error) {
             evidence.putString("stream", failureDetails(phase, error));
@@ -291,7 +293,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 db.setVersion(4);
             }
             try(CatalogStore store=new CatalogStore(context,filename)){
-                require(store.getReadableDatabase().getVersion()==6,"v4-to-v6 migration version wrong");
+                require(store.getReadableDatabase().getVersion()==7,"v4-to-v7 migration version wrong");
                 require(store.stockBalance(material).quantity==1500&&store.stockHistory(material,0,5).size()==1,"v4 stock lost");
                 require(store.recipeBindings(service).get(0).quantityMilli==500&&store.pricing(service).tiers.get(0).rateCentavos==250,"v4 recipe/pricing lost");
                 require(store.pendingStock(material)==null,"unexpected migrated pending request");
@@ -408,9 +410,9 @@ public final class NativeQuoteSmoke extends Instrumentation {
             require(c.moveToFirst(),"checkout count unavailable");return c.getLong(0);
         }
     }
-    private void verifyCheckoutV5Migration(){
+    private void verifyCheckoutMigration(int former){
         android.content.Context context=getTargetContext();
-        String filename="checkout-v5-"+stockId()+".db",material=stockId(),pending=stockId();
+        String filename="checkout-v"+former+"-"+stockId()+".db",material=stockId(),pending=stockId(),historic=stockId();
         try{
             try(android.database.sqlite.SQLiteDatabase db=context.openOrCreateDatabase(filename,0,null)){
                 db.execSQL("CREATE TABLE catalog (id TEXT PRIMARY KEY NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('SERVICE','MATERIAL')), name TEXT NOT NULL, unit TEXT NOT NULL, centavos INTEGER NOT NULL CHECK(centavos BETWEEN 0 AND 99999999999), revision INTEGER NOT NULL CHECK(revision >= 1), archived INTEGER NOT NULL CHECK(archived IN (0,1)))");
@@ -429,17 +431,27 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 db.execSQL("INSERT INTO catalog_history VALUES(?,?,?,?,?,?,?,?)",new Object[]{material,1,"MATERIAL","Synthetic old paper","sheet",199,0,"CREATE"});
                 db.execSQL("INSERT INTO stock_movements VALUES(?,?,?,?,?,?,?,?,?,?)",new Object[]{stockId(),material,1,1,"sheet","Synthetic old receipt",1500,0,1500,1});
                 db.execSQL("INSERT INTO stock_requests VALUES(?,?,?,?,?,?,?,?,?)",new Object[]{pending,material,1,1,-500,"Synthetic pending",1,"PENDING",null});
-                db.setVersion(5);
+                if(former==6){
+                    CheckoutJournal.create(db);
+                    CatalogEntry service=CatalogEntry.create(CatalogEntry.Kind.SERVICE,"Synthetic historic service","page","2.50");
+                    db.execSQL("INSERT INTO catalog VALUES(?,?,?,?,?,?,?)",new Object[]{service.id,"SERVICE",service.name,service.unit,service.centavos,1,0});
+                    CheckoutPlan.Proposal plan=CheckoutPlan.prepare(historic,service,PricingProfile.defaults(),0,
+                        new CheckoutPlan.Inputs(1,1,1,null,null,null,CheckoutPlan.UsageBasis.NONE,250),java.util.Collections.emptyList());
+                    CheckoutJournal.stage(db,plan);CheckoutJournal.saleAndCash(db,CheckoutJournal.read(db,historic));CheckoutJournal.resolve(db,historic,"APPLIED",null);
+                }
+                db.setVersion(former);
             }
             try(CatalogStore store=new CatalogStore(context,filename)){
-                require(store.getReadableDatabase().getVersion()==6,"v5 migration failed");
+                require(store.getReadableDatabase().getVersion()==7,"v5/v6 migration failed");
                 require(store.stockBalance(material).quantity==1500&&store.stockHistory(material,0,10).size()==1,"v5 stock changed");
                 require(store.pendingStock(material)!=null&&store.pendingStock(material).id.equals(pending),"v5 pending stock lost");
                 require(store.get(material).centavos==199,"v5 catalog changed");
                 require(store.applyStagedStock(pending).quantity==1000,"v5 pending request not recoverable");
                 try(android.database.Cursor c=store.getReadableDatabase().rawQuery("SELECT COUNT(*) FROM checkout_requests",null)){
-                    require(c.moveToFirst()&&c.getInt(0)==0,"migration fabricated checkout");
+                    require(c.moveToFirst()&&c.getInt(0)==(former==6?1:0),"migration changed checkout history");
                 }
+                require(!CashierJournal.initialized(store.getReadableDatabase()),"migration created default accounts");
+                if(former==6)require(CheckoutJournal.read(store.getReadableDatabase(),historic).state.equals("APPLIED"),"v6 historic sale lost");
             }
         }finally{context.deleteDatabase(filename);}
     }
@@ -542,6 +554,97 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 require(reopened.pendingFixtureCheckouts(50).isEmpty(),"terminal requests remain pending");
             }
         }finally{context.deleteDatabase(filename);}
+    }
+
+    private void verifyCashierAuthShift(){
+        android.content.Context context=getTargetContext();
+        String fixture=stockId(),filename="checkout-fixture-"+fixture+".db",shiftId=stockId(),request=stockId(),pending=stockId();
+        char[] ownerPassword="Synthetic-Owner-Passphrase-01".toCharArray(),cashPassword="Synthetic-Cashier-Passphrase-02".toCharArray(),
+            wrong="Synthetic-Wrong-Passphrase-03".toCharArray();
+        String ownerId,cashierId,serviceId,firstHash;
+        try{
+            try(CatalogStore store=CatalogStore.checkoutFixture(context,fixture)){
+                require(!CashierJournal.initialized(store.getReadableDatabase()),"default credentials created");
+                CashierJournal.Principal owner=store.bootstrapFixtureOwner("Synthetic.Owner",ownerPassword);
+                ownerId=owner.id;
+                require(owner.role==CashierSecurity.Role.OWNER&&owner.username.equals("synthetic.owner"),"owner setup wrong");
+                rejectStock(()->store.bootstrapFixtureOwner("Second.Owner",ownerPassword));
+                rejectStock(()->store.signInFixture("synthetic.owner",wrong));
+                String ownerToken=store.signInFixture("SYNTHETIC.OWNER",ownerPassword);
+                require(store.fixturePrincipal(ownerToken).id.equals(ownerId),"owner sign in wrong");
+                CashierJournal.Principal cashier=store.createFixtureCashier(ownerToken,"synthetic.cashier",cashPassword);
+                cashierId=cashier.id;
+                store.createFixtureCashier(ownerToken,"synthetic.locked",cashPassword);
+                rejectStock(()->store.createFixtureCashier(ownerToken,"SYNTHETIC.CASHIER",cashPassword));
+                for(int i=0;i<CashierSecurity.FAILURE_LIMIT;i++)rejectStock(()->store.signInFixture("synthetic.locked",wrong));
+                rejectStock(()->store.signInFixture("synthetic.locked",cashPassword));
+                String token=store.signInFixture("synthetic.cashier",cashPassword);
+                require(store.fixturePrincipal(token).role==CashierSecurity.Role.CASHIER,"cashier role wrong");
+                rejectStock(()->store.createFixtureCashier(token,"denied.user",cashPassword));
+                rejectStock(()->store.disableFixtureCashier(token,ownerId));
+                try(android.database.Cursor c=store.getReadableDatabase().rawQuery("SELECT token_hash FROM cashier_sessions WHERE account_id=?",new String[]{cashierId})){
+                    require(c.moveToFirst()&&c.getString(0).equals(CashierSecurity.tokenHash(token))&&!c.getString(0).equals(token),"plaintext or wrong session storage");
+                }
+                CatalogEntry service=store.create(CatalogEntry.Kind.SERVICE,"Synthetic shift print","page","2.50");
+                serviceId=service.id;
+                CheckoutPlan.Inputs input=new CheckoutPlan.Inputs(2,1,1,null,null,null,CheckoutPlan.UsageBasis.NONE,600);
+                CheckoutPlan.Proposal first=store.prepareCheckout(request,serviceId,1,0,0,input);
+                firstHash=first.fingerprint();
+                rejectStock(()->store.stageAuthorizedFixtureCheckout(token,shiftId,first));
+                rejectStock(()->store.stageFixtureCheckout(first));
+                require(store.openFixtureShift(token,shiftId,1000).openingCash==1000,"opening cash");
+                require(store.openFixtureShift(token,shiftId,1000).id.equals(shiftId),"open replay");
+                rejectStock(()->store.openFixtureShift(token,shiftId,1001));
+                rejectStock(()->store.openFixtureShift(token,stockId(),1000));
+                rejectStock(()->store.disableFixtureCashier(ownerToken,cashierId));
+                require(store.stageAuthorizedFixtureCheckout(token,shiftId,first).state.equals("PENDING"),"authorized staging wrong");
+                require(store.pendingAuthorizedFixtureCheckouts(token,shiftId,10).size()==1,"pending listing");
+                rejectStock(()->store.closeFixtureShift(token,shiftId,1000));
+                rejectStock(()->store.applyAuthorizedFixtureCheckout(ownerToken,request,firstHash));
+                rejectStock(()->store.authorizedFixtureCheckout(ownerToken,request));
+                rejectStock(()->store.closeFixtureShift(ownerToken,shiftId,1000));
+                rejectStock(()->store.applyFixtureCheckout(request,firstHash));
+                rejectStock(()->store.applyAuthorizedFixtureCheckout("bad",request,firstHash));
+                require(store.expectedFixtureCash(token,shiftId)==1000,"pending checkout counted as cash");
+                require(store.applyAuthorizedFixtureCheckout(token,request,firstHash).state.equals("APPLIED"),"authorized apply failed");
+                require(store.applyAuthorizedFixtureCheckout(token,request,firstHash).total==500,"authorized replay wrong");
+                require(store.expectedFixtureCash(token,shiftId)==1500,"drawer used tender rather than net cash or duplicated checkout");
+                CheckoutPlan.Proposal second=store.prepareCheckout(pending,serviceId,1,0,0,input);
+                store.stageAuthorizedFixtureCheckout(token,shiftId,second);
+                rejectStock(()->store.closeFixtureShift(token,shiftId,1450));
+                store.cancelAuthorizedFixtureCheckout(token,pending,second.fingerprint(),"Synthetic cancellation");
+                CashierJournal.Shift closed=store.closeFixtureShift(token,shiftId,1450);
+                require("CLOSED".equals(closed.state)&&closed.expectedCash==1500&&closed.countedCash==1450&&closed.variance==-50,"shift close reconciliation wrong");
+                require(store.closeFixtureShift(token,shiftId,1450).variance==-50,"close replay wrong");
+                rejectStock(()->store.closeFixtureShift(token,shiftId,1451));
+                require(store.applyAuthorizedFixtureCheckout(token,request,firstHash).state.equals("APPLIED"),"historical replay after close denied");
+                CheckoutPlan.Proposal newPlan=store.prepareCheckout(stockId(),serviceId,1,0,0,input);
+                rejectStock(()->store.stageAuthorizedFixtureCheckout(token,shiftId,newPlan));
+                require(store.activeFixtureShift(token)==null,"closed shift remains open");
+                store.signOutFixture(token);
+                rejectStock(()->store.fixturePrincipal(token));
+                rejectStock(()->store.authorizedFixtureCheckout(token,request));
+                store.signOutFixture(ownerToken);
+            }
+            try(CatalogStore reopened=CatalogStore.checkoutFixture(context,fixture)){
+                try(android.database.Cursor c=reopened.getReadableDatabase().rawQuery("SELECT failures,locked_until FROM cashier_accounts WHERE username='synthetic.locked'",null)){
+                    require(c.moveToFirst()&&c.getInt(0)==CashierSecurity.FAILURE_LIMIT&&c.getLong(1)>0,"lockout not durably stored");
+                }
+                String newToken=reopened.signInFixture("synthetic.cashier",cashPassword);
+                require(reopened.authorizedFixtureCheckout(newToken,request).total==500&&reopened.expectedFixtureCash(newToken,shiftId)==1500,"reopened historical cash wrong");
+                String ownerToken=reopened.signInFixture("synthetic.owner",ownerPassword);
+                reopened.disableFixtureCashier(ownerToken,cashierId);
+                rejectStock(()->reopened.fixturePrincipal(newToken));
+                rejectStock(()->reopened.signInFixture("synthetic.cashier",cashPassword));
+                try(CatalogStore ordinary=new CatalogStore(context,filename)){
+                    rejectStock(()->ordinary.bootstrapFixtureOwner("denied.owner",ownerPassword));
+                    rejectStock(()->ordinary.signInFixture("synthetic.owner",ownerPassword));
+                }
+            }
+        }finally{
+            java.util.Arrays.fill(ownerPassword,'\0');java.util.Arrays.fill(cashPassword,'\0');java.util.Arrays.fill(wrong,'\0');
+            context.deleteDatabase(filename);
+        }
     }
 
     private static void rejectStock(Runnable action) {
@@ -716,7 +819,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             }
             java.util.List<PricingMath.Tier> tiers=java.util.Arrays.asList(new PricingMath.Tier(2000,200),new PricingMath.Tier(1000,250));
             try(CatalogStore store=new CatalogStore(context,filename)){
-                require(store.getReadableDatabase().getVersion()==6,"v3-to-v6 migration version wrong");
+                require(store.getReadableDatabase().getVersion()==7,"v3-to-v7 migration version wrong");
                 require(store.pricing(service).revision==0&&!store.pricing(service).needsAdvancedQuote(),"legacy default changed");
                 require(store.recipeRevision(service)==1&&store.stockBalance(material).quantity==1500,"migration changed recipe or stock");
                 PricingProfile saved=store.savePricing(service,1,0,PricingMath.Method.PER_PAGE,true,tiers);
