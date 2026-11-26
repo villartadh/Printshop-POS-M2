@@ -26,6 +26,22 @@ public final class CatalogStore extends SQLiteOpenHelper {
     private void requireCheckoutFixture(){
         if(!fixtureCheckoutWrites)throw new IllegalStateException("Checkout recording disabled until native authentication and shift acceptance");
     }
+    /** Called inside the write transaction, so session revocation/initialization cannot race a write. */
+    private void authorizeCatalogWrite(SQLiteDatabase db,String token){
+        if(token!=null){requireFixtureOwner(db,token);return;}
+        if(CashierJournal.initialized(db))
+            throw new IllegalStateException("Use owner-authorized training administration");
+    }
+    private void requireFixtureOwner(SQLiteDatabase db,String token){
+        requireCheckoutFixture();
+        if(token==null)throw new IllegalStateException("Sign in required");
+        CashierSecurity.requireOwner(CashierJournal.requireSession(db,token,System.currentTimeMillis()).role);
+    }
+    private String ownerToken(String token){
+        requireCheckoutFixture();
+        if(token==null)throw new IllegalStateException("Sign in required");
+        return token;
+    }
     @Override public void onConfigure(SQLiteDatabase db) {
         super.onConfigure(db);
         db.setForeignKeyConstraintsEnabled(true);
@@ -93,11 +109,20 @@ public final class CatalogStore extends SQLiteOpenHelper {
     }
     public PricingProfile savePricing(String serviceId,long serviceRevision,long expectedPricingRevision,
                                       PricingMath.Method method,boolean pagesAndCopies,List<PricingMath.Tier> tiers) {
+        return savePricing(null,serviceId,serviceRevision,expectedPricingRevision,method,pagesAndCopies,tiers);
+    }
+    PricingProfile saveAuthorizedFixturePricing(String token,String serviceId,long serviceRevision,long expectedPricingRevision,
+                                      PricingMath.Method method,boolean pagesAndCopies,List<PricingMath.Tier> tiers) {
+        return savePricing(ownerToken(token),serviceId,serviceRevision,expectedPricingRevision,method,pagesAndCopies,tiers);
+    }
+    private PricingProfile savePricing(String token,String serviceId,long serviceRevision,long expectedPricingRevision,
+                                      PricingMath.Method method,boolean pagesAndCopies,List<PricingMath.Tier> tiers) {
         PricingProfile next=new PricingProfile(Math.addExact(expectedPricingRevision,1),method,pagesAndCopies,tiers);
         if(expectedPricingRevision<0)throw new IllegalArgumentException("Invalid expected pricing revision");
         SQLiteDatabase db=getWritableDatabase();
         db.beginTransaction();
         try {
+            authorizeCatalogWrite(db,token);
             CatalogEntry service=read(db,serviceId);
             if(service.kind!=CatalogEntry.Kind.SERVICE||service.archived)throw new IllegalStateException("Select an active service");
             PricingProfile prior=readPricing(db,serviceId);
@@ -120,10 +145,17 @@ public final class CatalogStore extends SQLiteOpenHelper {
         } finally {db.endTransaction();}
     }
     public CatalogEntry create(CatalogEntry.Kind kind, String name, String unit, String price) {
+        return create(null,kind,name,unit,price);
+    }
+    CatalogEntry createAuthorizedFixtureCatalog(String token,CatalogEntry.Kind kind, String name, String unit, String price) {
+        return create(ownerToken(token),kind,name,unit,price);
+    }
+    private CatalogEntry create(String token,CatalogEntry.Kind kind, String name, String unit, String price) {
         CatalogEntry entry = CatalogEntry.create(kind, name, unit, price);
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
         try {
+            authorizeCatalogWrite(db,token);
             db.insertOrThrow("catalog", null, values(entry));
             history(db, entry, "CREATE");
             db.setTransactionSuccessful();
@@ -131,16 +163,23 @@ public final class CatalogStore extends SQLiteOpenHelper {
         } finally { db.endTransaction(); }
     }
     public CatalogEntry edit(String id, long expectedRevision, String name, String unit, String price) {
-        return mutate(id, expectedRevision, current -> current.edit(name, unit, price), "EDIT");
+        return mutate(null,id, expectedRevision, current -> current.edit(name, unit, price), "EDIT");
+    }
+    CatalogEntry editAuthorizedFixtureCatalog(String token,String id,long expectedRevision,String name,String unit,String price){
+        return mutate(ownerToken(token),id,expectedRevision,current->current.edit(name,unit,price),"EDIT");
     }
     public CatalogEntry archive(String id, long expectedRevision, boolean archived) {
-        return mutate(id, expectedRevision, current -> current.archive(archived), archived ? "ARCHIVE" : "RESTORE");
+        return mutate(null,id, expectedRevision, current -> current.archive(archived), archived ? "ARCHIVE" : "RESTORE");
+    }
+    CatalogEntry archiveAuthorizedFixtureCatalog(String token,String id,long expectedRevision,boolean archived){
+        return mutate(ownerToken(token),id,expectedRevision,current->current.archive(archived),archived?"ARCHIVE":"RESTORE");
     }
     private interface Change { CatalogEntry apply(CatalogEntry current); }
-    private CatalogEntry mutate(String id, long expectedRevision, Change change, String action) {
+    private CatalogEntry mutate(String token,String id, long expectedRevision, Change change, String action) {
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
         try {
+            authorizeCatalogWrite(db,token);
             CatalogEntry current = read(db, id);
             if (current.revision != expectedRevision) throw new IllegalStateException("Catalog entry changed; reload before editing");
             CatalogEntry next = change.apply(current);
@@ -177,10 +216,17 @@ public final class CatalogStore extends SQLiteOpenHelper {
         return recipeRevision(db,serviceId);
     }
     public long setMaterialUsage(String serviceId,long serviceRevision,String materialId,long materialRevision,long expectedRecipeRevision,long quantityMilli) {
+        return setMaterialUsage(null,serviceId,serviceRevision,materialId,materialRevision,expectedRecipeRevision,quantityMilli);
+    }
+    long setAuthorizedFixtureMaterialUsage(String token,String serviceId,long serviceRevision,String materialId,long materialRevision,long expectedRecipeRevision,long quantityMilli) {
+        return setMaterialUsage(ownerToken(token),serviceId,serviceRevision,materialId,materialRevision,expectedRecipeRevision,quantityMilli);
+    }
+    private long setMaterialUsage(String token,String serviceId,long serviceRevision,String materialId,long materialRevision,long expectedRecipeRevision,long quantityMilli) {
         if(quantityMilli<0||quantityMilli>StockMath.MAX)throw new IllegalArgumentException("Invalid recipe quantity");
         SQLiteDatabase db=getWritableDatabase();
         db.beginTransaction();
         try {
+            authorizeCatalogWrite(db,token);
             CatalogEntry service=read(db,serviceId), material=read(db,materialId);
             if(service.kind!=CatalogEntry.Kind.SERVICE||material.kind!=CatalogEntry.Kind.MATERIAL||service.archived||material.archived)
                 throw new IllegalStateException("Only active services and materials may be linked");
@@ -534,6 +580,25 @@ public final class CatalogStore extends SQLiteOpenHelper {
                 throw new IllegalStateException("Movement identity already used for different request");
         }
     }
+    static final class InventoryItem {
+        final CatalogEntry material;
+        final StockMath.Balance balance;
+        final StockRequest pending;
+        InventoryItem(CatalogEntry m,StockMath.Balance b,StockRequest p){material=m;balance=b;pending=p;}
+    }
+    List<InventoryItem> authorizedFixtureInventory(String token){
+        return fixtureTransaction(db->{
+            requireFixtureOwner(db,token);
+            List<InventoryItem> result=new ArrayList<>();
+            try(Cursor c=db.query("catalog",null,"kind='MATERIAL' AND archived=0",null,null,null,"name COLLATE NOCASE,id")){
+                while(c.moveToNext()){
+                    CatalogEntry item=entry(c);
+                    result.add(new InventoryItem(item,stockBalance(db,item.id),pendingStock(db,item.id)));
+                }
+            }
+            return result;
+        });
+    }
     private static StockRequest readRequest(SQLiteDatabase db,String where,String value) {
         try(Cursor c=db.query("stock_requests",new String[]{"request_id","material_id","catalog_revision","expected_stock_revision","delta","reason","state"},where,new String[]{value},null,null,null,"1")) {
             return c.moveToFirst()?new StockRequest(c):null;
@@ -573,10 +638,17 @@ public final class CatalogStore extends SQLiteOpenHelper {
     }
     /** Commit the identity and exact payload before attempting any stock adjustment. */
     public StockRequest stageStock(String requestId,String id,long catalogRevision,long expectedStockRevision,long delta,String note) {
+        return stageStock(null,requestId,id,catalogRevision,expectedStockRevision,delta,note);
+    }
+    StockRequest stageAuthorizedFixtureStock(String token,String requestId,String id,long catalogRevision,long expectedStockRevision,long delta,String note) {
+        return stageStock(ownerToken(token),requestId,id,catalogRevision,expectedStockRevision,delta,note);
+    }
+    private StockRequest stageStock(String token,String requestId,String id,long catalogRevision,long expectedStockRevision,long delta,String note) {
         validateMovement(requestId,catalogRevision,expectedStockRevision);
         String reason=StockMath.reason(note);
         SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
         try {
+            authorizeCatalogWrite(db,token);
             StockRequest prior=readRequest(db,"request_id=?",requestId);
             if(prior!=null){
                 prior.verify(id,catalogRevision,expectedStockRevision,delta,reason);
@@ -614,9 +686,16 @@ public final class CatalogStore extends SQLiteOpenHelper {
     }
     /** Ledger insert and APPLIED state commit together, or neither commits. Repeat returns original result. */
     public StockMath.Balance applyStagedStock(String requestId) {
+        return applyStagedStock(null,requestId);
+    }
+    StockMath.Balance applyAuthorizedFixtureStock(String token,String requestId) {
+        return applyStagedStock(ownerToken(token),requestId);
+    }
+    private StockMath.Balance applyStagedStock(String token,String requestId) {
         StockMath.validateRequestId(requestId);
         SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
         try {
+            authorizeCatalogWrite(db,token);
             StockRequest r=readRequest(db,"request_id=?",requestId);
             if(r==null||"CANCELLED".equals(r.state))throw new IllegalStateException("No applicable staged movement");
             StockMath.Balance prior=previousMovement(db,r.id,r.materialId,r.catalogRevision,r.stockRevision,r.delta,r.reason);
@@ -632,9 +711,16 @@ public final class CatalogStore extends SQLiteOpenHelper {
     }
     /** Explicit cancellation is allowed only if the movement has not been recorded. Keep the audit record. */
     public void cancelStagedStock(String requestId) {
+        cancelStagedStock(null,requestId);
+    }
+    void cancelAuthorizedFixtureStock(String token,String requestId) {
+        cancelStagedStock(ownerToken(token),requestId);
+    }
+    private void cancelStagedStock(String token,String requestId) {
         StockMath.validateRequestId(requestId);
         SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
         try {
+            authorizeCatalogWrite(db,token);
             StockRequest r=readRequest(db,"request_id=?",requestId);
             if(r==null||"APPLIED".equals(r.state))throw new IllegalStateException("Applied or unknown movement cannot be cancelled");
             if(previousMovement(db,r.id,r.materialId,r.catalogRevision,r.stockRevision,r.delta,r.reason)!=null)
@@ -649,6 +735,7 @@ public final class CatalogStore extends SQLiteOpenHelper {
         String reason=StockMath.reason(note);
         SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
         try {
+            authorizeCatalogWrite(db,null);
             if(readRequest(db,"request_id=?",requestId)!=null)throw new IllegalStateException("Use staged movement recovery for this identity");
             StockMath.Balance prior=previousMovement(db,requestId,id,catalogRevision,expectedStockRevision,delta,reason);
             if(prior!=null){db.setTransactionSuccessful();return prior;}

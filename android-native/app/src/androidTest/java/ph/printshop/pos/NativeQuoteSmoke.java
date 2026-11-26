@@ -62,13 +62,14 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "durable atomic checkout fixture"; verifyDurableCheckout();
             phase = "cashier authorization and shift fixture"; verifyCashierAuthShift();
             phase = "audited credential lifecycle"; verifyCredentialLifecycle();
+            phase = "owner-only fixture administration"; verifyOwnerAdministration();
             phase = "material costing"; verifyMaterials();
             phase = "recipe and quote screen"; verifyRecipeScreen(screen);
             phase = "pricing store migration"; verifyPricingStore();
             phase = "pricing settings and document quote"; verifyPricingScreen(screen);
             phase = "measured quote"; verifyMeasuredQuote(screen);
             phase = "native cashier training UI"; verifyCashierTrainingScreen(screen);
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\n");
+            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\n");
             result = Activity.RESULT_OK;
         } catch (Throwable error) {
             evidence.putString("stream", failureDetails(phase, error));
@@ -145,6 +146,37 @@ public final class NativeQuoteSmoke extends Instrumentation {
             awaitText(first,"Training sign in","owner not created");
             trainingLogin(first,owner,ownerPass);
             awaitText(first,"No open shift","owner login failed");
+            trainingClick(first,R.id.cashier_inventory);
+            awaitText(first,"Training inventory","owner inventory missing");
+            awaitText(first,"Training paper · 50 sheet","initial training stock wrong");
+            trainingSelect(first,"Adjust Training paper");
+            trainingField(first,R.id.cashier_inventory_quantity,"1.25");
+            trainingField(first,R.id.cashier_inventory_reason,"Synthetic UI adjustment");
+            trainingClick(first,R.id.cashier_inventory_add);
+            awaitText(first,"Pending training stock adjustment","owner stock was not staged");
+            awaitText(first,"Training paper · Add 1.25 sheet","wrong pending adjustment");
+            trainingClick(first,R.id.cashier_inventory_back);
+            awaitText(first,"Training paper · 50 sheet","staging changed stock");
+            trainingSelect(first,"Recover Training paper adjustment");
+            awaitText(first,"Pending training stock adjustment","pending inventory not recoverable");
+            trainingClick(first,R.id.cashier_inventory_cancel);
+            awaitText(first,"Training paper · 50 sheet","cancel changed stock");
+            trainingSelect(first,"Adjust Training paper");
+            trainingField(first,R.id.cashier_inventory_quantity,"1");
+            trainingField(first,R.id.cashier_inventory_reason,"Synthetic UI addition");
+            trainingClick(first,R.id.cashier_inventory_add);
+            awaitText(first,"Pending training stock adjustment","addition not staged");
+            trainingClick(first,R.id.cashier_inventory_apply);
+            awaitText(first,"Training paper · 51 sheet","owner stock addition wrong");
+            trainingSelect(first,"Adjust Training paper");
+            trainingField(first,R.id.cashier_inventory_quantity,"1");
+            trainingField(first,R.id.cashier_inventory_reason,"Synthetic UI removal");
+            trainingClick(first,R.id.cashier_inventory_remove);
+            awaitText(first,"Pending training stock adjustment","removal not staged");
+            trainingClick(first,R.id.cashier_inventory_apply);
+            awaitText(first,"Training paper · 50 sheet","owner stock removal wrong");
+            trainingClick(first,R.id.cashier_back);
+            awaitText(first,"No open shift","inventory return failed");
             trainingClick(first,R.id.cashier_add_staff);
             awaitText(first,"Owner-only creation. No real shop credentials.","owner-only screen missing");
             trainingField(first,R.id.cashier_username,cashier);
@@ -155,7 +187,10 @@ public final class NativeQuoteSmoke extends Instrumentation {
             awaitText(first,"Training sign in","owner not locked");
             trainingLogin(first,cashier,cashierPass);
             awaitText(first,"No open shift","cashier login failed");
-            runOnMainChecked(()->require(setup.findViewById(R.id.cashier_add_staff)==null,"cashier visible owner-only action"));
+            runOnMainChecked(()->{
+                require(setup.findViewById(R.id.cashier_add_staff)==null,"cashier visible owner-only action");
+                require(setup.findViewById(R.id.cashier_inventory)==null,"cashier visible owner-only inventory");
+            });
             trainingField(first,R.id.cashier_opening,"10.00");
             trainingClick(first,R.id.cashier_open_shift);
             awaitText(first,"Shift open · Expected cash: PHP 10.00","training shift not opened");
@@ -262,7 +297,11 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 require(trainingCount(fixture,"SELECT COUNT(*) FROM checkout_requests WHERE state='APPLIED'")==1,"wrong applied request count");
                 require(trainingCount(fixture,"SELECT COUNT(*) FROM checkout_requests WHERE state='CANCELLED'")==1,"wrong cancelled request count");
                 require(trainingCount(fixture,"SELECT COUNT(*) FROM cashier_shifts WHERE state='CLOSED' AND expected_cash=1500 AND counted_cash=1450 AND variance=-50")==1,"shift audit mismatch");
-                require(trainingCount(fixture,"SELECT COUNT(*) FROM stock_movements")==2,"training stock movement count wrong");
+                require(trainingCount(fixture,"SELECT COUNT(*) FROM stock_movements")==4,"training stock movement count wrong (initial, addition, removal, checkout)");
+                require(trainingCount(fixture,"SELECT COUNT(*) FROM stock_requests WHERE state='APPLIED'")==2,"UI owner stock requests not applied exactly once");
+                require(trainingCount(fixture,"SELECT COUNT(*) FROM stock_requests WHERE state='CANCELLED'")==1,"UI owner cancellation missing");
+                require(trainingCount(fixture,"SELECT COUNT(*) FROM stock_movements WHERE reason='Synthetic UI addition' AND delta=1000 AND before_quantity=50000 AND after_quantity=51000")==1,"owner UI addition audit mismatch");
+                require(trainingCount(fixture,"SELECT COUNT(*) FROM stock_movements WHERE reason='Synthetic UI removal' AND delta=-1000 AND before_quantity=51000 AND after_quantity=50000")==1,"owner UI removal audit mismatch");
                 require(trainingCount(fixture,"SELECT after_quantity FROM stock_movements ORDER BY stock_revision DESC LIMIT 1")==48000,"training stock not deducted exactly");
                 require(trainingCount(fixture,"SELECT COUNT(*) FROM cashier_sessions WHERE revoked_ms IS NULL")==0,"session still active after logout");
                 require(trainingCount(fixture,"SELECT COUNT(*) FROM cashier_credential_events")==2,"UI credential audit count wrong");
@@ -614,7 +653,8 @@ public final class NativeQuoteSmoke extends Instrumentation {
     }
     private void verifyCheckoutMigration(int former){
         android.content.Context context=getTargetContext();
-        String filename="checkout-v"+former+"-"+stockId()+".db",material=stockId(),pending=stockId(),historic=stockId(),pendingCheckout=stockId();
+        String fixture=stockId(),filename=former==7?"checkout-fixture-"+fixture+".db":"checkout-v"+former+"-"+fixture+".db";
+        String material=stockId(),pending=stockId(),historic=stockId(),pendingCheckout=stockId();
         String migratedToken=null,migratedShift=stockId();
         try{
             try(android.database.sqlite.SQLiteDatabase db=context.openOrCreateDatabase(filename,0,null)){
@@ -662,12 +702,15 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 }
                 db.setVersion(former);
             }
-            try(CatalogStore store=new CatalogStore(context,filename)){
+            try(CatalogStore store=former==7?CatalogStore.checkoutFixture(context,fixture):new CatalogStore(context,filename)){
                 require(store.getReadableDatabase().getVersion()==8,"v5/v6/v7 migration failed");
                 require(store.stockBalance(material).quantity==1500&&store.stockHistory(material,0,10).size()==1,"v5 stock changed");
                 require(store.pendingStock(material)!=null&&store.pendingStock(material).id.equals(pending),"v5 pending stock lost");
                 require(store.get(material).centavos==199,"v5 catalog changed");
-                require(store.applyStagedStock(pending).quantity==1000,"v5 pending request not recoverable");
+                if(former==7){
+                    rejectStock(()->store.applyStagedStock(pending));
+                    require(store.applyAuthorizedFixtureStock(migratedToken,pending).quantity==1000,"authenticated v7 pending stock not recoverable");
+                }else require(store.applyStagedStock(pending).quantity==1000,"v5 pending request not recoverable");
                 try(android.database.Cursor c=store.getReadableDatabase().rawQuery("SELECT COUNT(*) FROM checkout_requests",null)){
                     require(c.moveToFirst()&&c.getInt(0)==(former==7?2:former==6?1:0),"migration changed checkout history");
                 }
@@ -682,6 +725,108 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 }
             }
         }finally{context.deleteDatabase(filename);}
+    }
+
+    private void verifyOwnerAdministration(){
+        android.content.Context context=getTargetContext();
+        String fixture=stockId(),filename="checkout-fixture-"+fixture+".db";
+        char[] owner="Synthetic-Admin-Owner-01".toCharArray(),staff="Synthetic-Admin-Cashier-02".toCharArray();
+        try{
+            try(CatalogStore ordinary=new CatalogStore(context)){
+                rejectStock(()->ordinary.createAuthorizedFixtureCatalog("invalid",CatalogEntry.Kind.MATERIAL,"Denied ordinary","sheet","1.00"));
+                rejectStock(()->ordinary.authorizedFixtureInventory("invalid"));
+                rejectStock(()->ordinary.applyAuthorizedFixtureStock("invalid",stockId()));
+            }
+            try(CatalogStore store=CatalogStore.checkoutFixture(context,fixture)){
+                rejectStock(()->store.createAuthorizedFixtureCatalog(null,CatalogEntry.Kind.SERVICE,"Denied unauthenticated","page","2.50"));
+                CatalogEntry service=store.create(CatalogEntry.Kind.SERVICE,"Synthetic pre-auth fixture","page","2.50");
+                store.bootstrapFixtureOwner("admin-owner",owner);
+                String token=store.signInFixture("admin-owner",owner);
+                store.createFixtureCashier(token,"admin-cashier",staff);
+                String cashier=store.signInFixture("admin-cashier",staff);
+                CatalogEntry material=store.createAuthorizedFixtureCatalog(token,CatalogEntry.Kind.MATERIAL,"Synthetic admin paper","sheet","1.00");
+                String materialId=material.id,serviceId=service.id,request=stockId();
+                java.util.List<PricingMath.Tier> tiers=java.util.Collections.emptyList();
+                // All ordinary bypasses, null/invalid tokens and authenticated non-owner writes must fail.
+                rejectStock(()->store.create(CatalogEntry.Kind.MATERIAL,"Denied","sheet","1.00"));
+                rejectStock(()->store.edit(materialId,1,"Denied","sheet","2.00"));
+                rejectStock(()->store.archive(materialId,1,true));
+                rejectStock(()->store.savePricing(serviceId,1,0,PricingMath.Method.PER_PAGE,true,tiers));
+                rejectStock(()->store.setMaterialUsage(serviceId,1,materialId,1,0,1000));
+                rejectStock(()->store.stageStock(request,materialId,1,0,5000,"Denied"));
+                rejectStock(()->store.moveStock(request,materialId,1,0,5000,"Denied"));
+                rejectStock(()->store.createAuthorizedFixtureCatalog(cashier,CatalogEntry.Kind.MATERIAL,"Denied","sheet","1.00"));
+                rejectStock(()->store.createAuthorizedFixtureCatalog(null,CatalogEntry.Kind.MATERIAL,"Denied","sheet","1.00"));
+                rejectStock(()->store.createAuthorizedFixtureCatalog("invalid",CatalogEntry.Kind.MATERIAL,"Denied","sheet","1.00"));
+                rejectStock(()->store.editAuthorizedFixtureCatalog(cashier,materialId,1,"Denied","sheet","2.00"));
+                rejectStock(()->store.archiveAuthorizedFixtureCatalog(cashier,materialId,1,true));
+                rejectStock(()->store.saveAuthorizedFixturePricing(cashier,serviceId,1,0,PricingMath.Method.PER_PAGE,true,tiers));
+                rejectStock(()->store.setAuthorizedFixtureMaterialUsage(cashier,serviceId,1,materialId,1,0,1000));
+                rejectStock(()->store.stageAuthorizedFixtureStock(cashier,request,materialId,1,0,5000,"Denied"));
+                rejectStock(()->store.authorizedFixtureInventory(cashier));
+                rejectStock(()->store.authorizedFixtureInventory(null));
+                require(store.list(true).size()==2&&store.get(materialId).revision==1&&store.recipeRevision(serviceId)==0&&store.pricing(serviceId).revision==0,"denied admin mutation changed catalog");
+                require(store.stockBalance(materialId).quantity==0&&store.stockRequest(request)==null,"denied admin mutation changed stock");
+                try(CatalogStore alias=new CatalogStore(context,filename)){
+                    rejectStock(()->alias.create(CatalogEntry.Kind.MATERIAL,"Denied alias","sheet","1.00"));
+                    rejectStock(()->alias.moveStock(request,materialId,1,0,5000,"Denied alias"));
+                    rejectStock(()->alias.createAuthorizedFixtureCatalog(token,CatalogEntry.Kind.MATERIAL,"Denied alias","sheet","1.00"));
+                }
+                CatalogEntry edited=store.editAuthorizedFixtureCatalog(token,serviceId,1,"Synthetic authorized service","page","2.50");
+                require(edited.revision==2,"owner edit not recorded");
+                CatalogEntry spare=store.createAuthorizedFixtureCatalog(token,CatalogEntry.Kind.MATERIAL,"Synthetic spare","sheet","1.00");
+                require(store.archiveAuthorizedFixtureCatalog(token,spare.id,1,true).archived,"owner archive refused");
+                require(!store.archiveAuthorizedFixtureCatalog(token,spare.id,2,false).archived,"owner restore refused");
+                require(store.saveAuthorizedFixturePricing(token,serviceId,2,0,PricingMath.Method.PER_PAGE,true,tiers).revision==1,"owner pricing refused");
+                require(store.saveAuthorizedFixturePricing(token,serviceId,2,1,PricingMath.Method.PER_UNIT,false,tiers).revision==2,"owner pricing restore refused");
+                require(store.setAuthorizedFixtureMaterialUsage(token,serviceId,2,materialId,1,0,1000)==1,"owner recipe refused");
+                require(store.stageAuthorizedFixtureStock(token,request,materialId,1,0,5000,"Synthetic owner addition").state.equals("PENDING"),"owner stage refused");
+                require(store.stockBalance(materialId).quantity==0,"stage changed stock");
+                rejectStock(()->store.applyStagedStock(request));rejectStock(()->store.cancelStagedStock(request));
+                rejectStock(()->store.applyAuthorizedFixtureStock(cashier,request));
+                rejectStock(()->store.cancelAuthorizedFixtureStock(cashier,request));
+                rejectStock(()->store.applyAuthorizedFixtureStock(null,request));
+                require(store.authorizedFixtureInventory(token).stream().anyMatch(i->i.material.id.equals(materialId)&&i.pending!=null&&i.pending.id.equals(request)),"pending owner inventory not recoverable");
+                require(store.applyAuthorizedFixtureStock(token,request).quantity==5000,"owner apply refused");
+                require(store.applyAuthorizedFixtureStock(token,request).revision==1,"owner replay duplicated movement");
+                rejectStock(()->store.applyAuthorizedFixtureStock(cashier,request));
+                rejectStock(()->store.cancelAuthorizedFixtureStock(token,request));
+                String cancelled=stockId();
+                store.stageAuthorizedFixtureStock(token,cancelled,materialId,1,1,-1000,"Synthetic pending removal");
+                store.cancelAuthorizedFixtureStock(token,cancelled);
+                require(store.stockRequest(cancelled).state.equals("CANCELLED")&&store.stockBalance(materialId).quantity==5000,"owner cancellation mutated stock");
+                rejectStock(()->store.applyAuthorizedFixtureStock(token,cancelled));
+                String shift=stockId(),sale=stockId();
+                store.openFixtureShift(cashier,shift,0);
+                CheckoutPlan.Proposal plan=store.prepareCheckout(sale,serviceId,2,2,1,
+                    new CheckoutPlan.Inputs(1,1,1,null,null,null,CheckoutPlan.UsageBasis.BILLABLE_UNIT,300));
+                store.stageAuthorizedFixtureCheckout(cashier,shift,plan);
+                String added=stockId();
+                store.stageAuthorizedFixtureStock(token,added,materialId,1,1,1000,"Synthetic changed stock");
+                store.applyAuthorizedFixtureStock(token,added);
+                rejectStock(()->store.applyAuthorizedFixtureCheckout(cashier,sale,plan.fingerprint()));
+                require(store.authorizedFixtureCheckout(cashier,sale).state.equals("PENDING")&&store.expectedFixtureCash(cashier,shift)==0,"stale checkout altered cash or request");
+                require(trainingCount(store,"SELECT COUNT(*) FROM checkout_sales")==0,"stale checkout recorded");
+                store.cancelAuthorizedFixtureCheckout(cashier,sale,plan.fingerprint(),"Synthetic stale checkout");
+                require(store.stockBalance(materialId).quantity==6000&&store.stockBalance(materialId).revision==2,"rejected checkout changed stock");
+                String recovery=stockId();
+                store.stageAuthorizedFixtureStock(token,recovery,materialId,1,2,-1000,"Synthetic recovery");
+                store.signOutFixture(token);
+                rejectStock(()->store.applyAuthorizedFixtureStock(token,recovery));
+                rejectStock(()->store.cancelAuthorizedFixtureStock(token,recovery));
+                rejectStock(()->store.authorizedFixtureInventory(token));
+                // A new authenticated owner, after database reopen, can resolve original identity.
+                try(CatalogStore reopened=CatalogStore.checkoutFixture(context,fixture)){
+                    String again=reopened.signInFixture("admin-owner",owner);
+                    require(reopened.authorizedFixtureInventory(again).stream().anyMatch(i->i.pending!=null&&i.pending.id.equals(recovery)),"owner pending after reopen missing");
+                    require(reopened.applyAuthorizedFixtureStock(again,recovery).quantity==5000,"original owner stock recovery failed");
+                    require(reopened.applyAuthorizedFixtureStock(again,recovery).revision==3,"recovery replay duplicated movement");
+                    require(trainingCount(reopened,"SELECT COUNT(*) FROM stock_movements")==3,"owner stock history wrong");
+                }
+            }
+        }finally{
+            java.util.Arrays.fill(owner,'\0');java.util.Arrays.fill(staff,'\0');context.deleteDatabase(filename);
+        }
     }
 
     private void verifyCredentialLifecycle(){
@@ -701,7 +846,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 String ownerToken=store.signInFixture("fixture-owner",owner),ownerParallel=store.signInFixture("fixture-owner",owner);
                 cashierId=store.createFixtureCashier(ownerToken,"fixture-cashier",staff).id;
                 String cashier=store.signInFixture("fixture-cashier",staff),parallel=store.signInFixture("fixture-cashier",staff);
-                CatalogEntry service=store.create(CatalogEntry.Kind.SERVICE,"Synthetic credential test","page","2.50");
+                CatalogEntry service=store.createAuthorizedFixtureCatalog(ownerToken,CatalogEntry.Kind.SERVICE,"Synthetic credential test","page","2.50");
                 store.openFixtureShift(cashier,shift,1000);
                 CheckoutPlan.Proposal proposal=store.prepareCheckout(request,service.id,1,0,0,
                     new CheckoutPlan.Inputs(2,1,1,null,null,null,CheckoutPlan.UsageBasis.NONE,600));
@@ -884,7 +1029,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 try(android.database.Cursor c=store.getReadableDatabase().rawQuery("SELECT token_hash FROM cashier_sessions WHERE account_id=?",new String[]{cashierId})){
                     require(c.moveToFirst()&&c.getString(0).equals(CashierSecurity.tokenHash(token))&&!c.getString(0).equals(token),"plaintext or wrong session storage");
                 }
-                CatalogEntry service=store.create(CatalogEntry.Kind.SERVICE,"Synthetic shift print","page","2.50");
+                CatalogEntry service=store.createAuthorizedFixtureCatalog(ownerToken,CatalogEntry.Kind.SERVICE,"Synthetic shift print","page","2.50");
                 serviceId=service.id;
                 CheckoutPlan.Inputs input=new CheckoutPlan.Inputs(2,1,1,null,null,null,CheckoutPlan.UsageBasis.NONE,600);
                 CheckoutPlan.Proposal first=store.prepareCheckout(request,serviceId,1,0,0,input);

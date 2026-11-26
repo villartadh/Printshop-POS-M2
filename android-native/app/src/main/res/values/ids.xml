@@ -62,4 +62,12 @@
     <item name="cashier_new_pass" type="id"/>
     <item name="cashier_confirm_pass" type="id"/>
     <item name="cashier_rotate_pass" type="id"/>
+    <item name="cashier_inventory" type="id"/>
+    <item name="cashier_inventory_quantity" type="id"/>
+    <item name="cashier_inventory_reason" type="id"/>
+    <item name="cashier_inventory_add" type="id"/>
+    <item name="cashier_inventory_remove" type="id"/>
+    <item name="cashier_inventory_back" type="id"/>
+    <item name="cashier_inventory_apply" type="id"/>
+    <item name="cashier_inventory_cancel" type="id"/>
 </resources>

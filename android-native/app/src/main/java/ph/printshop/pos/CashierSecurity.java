@@ -17,6 +17,9 @@ public final class CashierSecurity {
     public static final long LOCK_MS=60_000L;
     private static final SecureRandom RANDOM=new SecureRandom();
     private CashierSecurity() {}
+    static void requireOwner(Role role){
+        if(role!=Role.OWNER)throw new IllegalStateException("Owner authorization required");
+    }
     public static String username(String value){
         if(value==null||!value.matches("[A-Za-z0-9._-]{3,32}"))throw new IllegalArgumentException("Use 3–32 letters, digits, dots, underscores or hyphens");
         return value.toLowerCase(Locale.ROOT);

@@ -101,6 +101,10 @@ Read AGENTS.md on develop and the latest DEVELOPMENT_QUEUE.md. Owner-approved de
 5. Actual Android gate: JDK17, Gradle8.9, SDK35/build-tools34.0.0, API34 disposable emulator, `gradle -p android-native --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug`, installed instrumentation as in workflow. No unexecuted acceptance or production claims.
 
 
+## Latest native continuation addendum — owner administration
+
+On existing [PR #13](https://github.com/villartadh/Printshop-POS-M2/pull/13), schema v8 remains unchanged. Initialized databases now reject legacy catalog/pricing/recipe/stock mutations even through an ordinary handle to the same database. The new owner-only fixture APIs validate current session role *inside* the write transaction; stock must use durable stage/apply/cancel. Native training dashboard exposes owner inventory, exact fractional addition/removal and reason, pending resolution/recovery; cashier cannot access the action. 991 host checks passed (238 Java, 753 actual SQLite); parsed 24 Java sources, type checks with minimal Android stubs, XML IDs and workflow verified; actual Android SDK/lint/installed gate including NATIVE_ADMIN_AUTH_PASS is pending. Read the latest DEVELOPMENT_QUEUE.md entry and android-native/CASHIER_ACCEPTANCE.md for scope and evidence. Actor-linked administrative audit, disabled cashier management and broader catalog/pricing/recipe UI remain pending. Owner is installing VMware; do not enable or route real builds to the live-shop DJ-PC host. Use the isolation prerequisites and explicit opt-in in develop's SELF_HOSTED_RUNNER.md; the Android Linux/KVM gate remains separate. Integrate stacked feature PRs in order only after exact current gates pass. No new minor branches or production claims.
+
 ## Protected contracts and release limits
 
 - Preserve exact financial arithmetic, atomic transactions, idempotency, inventory and balance protections, immutable audit trails, cancellation fences and safe backup migrations. Never discard unresolved paid transactions.

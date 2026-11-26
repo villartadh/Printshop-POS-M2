@@ -9,6 +9,12 @@ public final class CashierSecurityTest {
         throw new AssertionError("Accepted "+label);
     }
     public static void main(String[] args){
+        CashierSecurity.requireOwner(CashierSecurity.Role.OWNER);checks++;
+        for(CashierSecurity.Role denied:new CashierSecurity.Role[]{CashierSecurity.Role.CASHIER,null}){
+            boolean refused=false;
+            try{CashierSecurity.requireOwner(denied);}catch(IllegalStateException expected){refused=true;}
+            check(refused,"non-owner administration denied");
+        }
         check(CashierSecurity.username("CaSHIER_01").equals("cashier_01"),"normalized");
         reject(()->CashierSecurity.username("a"),"short username");reject(()->CashierSecurity.username(" user"),"space");
         reject(()->CashierSecurity.username("a@b"),"unsupported character");reject(()->CashierSecurity.username(null),"null username");

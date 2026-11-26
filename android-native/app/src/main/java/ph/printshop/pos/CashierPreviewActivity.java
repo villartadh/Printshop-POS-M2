@@ -127,6 +127,10 @@ public final class CashierPreviewActivity extends Activity {
             case "Password contains a control character":return message;
             case "Enter a nonnegative amount with up to two decimal places.":return message;
             case "Invalid stock movement.":return message;
+            case "Use up to three decimal places.":return message;
+            case "Enter a printable reason (1–160 characters).":return message;
+            case "Owner authorization required":return message;
+            case "Resolve the existing pending stock movement first":return message;
             case "Invalid quantity":case "Price or quantity outside supported range.":return "Enter a whole training page count from 1 to 100000.";
             default:return "Operation refused or confirmation unavailable. Review the same pending request or history before retrying.";
         }
@@ -246,6 +250,7 @@ public final class CashierPreviewActivity extends Activity {
         button("Change my training passphrase",R.id.cashier_change_pass,()->showCredentialChange(false));
         if(d.actor.role==CashierSecurity.Role.OWNER){
             button("Create training cashier",R.id.cashier_add_staff,this::showStaff);
+            button("Training inventory",R.id.cashier_inventory,this::showInventory);
             button("Reset training cashier passphrase",R.id.cashier_reset_pass,()->showCredentialChange(true));
         }
         button("Lock / sign out",R.id.cashier_lock,this::lockAndReload);
@@ -257,6 +262,50 @@ public final class CashierPreviewActivity extends Activity {
             String user=name.getText().toString();char[] pass=takePassword(secret);
             if(!submit(()->{try{return store.createFixtureCashier(session(),user,pass);}finally{Arrays.fill(pass,'\0');}},v->refreshDashboard()))Arrays.fill(pass,'\0');
         });back();
+    }
+
+    private void showInventory(){
+        submit(()->store.authorizedFixtureInventory(session()),v->{
+            mode="inventory";screen("Training inventory","Owner-only synthetic stock. Saving a pending adjustment never changes stock.");
+            @SuppressWarnings("unchecked") List<CatalogStore.InventoryItem> items=(List<CatalogStore.InventoryItem>)v;
+            if(items.isEmpty())label("No active training materials");
+            for(CatalogStore.InventoryItem item:items){
+                label(item.material.name+" · "+StockMath.display(item.balance.quantity)+" "+item.material.unit);
+                if(item.pending==null)button("Adjust "+item.material.name,0,()->showInventoryAdjustment(item));
+                else button("Recover "+item.material.name+" adjustment",0,()->showInventoryPending(item.material,item.pending));
+            }
+            back();
+        });
+    }
+    private void showInventoryAdjustment(CatalogStore.InventoryItem item){
+        mode="inventory-adjust";screen("Prepare training stock adjustment",item.material.name+" · Current: "+StockMath.display(item.balance.quantity)+" "+item.material.unit);
+        EditText count=field("Quantity ("+item.material.unit+", up to three decimals)",R.id.cashier_inventory_quantity,
+            InputType.TYPE_CLASS_NUMBER|InputType.TYPE_NUMBER_FLAG_DECIMAL,13,null);
+        EditText reason=field("Synthetic movement reason",R.id.cashier_inventory_reason,InputType.TYPE_CLASS_TEXT,160,null);
+        // Reuse one request ID on this screen after an uncertain response; never immediately alter stock.
+        String id=UUID.randomUUID().toString();
+        button("Save pending addition",R.id.cashier_inventory_add,()->stageInventory(item,id,count,reason,1));
+        button("Save pending removal",R.id.cashier_inventory_remove,()->stageInventory(item,id,count,reason,-1));
+        button("Return to training inventory",R.id.cashier_inventory_back,this::showInventory);
+        back();
+    }
+    private void stageInventory(CatalogStore.InventoryItem item,String id,EditText count,EditText reason,int sign){
+        String quantity=count.getText().toString(),note=reason.getText().toString();
+        submit(()->store.stageAuthorizedFixtureStock(session(),id,item.material.id,item.material.revision,
+                item.balance.revision,sign*StockMath.parse(quantity),note),v->{
+            CatalogStore.StockRequest r=(CatalogStore.StockRequest)v;
+            if("PENDING".equals(r.state))showInventoryPending(item.material,r);
+            else showInventory();
+        });
+    }
+    private void showInventoryPending(CatalogEntry material,CatalogStore.StockRequest r){
+        mode="inventory-pending";screen("Pending training stock adjustment","Review the original saved movement before applying. Cancellation leaves stock unchanged.");
+        label(material.name+" · "+(r.delta>0?"Add ":"Remove ")+StockMath.display(Math.abs(r.delta))+" "+material.unit);
+        label("Reason: "+r.reason);label("Request: "+r.id);
+        button("Apply saved stock adjustment",R.id.cashier_inventory_apply,()->submit(()->store.applyAuthorizedFixtureStock(session(),r.id),v->showInventory()));
+        button("Cancel saved stock adjustment",R.id.cashier_inventory_cancel,()->submit(()->{store.cancelAuthorizedFixtureStock(session(),r.id);return null;},v->showInventory()));
+        button("Return to training inventory",R.id.cashier_inventory_back,this::showInventory);
+        back();
     }
 
     private EditText credentialField(String label,int id){
