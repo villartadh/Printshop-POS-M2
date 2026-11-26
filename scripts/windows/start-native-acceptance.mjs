@@ -1,29 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import net from 'node:net';
 import {spawnSync} from 'node:child_process';
 import {createInterface} from 'node:readline/promises';
-import {verifyRelease} from '../install.mjs';
+import {verifyWindowsPackage,requireFreePort} from './native-preflight.mjs';
 import {randomUUID} from 'node:crypto';
 
 const root=path.resolve(import.meta.dirname,'../..');
 const normalize=answer=>answer.trim().replace(/^"([^"]+)"$/,'$1');
-const validate=(input,allowed)=>{
- if(!input)throw Error('An extracted package directory is required.');
- const folder=fs.realpathSync(path.resolve(input));
- const manifest=JSON.parse(fs.readFileSync(path.join(folder,'RELEASE-MANIFEST.json'),'utf8'));
- if(!allowed.includes(manifest.version))throw Error('Unexpected package version: '+manifest.version);
- verifyRelease(folder,manifest);
- for(const file of ['runtime/node.exe','INSTALL.cmd','RUN-POS.cmd','STOP-POS.cmd','UNINSTALL.cmd','SUPPORT.cmd']){
-  if(!Object.hasOwn(manifest.files,file))throw Error('Package missing manifest-covered '+file);
- }
- return folder;
-};
-const portFree=async()=>{
- const server=net.createServer();
- await new Promise((resolve,reject)=>{server.once('error',reject);server.listen({host:'127.0.0.1',port:3000,exclusive:true},resolve);});
- await new Promise((resolve,reject)=>server.close(e=>e?reject(e):resolve()));
-};
+const validate=(input,allowed)=>verifyWindowsPackage(input,allowed).folder;
 async function main(){
  const [major,minor]=process.versions.node.split('.').map(Number);
  if(process.platform!=='win32'||process.arch!=='x64'||major!==22||minor<12)throw Error('Requires Windows x64 and Node 22.12+ in major 22.');
@@ -40,7 +24,7 @@ async function main(){
   oldRelease=validate(normalize(await rl.question('Extracted v0.9.5 or v0.9.6 baseline folder: ')),['0.9.5','0.9.6']);
   newRelease=validate(normalize(await rl.question('Extracted v0.9.7 candidate folder: ')),['0.9.7']);
  }finally{rl.close();}
- await portFree();
+ await requireFreePort();
  const dir=path.join(root,'.ldc');fs.mkdirSync(dir,{recursive:true});
  const evidence=path.join(dir,'native-windows-'+randomUUID());
  const result=spawnSync(process.execPath,[path.join(import.meta.dirname,'native-acceptance.mjs'),oldRelease,newRelease,evidence],{
