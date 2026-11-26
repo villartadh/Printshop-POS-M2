@@ -43,3 +43,23 @@ RR 26-2025 and RMC 98-2026 establish December 31, 2026 for specified covered tax
 5. Obtain owner/accountant/RDO confirmation of taxpayer class, applicable registration, approved invoice format and numbering, branch/MIN, PTU/PTI and reporting obligations; no credentials or submissions through autonomous development.
 
 Disposition: **NOT BIR APPROVED / NON-TAX SOFTWARE PILOT**. Further legal review is necessary; this initial review uses official summaries for several issuances and is not an exhaustive annex-level audit.
+
+## Detailed technical review (2026-11-26)
+Full [RMO 24-2023](https://bir-cdn.bir.gov.ph/local/pdf/RMO%20No.%2024-2023.pdf), sections II and IV(5), and [RR 7-2024](https://bir-cdn.bir.gov.ph/BIR/pdf/RR%20No.%207-%202024.pdf), sections 3 and 6, reviewed. [RR 6-2026 official BIR announcement](https://bir-cdn.bir.gov.ph/BIR/pdf/PR114OCT1026.pdf) identifies separate presentation of creditable withholding tax when applicable; [2026 circular index](https://www.bir.gov.ph/2026-Revenue-Memorandum-Circulars?label=2026&type=PAGE) lists RMC 112-2026 transitional guidance. Verify full current issuances and exact field/format applicability with the RDO. This is a technical crosswalk, not a signed Annex F checklist; individual annex templates have not all been reviewed.
+
+| RMO 24-2023 IV(5) | Engineering status / gap |
+| --- | --- |
+| a | Accumulated sales capacity and reset counter: no compliant fiscal counter; design independently of pilot references |
+| b | Sales record protection: transaction identity and reversal audit exist; demo controls and restore capability incompatible with a claim of tamper-free fiscal production; isolate training deployment, design controlled recovery |
+| c | Activity records: partial audit coverage, no comprehensive before/after or remote access audit |
+| d | Persistent records: verified backup and recovery; regulated retention/access still requires policy and approval |
+| e | Daily electronic journal: not implemented; requires preserved issued document and adjustment/report records, not mutable reconstruction |
+| f / D-1 D-2 | Cashier/day readings: pilot shifts and date reports only; no immutable day close, Z-counter, closed-day rejection or fiscal reprint |
+| g / E-1 to E-5 | Backend reports: missing official tax categories, special discount books and manual invoice linkage |
+| h | Sequential fiscal numbers: current internal references are not approved running invoice numbers |
+| i | Reprint: pilot marks copies; original issued content and timestamped authorized reprint evidence still required |
+| j | EIS submission: not implemented and applicability unconfirmed |
+| k | Validation seal: no approved EIS verification mechanism |
+| l | Retention: backups do not establish statutory retention or registered-site access |
+
+Added read-only non-fiscal ledger review for verified current-schema backups. It checks recorded sales, payment/collection links, reversals and customer balance arithmetic; outputs IDs and issue codes, not payment details or customer names. SHA-256 identifies the input snapshot; this does not establish authenticity, tamper-proofing, or a fiscal journal. Demo data are outside the review scope; shift, inventory, historic issuance and tax totals require separate gates. Never repair records automatically from findings.

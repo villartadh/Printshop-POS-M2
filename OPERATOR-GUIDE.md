@@ -61,3 +61,6 @@ Run START-LDC.cmd with Node 22.12+ in the 22 series. Option 1 uses the startup g
 
 ## Regulatory boundary
 Every generated document is a non-tax pilot document, regardless of selected document type or branding. Do not substitute it for a duly authorized invoice or use this system for live sales before applicable registration and acceptance. Consult the registered RDO/accountant regarding POS accreditation, PTU, electronic invoice authority and applicable reporting. See BIR-GAP-ANALYSIS.md in the source package. No official registration or approval is asserted.
+
+### Non-fiscal ledger review (developer workspace)
+From a locked source workspace with Node 22, run `node scripts/ledger-review.mjs VERIFIED_BACKUP.db NEW_REPORT.json` on an isolated current-schema SQLite backup, not the live database. Exit 0 means the selected arithmetic/link checks passed; exit 2 requires manager/accountant review; exit 1 indicates a failed review. The report is non-fiscal and references internal record IDs, so keep it private. The tool never repairs data or overwrites an existing report. No BIR journal or certification is implied.

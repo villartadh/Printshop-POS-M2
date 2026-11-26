@@ -81,3 +81,6 @@ CI 45737463509 and 45737457229 passed: 115 regression, 33 API, 16 browser and fo
 
 ## Verified at 40cd473
 CI 45738233108 and 45738227476 passed including hosted Windows bundled upgrade and restore. Initial dated BIR-GAP-ANALYSIS.md committed with official BIR sources, current applicability distinctions, gap register and ordered controls. Universal non-tax notice added to previews, exports and copied summaries; existing virtual receipt tests expanded to check all sale document types and quotation. Await CI. Next: annex-level review and non-fiscal audit/reconciliation hardening, security and resilience; no official registration, real data, fiscal issuance or legal compliance claims. Actual physical hardware remains separate.
+
+## Verified at c815371
+CI 45739252121 and 45739245965 passed regulatory marking assertions. Detailed RMO 24-2023 IV(5) crosswalk added, with full RR 7-2024 and RR 6-2026 withholding update references. Submitted non-fiscal read-only ledger review on verified current backups with source SHA-256 and redacted finding IDs, three targeted regression tests. Await CI; next validate actual backup integration, improve privileged export minimization and resilience. Annex templates/official classification remain unverified; no fiscal issuance or claims of approval.
