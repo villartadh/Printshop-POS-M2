@@ -96,6 +96,18 @@ Use the latest `DEVELOPMENT_QUEUE.md` entry rather than earlier historical snaps
 - Keep physical Windows scaling, actual printer output, actual tablet/phone/PWA tests, native Android acceptance and formal BIR review separate from hosted CI. Use disposable Windows desktop for native harness; never run scaling tests on live shop PC. TCP preflight does not prove server identity.
 - Reproducible candidates require exact tested SHA, package manifest/checksums, installation and recovery instructions, and documented acceptance limitations. Do not promote production until required gates pass and applicable approvals exist.
 
+## Self-hosted runner transition (connectivity only)
+
+Owner registered a Windows x64 runner (DJ-PC) and started it interactively; the console must stay running and the PC must remain awake and connected to accept jobs. The develop-only, path-filtered `.github/workflows/self-hosted-runner-smoke.yml` checks just routing and architecture, without checkout, credentials, installation or application execution. Its success is NOT a software acceptance gate. Do not enable regular builds on the live printshop PC: use a disposable isolated Windows VM/test machine, synthetic data and a restricted runner; verify environment and each original test. Do not substitute Windows for Linux/KVM Android acceptance. Preserve all hosted and independent gates until an equivalent verified lane is established; no production or BIR claims.
+
+The actual connectivity run 45801371514/job 139845142020 at `e1b9da05bd55cbb605c566b6b94926db55de2426` passed all steps and log marker SELF_HOSTED_WINDOWS_CONNECTIVITY_PASS. Normal hosted Windows/Ubuntu run 45801371390 failed without steps. See [SELF_HOSTED_RUNNER.md](SELF_HOSTED_RUNNER.md) for the disabled-by-default isolated Windows route, required custom label and local preflight. Do not activate on the ordinary PC or change billing settings. Keep all existing full gates, no production claim.
+
+
+
+## Current first integration — pricing math PR #10
+
+The feature branch has been reconciled with develop `30307cc42df54b0f022464bd96e24b3078a07731` (owner runner configuration preserved), while keeping exact existing pricing math and Android tests. Historical CI above is not fresh acceptance. Latest parent #9 is integrated; #10 now requires new exact Android and full Windows/Linux gates before merge. #11–#13 remain stacked, update/retarget in order. Self-hosted Windows remains opt-in only on isolated environment. See SELF_HOSTED_RUNNER.md and DEVELOPMENT_QUEUE.md.
+
 ## Copy-ready continuation prompt
 
 Continue Printshop POS M2 from the current GitHub repository. Read HANDOFF-README.md, AGENTS.md and the latest DEVELOPMENT_QUEUE.md checkpoint. Reconcile live branches, PRs and CI before changing code. Implement the next eligible task, test with synthetic data, preserve protected baselines, commit verified work and append the exact next action to the queue. Continue eligible milestones without routine approval; report genuine blockers and never claim unexecuted tests or production readiness. Preserve this handoff in all future source packages.
