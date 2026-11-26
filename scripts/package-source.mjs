@@ -10,7 +10,7 @@ const sha=execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).tr
 if(!/^0\.9\.\d+$/.test(version)||!/^[0-9a-f]{40}$/.test(sha))throw Error('Unexpected candidate identity');
 if(fs.existsSync(output))throw Error('Refusing to overwrite source staging directory');
 const tracked=execFileSync('git',['ls-files','-z'],{cwd:root}).toString().split('\0').filter(Boolean);
-const allowed=name=>/^(src|scripts|tests|public|\.github)\//.test(name)||['.env.example','.gitignore','AGENTS.md','CHANGELOG.md','DEVELOPMENT_QUEUE.md','HANDOFF_SNAPSHOT.md','FEATURE-MATRIX.md','INSTALL-WINDOWS.cmd','OPERATOR-GUIDE.md','README.md','START-LDC.cmd','START-PRINTSHOP-POS.cmd','favicon.ico','index.html','metadata.json','package-lock.json','package.json','server.ts','tsconfig.json','validate.mjs','vite.config.ts'].includes(name);
+const allowed=name=>/^(src|scripts|tests|public|\.github)\//.test(name)||['.env.example','.gitignore','AGENTS.md','CHANGELOG.md','DEVELOPMENT_QUEUE.md','HANDOFF_SNAPSHOT.md','FEATURE-MATRIX.md','BIR-GAP-ANALYSIS.md','INSTALL-WINDOWS.cmd','OPERATOR-GUIDE.md','README.md','START-LDC.cmd','START-PRINTSHOP-POS.cmd','favicon.ico','index.html','metadata.json','package-lock.json','package.json','server.ts','tsconfig.json','validate.mjs','vite.config.ts'].includes(name);
 const files={};
 fs.mkdirSync(output,{recursive:true});
 for(const name of tracked.filter(allowed).sort()){

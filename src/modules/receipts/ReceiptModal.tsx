@@ -4,7 +4,7 @@ import { useApp } from '../../context/AppContext.tsx';
 import { formatCurrency } from '../../shared/pricingEngine.ts';
 import type { PrintJob, ReceiptTemplateConfig, Transaction } from '../../shared/types.ts';
 import { Button, Select } from '../../components/ui/Primitives.tsx';
-import { paperLayout, documentKind } from '../../shared/printDocument.ts';
+import { paperLayout, documentKind, PILOT_DOCUMENT_NOTICE } from '../../shared/printDocument.ts';
 import { openPrintPreview, downloadPrintDocument } from '../../services/printService.ts';
 import { Modal } from '../../components/ui/Overlays.tsx';
 
@@ -74,7 +74,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
   const handleCopySummary = async () => {
     const total = transaction ? transaction.totalAmount : printJob?.totalAmount || 0;
     const customer = transaction?.customerName || printJob?.customerName || 'Customer';
-    const text = `${branding.businessName}\n${transaction?.type === 'held' ? 'HELD ORDER — NOT A SALE' : docTitleMap[effectiveType]} #${docReference}\nCustomer: ${customer}\nTotal: ${formatCurrency(total, taxCurr)}`;
+    const text = `${PILOT_DOCUMENT_NOTICE}\n${branding.businessName}\n${transaction?.type === 'held' ? 'HELD ORDER — NOT A SALE' : docTitleMap[effectiveType]} #${docReference}\nCustomer: ${customer}\nTotal: ${formatCurrency(total, taxCurr)}`;
     const status = transaction ? [legacyIdentity ? 'HISTORICAL IDENTITY UNAVAILABLE — CURRENT BUSINESS SETTINGS USED' : '',transaction.syncStatus !== 'synced' ? 'PROVISIONAL — SERVER CONFIRMATION PENDING' : '', ['voided','refunded'].includes(transaction.paymentStatus) ? transaction.paymentStatus.toUpperCase()+' — ORIGINAL SALE RECORD' : '', reprint || previewOpened ? 'REPRINT / COPY' : ''].filter(Boolean).join('\n') : '';
     try {
       await navigator.clipboard.writeText(status ? status+'\n'+text : text);
@@ -141,7 +141,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
             onChange={(e) => setDocType(e.target.value as typeof docType)}
             options={[
               { value: 'sales_receipt', label: 'Sales Receipt' },
-              { value: 'invoice', label: 'Invoice' },
+              { value: 'invoice', label: 'Non-tax invoice draft' },
               { value: 'quotation', label: 'Quotation' },
               { value: 'job_order_slip', label: 'Job Order Slip' },
               { value: 'payment_acknowledgment', label: 'Payment Acknowledgment' },
@@ -201,6 +201,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
               <div className="mt-2 font-bold tracking-wide text-slate-900">
                 {transaction?.type === 'held' ? 'HELD ORDER — NOT A SALE' : docTitleMap[effectiveType]}
               </div>
+              <div className="font-bold border border-slate-700 mt-2 p-1">{PILOT_DOCUMENT_NOTICE}</div>
               {legacyIdentity && <div className="font-bold border border-slate-700 mt-2 p-1">HISTORICAL IDENTITY UNAVAILABLE — CURRENT BUSINESS SETTINGS USED</div>}
               {transaction && transaction.syncStatus !== "synced" && <div className="font-bold border border-slate-700 mt-2 p-1">PROVISIONAL — SERVER CONFIRMATION PENDING</div>}
               {transaction && ['voided','refunded'].includes(transaction.paymentStatus) && <div className="font-bold border border-slate-700 mt-2 p-1">{transaction.paymentStatus.toUpperCase()} — ORIGINAL SALE RECORD</div>}

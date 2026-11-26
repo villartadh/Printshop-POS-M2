@@ -1,3 +1,4 @@
+export const PILOT_DOCUMENT_NOTICE = 'NON-TAX DOCUMENT — NOT A TAX INVOICE';
 export type PaperFormat = '58mm' | '80mm' | 'A4' | 'Letter' | 'Custom';
 export const CUSTOM_PAPER_MIN_MM = 30;
 export const CUSTOM_PAPER_MAX_MM = 500;

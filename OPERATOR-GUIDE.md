@@ -58,3 +58,6 @@ Run START-LDC.cmd with Node 22.12+ in the 22 series. Option 1 uses the startup g
 | Printer not listed or receipt cut off | Confirm Windows driver test page and paper width, then repeat the synthetic print test. |
 | Device not trusted | Check configured HTTPS origin and certificate trust. Never bypass browser security warnings. |
 | Shift discrepancies | Count actual cash and record the reconciliation note; never overwrite historical sales to force agreement. |
+
+## Regulatory boundary
+Every generated document is a non-tax pilot document, regardless of selected document type or branding. Do not substitute it for a duly authorized invoice or use this system for live sales before applicable registration and acceptance. Consult the registered RDO/accountant regarding POS accreditation, PTU, electronic invoice authority and applicable reporting. See BIR-GAP-ANALYSIS.md in the source package. No official registration or approval is asserted.

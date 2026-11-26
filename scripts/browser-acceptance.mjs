@@ -212,7 +212,7 @@ try {
         const main=popup.locator('main');
         const content=await main.innerText();
         assert.ok(content.includes(recorded.receiptNumber));
-        assert.match(content,/NOT A TAX INVOICE/);
+        assert.match(content,/NON-TAX DOCUMENT — NOT A TAX INVOICE/);
         for(const [label,amount] of [['TOTAL',40],['Amount Paid',40],['Change',10]]){
           const row=main.locator('div.flex').filter({has:popup.getByText(label,{exact:true})}).last();
           assert.ok((await row.innerText()).includes(currency+amount.toFixed(2)),label+' '+format);
@@ -239,9 +239,16 @@ try {
     }
     await fs.writeFile(path.join(evidence,'virtual-receipt-geometry.json'),JSON.stringify(measurements,null,2));
     await page.getByLabel('Paper Format',{exact:true}).selectOption('58mm');
-    const download=page.waitForEvent('download');
-    await click('Export File');
-    assert.match((await download).suggestedFilename(),/\.html$/);
+    for(const kind of ['sales_receipt','invoice','payment_acknowledgment']){
+      await page.getByLabel('Document Type',{exact:true}).selectOption(kind);
+      const document=page.locator('#printable-document');
+      assert.match(await document.innerText(),/NON-TAX DOCUMENT — NOT A TAX INVOICE/);
+      const download=page.waitForEvent('download');
+      await click('Export File');
+      const file=await download;
+      assert.match(file.suggestedFilename(),/\.html$/);
+      assert.match(await fs.readFile(await file.path(),'utf8'),/NON-TAX DOCUMENT — NOT A TAX INVOICE/);
+    }
     await click('Close');
     const state=await api('/bootstrap');
     assert.equal(state.transactions[0].totalAmount,40);
@@ -252,6 +259,7 @@ try {
     await page.locator('select').filter({has:page.getByRole('option',{name:'Synthetic Customer'})}).selectOption({label:'Synthetic Customer'});
     await click('Quote');
     await waitText('Document & Receipt Preview');
+    assert.match(await page.locator('#printable-document').innerText(),/NON-TAX DOCUMENT — NOT A TAX INVOICE/);
     await click('Close');
     await page.getByTitle('Recall held order (F10)').click();
     await click('Recall');
