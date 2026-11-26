@@ -64,7 +64,7 @@ jobs:
           arch: x86_64
           disable-animations: true
           script: |
-            bash -euo pipefail -c 'mkdir -p android-evidence; adb install android-native/app/build/outputs/apk/debug/app-debug.apk; adb install android-native/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk; adb shell am instrument -w -r ph.printshop.pos.preview.test/ph.printshop.pos.NativeQuoteSmoke | tr -d "\\r" | tee android-evidence/native-smoke.txt; grep -F "NATIVE_QUOTE_SMOKE_PASS" android-evidence/native-smoke.txt; grep -F "NATIVE_CATALOG_STORE_PASS" android-evidence/native-smoke.txt; grep -Fx "INSTRUMENTATION_CODE: -1" android-evidence/native-smoke.txt; if grep -F "NATIVE_QUOTE_SMOKE_FAIL" android-evidence/native-smoke.txt; then exit 1; fi'
+            bash -euo pipefail -c 'mkdir -p android-evidence; adb install android-native/app/build/outputs/apk/debug/app-debug.apk; adb install android-native/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk; adb shell am instrument -w -r ph.printshop.pos.preview.test/ph.printshop.pos.NativeQuoteSmoke | tr -d "\\r" | tee android-evidence/native-smoke.txt; grep -F "NATIVE_QUOTE_SMOKE_PASS" android-evidence/native-smoke.txt; grep -F "NATIVE_CATALOG_STORE_PASS" android-evidence/native-smoke.txt; grep -F "NATIVE_CATALOG_SCREEN_PASS" android-evidence/native-smoke.txt; grep -Fx "INSTRUMENTATION_CODE: -1" android-evidence/native-smoke.txt; if grep -F "NATIVE_QUOTE_SMOKE_FAIL" android-evidence/native-smoke.txt; then exit 1; fi'
       - name: Upload native test evidence
         if: always()
         uses: actions/upload-artifact@v4

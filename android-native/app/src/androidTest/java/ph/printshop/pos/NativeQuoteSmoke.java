@@ -25,9 +25,9 @@ public final class NativeQuoteSmoke extends Instrumentation {
             activity = startActivitySync(intent);
             final Activity screen = activity;
             runOnMainSync(() -> {
-                EditText price = screen.findViewById(1001);
-                EditText quantity = screen.findViewById(1002);
-                EditText received = screen.findViewById(1003);
+                EditText price = screen.findViewById(R.id.quote_price);
+                EditText quantity = screen.findViewById(R.id.quote_quantity);
+                EditText received = screen.findViewById(R.id.quote_received);
                 require(price != null && quantity != null && received != null, "native input widgets missing");
                 View root = screen.getWindow().getDecorView();
                 require(hasText(root, "PREVIEW ONLY — NOT A SALE OR TAX DOCUMENT"), "preview warning missing");
@@ -48,7 +48,8 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 require(hasText(root, "Change: PHP 0.00"), "exact tender mismatch");
             });
             verifyCatalog();
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\n");
+            verifyCatalogScreen(screen);
+            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\n");
             finish(Activity.RESULT_OK, evidence);
         } catch (Throwable error) {
             evidence.putString("stream", "NATIVE_QUOTE_SMOKE_FAIL: " + error + "\n");
@@ -59,6 +60,53 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 runOnMainSync(screen::finish);
             }
         }
+    }
+    private void verifyCatalogScreen(Activity screen) {
+        android.content.Context context = getTargetContext();
+        try (CatalogStore store = new CatalogStore(context)) {
+            require(store.list(true).isEmpty(), "catalog UI test requires a fresh preview installation");
+            CatalogEntry fixture = store.create(CatalogEntry.Kind.SERVICE, "Synthetic service", "page", "3.25");
+            Activity catalog = null;
+            ActivityMonitor monitor = addMonitor(CatalogActivity.class.getName(), null, false);
+            try {
+                runOnMainSync(() -> screen.findViewById(R.id.open_catalog).performClick());
+                catalog = waitForMonitorWithTimeout(monitor, 10000);
+                require(catalog != null, "catalog Activity did not open");
+                final Activity shown = catalog;
+                runOnMainSync(() -> {
+                    View root = shown.getWindow().getDecorView();
+                    require(hasText(root, "Services & Materials"), "catalog heading missing");
+                    require(hasText(root, "Synthetic service · SERVICE"), "catalog fixture missing");
+                    require(hasText(root, "PHP 3.25 / page · Revision 1"), "catalog unit price missing");
+                    View choice = findText(root, "Use in quotation");
+                    require(choice != null && choice.performClick(), "service selection failed");
+                });
+                waitForIdleSync();
+                runOnMainSync(() -> {
+                    EditText price = screen.findViewById(R.id.quote_price);
+                    require(price.getText().toString().equals("3.25"), "catalog quotation price not copied");
+                });
+            } finally {
+                removeMonitor(monitor);
+                if (catalog != null) {
+                    final Activity shown = catalog;
+                    runOnMainSync(shown::finish);
+                }
+                CatalogEntry current = store.get(fixture.id);
+                if (!current.archived) store.archive(current.id, current.revision, true);
+            }
+        }
+    }
+    private static View findText(View view, String text) {
+        if (view instanceof TextView && text.contentEquals(((TextView)view).getText())) return view;
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup)view;
+            for (int i=0; i<group.getChildCount(); i++) {
+                View match = findText(group.getChildAt(i), text);
+                if (match != null) return match;
+            }
+        }
+        return null;
     }
     private void verifyCatalog() {
         android.content.Context context = getTargetContext();
