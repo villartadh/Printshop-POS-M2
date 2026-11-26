@@ -85,6 +85,24 @@ public final class NativeQuoteSmoke extends Instrumentation {
         error.printStackTrace(new java.io.PrintWriter(trace));
         return "NATIVE_QUOTE_SMOKE_FAIL: " + phase + "\n" + trace + "\n";
     }
+    /** Activity results cross the system lifecycle; an idle UI queue alone is not delivery proof. */
+    private void awaitServiceSelection(Activity screen,String expectedPrice,String serviceName) {
+        long deadline=android.os.SystemClock.elapsedRealtime()+10000;
+        java.util.concurrent.atomic.AtomicBoolean delivered=new java.util.concurrent.atomic.AtomicBoolean();
+        java.util.concurrent.atomic.AtomicReference<String> actual=new java.util.concurrent.atomic.AtomicReference<>("");
+        do {
+            waitForIdleSync();
+            runOnMainChecked(()->{
+                EditText price=screen.findViewById(R.id.quote_price);
+                actual.set(price.getText().toString());
+                delivered.set(expectedPrice.equals(actual.get())&&hasText(screen.getWindow().getDecorView(),
+                    "Linked service: "+serviceName+" (editable selling price)"));
+            });
+            if(delivered.get())return;
+            android.os.SystemClock.sleep(50);
+        }while(android.os.SystemClock.elapsedRealtime()<deadline);
+        throw new AssertionError("Service activity result not delivered: expected "+expectedPrice+", actual "+actual.get());
+    }
     private void verifyRecipeScreen(Activity screen) {
         android.content.Context context = getTargetContext();
         try (CatalogStore store = new CatalogStore(context)) {
@@ -126,7 +144,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
                     View select = findText(shown.getWindow().getDecorView(), "Use in quotation");
                     require(select != null && select.performClick(), "configured service selection failed");
                 });
-                waitForIdleSync();
+                awaitServiceSelection(screen,"5.00",service.name);
                 runOnMainChecked(() -> {
                     View root = screen.getWindow().getDecorView();
                     EditText price = screen.findViewById(R.id.quote_price);
@@ -304,7 +322,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
                     View choice = findText(root, "Use in quotation");
                     require(choice != null && choice.performClick(), "service selection failed");
                 });
-                waitForIdleSync();
+                awaitServiceSelection(screen,"3.25",fixture.name);
                 runOnMainChecked(() -> {
                     EditText price = screen.findViewById(R.id.quote_price);
                     require(price.getText().toString().equals("3.25"), "catalog quotation price not copied");
