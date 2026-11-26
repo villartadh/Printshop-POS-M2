@@ -65,7 +65,8 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "pricing store migration"; verifyPricingStore();
             phase = "pricing settings and document quote"; verifyPricingScreen(screen);
             phase = "measured quote"; verifyMeasuredQuote(screen);
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\n");
+            phase = "native cashier training UI"; verifyCashierTrainingScreen(screen);
+            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\n");
             result = Activity.RESULT_OK;
         } catch (Throwable error) {
             evidence.putString("stream", failureDetails(phase, error));
@@ -81,6 +82,173 @@ public final class NativeQuoteSmoke extends Instrumentation {
             finish(result, evidence);
         }
     }
+
+    private void trainingClick(Activity activity,int id){
+        runOnMainChecked(()->{
+            View view=activity.findViewById(id);
+            require(view!=null&&view.isEnabled(),"training action missing or disabled: "+id);
+            require(view.performClick(),"training action not handled: "+id);
+        });
+    }
+    private void trainingField(Activity activity,int id,String value){
+        runOnMainChecked(()->{
+            EditText field=activity.findViewById(id);
+            require(field!=null&&field.isEnabled(),"training input missing: "+id);
+            field.setText(value);
+        });
+    }
+    private void trainingSelect(Activity activity,String label){
+        runOnMainChecked(()->{
+            View view=findText(activity.getWindow().getDecorView(),label);
+            require(view!=null&&view.isEnabled()&&view.performClick(),"training record not selectable: "+label);
+        });
+    }
+    private void trainingLogin(Activity activity,String user,String password){
+        trainingField(activity,R.id.cashier_username,user);
+        trainingField(activity,R.id.cashier_password,password);
+        trainingClick(activity,R.id.cashier_login);
+    }
+    private static long trainingCount(CatalogStore store,String query){
+        try(android.database.Cursor c=store.getReadableDatabase().rawQuery(query,null)){
+            require(c.moveToFirst(),"training audit query missing");
+            return c.getLong(0);
+        }
+    }
+    private void verifyCashierTrainingScreen(Activity screen){
+        android.content.Context context=getTargetContext();
+        final String owner="training-owner",cashier="training-cashier";
+        final String ownerPass="Synthetic-Owner-UI-01",cashierPass="Synthetic-Cashier-UI-01";
+        java.util.List<CatalogEntry> before;
+        try(CatalogStore ordinary=new CatalogStore(context)){before=ordinary.list(true);}
+        android.content.SharedPreferences preferences=context.getSharedPreferences(CashierPreviewActivity.PREFS,0);
+        require(preferences.getString(CashierPreviewActivity.FIXTURE_KEY,null)==null,"training UI test requires fresh preview installation");
+        ActivityMonitor monitor=addMonitor(CashierPreviewActivity.class.getName(),null,false);
+        Activity first=null,second=null;
+        try{
+            trainingClick(screen,R.id.open_cashier_training);
+            first=waitForMonitorWithTimeout(monitor,10000);
+            require(first!=null,"native training Activity did not launch");
+            awaitText(first,"Set up training owner","first-run setup missing");
+            trainingClick(first,R.id.cashier_setup);
+            awaitText(first,"Confirm synthetic-only use before setup.","synthetic consent not enforced");
+            trainingField(first,R.id.cashier_username,owner);
+            trainingField(first,R.id.cashier_password,ownerPass);
+            final Activity setup=first;
+            runOnMainChecked(()->{
+                android.widget.CheckBox consent=setup.findViewById(R.id.cashier_consent);
+                consent.setChecked(true);
+                require((setup.getWindow().getAttributes().flags&android.view.WindowManager.LayoutParams.FLAG_SECURE)!=0,"training screen not protected");
+            });
+            trainingClick(first,R.id.cashier_setup);
+            awaitText(first,"Training sign in","owner not created");
+            trainingLogin(first,owner,ownerPass);
+            awaitText(first,"No open shift","owner login failed");
+            trainingClick(first,R.id.cashier_add_staff);
+            awaitText(first,"Owner-only creation. No real shop credentials.","owner-only screen missing");
+            trainingField(first,R.id.cashier_username,cashier);
+            trainingField(first,R.id.cashier_password,cashierPass);
+            trainingClick(first,R.id.cashier_confirm_staff);
+            awaitText(first,"No open shift","cashier creation failed");
+            trainingClick(first,R.id.cashier_lock);
+            awaitText(first,"Training sign in","owner not locked");
+            trainingLogin(first,cashier,cashierPass);
+            awaitText(first,"No open shift","cashier login failed");
+            runOnMainChecked(()->require(setup.findViewById(R.id.cashier_add_staff)==null,"cashier visible owner-only action"));
+            trainingField(first,R.id.cashier_opening,"10.00");
+            trainingClick(first,R.id.cashier_open_shift);
+            awaitText(first,"Shift open · Expected cash: PHP 10.00","training shift not opened");
+            trainingClick(first,R.id.cashier_new_checkout);
+            awaitText(first,"New training checkout","training checkout missing");
+            trainingField(first,R.id.cashier_count,"2");
+            trainingField(first,R.id.cashier_cash,"10.00");
+            trainingClick(first,R.id.cashier_review);
+            awaitText(first,"Review training checkout","training review missing");
+            trainingClick(first,R.id.cashier_stage);
+            awaitText(first,"Pending training checkout","training request not staged");
+            String fixtureId=preferences.getString(CashierPreviewActivity.FIXTURE_KEY,null);
+            require(fixtureId!=null&&preferences.getAll().size()==1,"credentials or session persisted in preferences");
+            try(CatalogStore fixture=CatalogStore.checkoutFixture(context,fixtureId)){
+                require(trainingCount(fixture,"SELECT COUNT(*) FROM checkout_sales")==0,"stage recorded a sale");
+                require(trainingCount(fixture,"SELECT COUNT(*) FROM checkout_requests WHERE state='PENDING'")==1,"pending request absent");
+            }
+            runOnMainChecked(first::finish);waitForIdleSync();first=null;
+            // Relaunch through the actual main-screen navigation, not an exported or test-only entry.
+            removeMonitor(monitor);monitor=addMonitor(CashierPreviewActivity.class.getName(),null,false);
+            trainingClick(screen,R.id.open_cashier_training);
+            second=waitForMonitorWithTimeout(monitor,10000);
+            require(second!=null,"native training Activity did not reopen");
+            awaitText(second,"Training sign in","reopen failed to lock");
+            final Activity recovered=second;
+            runOnMainChecked(()->{
+                EditText password=recovered.findViewById(R.id.cashier_password);
+                require(password!=null&&password.getText().length()==0,"password restored after reopen");
+            });
+            trainingLogin(second,cashier,cashierPass);
+            awaitText(second,"Unresolved training requests: 1","pending request not recovered");
+            runOnMainChecked(()->{
+                require(!recovered.findViewById(R.id.cashier_new_checkout).isEnabled(),"new checkout not blocked by pending");
+                require(!recovered.findViewById(R.id.cashier_close_shift).isEnabled(),"close shift not blocked by pending");
+            });
+            trainingClick(second,R.id.cashier_pending);
+            awaitText(second,"Pending training checkouts","pending list missing");
+            trainingSelect(second,"Training document print · PHP 5.00");
+            awaitText(second,"Pending training checkout","original pending request missing");
+            trainingClick(second,R.id.cashier_record);
+            awaitText(second,"Recorded training receipt","training receipt missing");
+            trainingClick(second,R.id.cashier_return_home);
+            awaitText(second,"Shift open · Expected cash: PHP 15.00","cash total not net sale");
+            trainingClick(second,R.id.cashier_new_checkout);
+            awaitText(second,"New training checkout","second training checkout missing");
+            trainingField(second,R.id.cashier_count,"1");
+            trainingField(second,R.id.cashier_cash,"3.00");
+            trainingClick(second,R.id.cashier_review);
+            awaitText(second,"Review training checkout","second review missing");
+            trainingClick(second,R.id.cashier_stage);
+            awaitText(second,"Pending training checkout","second request missing");
+            trainingField(second,R.id.cashier_cancel_reason,"Synthetic test cancellation");
+            trainingClick(second,R.id.cashier_cancel);
+            awaitText(second,"No pending training checkouts","training cancellation not recovered");
+            trainingClick(second,R.id.cashier_close_shift);
+            awaitText(second,"Close training shift","shift reconciliation missing");
+            trainingField(second,R.id.cashier_counted,"14.50");
+            trainingClick(second,R.id.cashier_confirm_close);
+            awaitText(second,"Variance: PHP -0.50","training reconciliation wrong");
+            trainingClick(second,R.id.cashier_return_home);
+            awaitText(second,"No open shift","shift remained open");
+            trainingClick(second,R.id.cashier_history);
+            awaitText(second,"Recorded training receipts","history missing");
+            trainingSelect(second,"Training document print · PHP 5.00");
+            awaitText(second,"Recorded training receipt","historical receipt missing");
+            trainingClick(second,R.id.cashier_return_home);
+            awaitText(second,"No open shift","historical receipt changed shift");
+            trainingClick(second,R.id.cashier_lock);
+            awaitText(second,"Training sign in","cashier did not lock");
+            try(CatalogStore fixture=CatalogStore.checkoutFixture(context,fixtureId)){
+                require(trainingCount(fixture,"SELECT COUNT(*) FROM checkout_sales")==1,"not exactly one recorded sale");
+                require(trainingCount(fixture,"SELECT COUNT(*) FROM checkout_cash")==1,"not exactly one cash payment");
+                require(trainingCount(fixture,"SELECT COUNT(*) FROM checkout_requests WHERE state='APPLIED'")==1,"wrong applied request count");
+                require(trainingCount(fixture,"SELECT COUNT(*) FROM checkout_requests WHERE state='CANCELLED'")==1,"wrong cancelled request count");
+                require(trainingCount(fixture,"SELECT COUNT(*) FROM cashier_shifts WHERE state='CLOSED' AND expected_cash=1500 AND counted_cash=1450 AND variance=-50")==1,"shift audit mismatch");
+                require(trainingCount(fixture,"SELECT COUNT(*) FROM stock_movements")==2,"training stock movement count wrong");
+                require(trainingCount(fixture,"SELECT after_quantity FROM stock_movements ORDER BY stock_revision DESC LIMIT 1")==48000,"training stock not deducted exactly");
+                require(trainingCount(fixture,"SELECT COUNT(*) FROM cashier_sessions WHERE revoked_ms IS NULL")==0,"session still active after logout");
+            }
+            try(CatalogStore ordinary=new CatalogStore(context)){
+                java.util.List<CatalogEntry> after=ordinary.list(true);
+                require(before.size()==after.size(),"ordinary catalog changed");
+                for(CatalogEntry prior:before){
+                    CatalogEntry current=ordinary.get(prior.id);
+                    require(current.revision==prior.revision&&current.centavos==prior.centavos&&current.archived==prior.archived,"ordinary catalog row changed");
+                }
+                require(trainingCount(ordinary,"SELECT COUNT(*) FROM checkout_sales")==0,"ordinary preview received training sale");
+            }
+        }finally{
+            if(first!=null){final Activity a=first;runOnMainChecked(a::finish);}
+            if(second!=null){final Activity a=second;runOnMainChecked(a::finish);}
+            removeMonitor(monitor);
+        }
+    }
+
     /** Preserve exceptions from the UI thread without terminating instrumentation. */
     private void runOnMainChecked(Runnable operation) {
         java.util.concurrent.atomic.AtomicReference<Throwable> fault = new java.util.concurrent.atomic.AtomicReference<>();

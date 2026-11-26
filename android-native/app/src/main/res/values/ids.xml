@@ -29,4 +29,31 @@
     <item name="quote_height" type="id"/>
     <item name="quote_dimension_unit" type="id"/>
     <item name="quote_material_basis" type="id"/>
+    <item name="open_cashier_training" type="id"/>
+    <item name="cashier_username" type="id"/>
+    <item name="cashier_password" type="id"/>
+    <item name="cashier_consent" type="id"/>
+    <item name="cashier_setup" type="id"/>
+    <item name="cashier_login" type="id"/>
+    <item name="cashier_lock" type="id"/>
+    <item name="cashier_opening" type="id"/>
+    <item name="cashier_open_shift" type="id"/>
+    <item name="cashier_new_checkout" type="id"/>
+    <item name="cashier_pending" type="id"/>
+    <item name="cashier_history" type="id"/>
+    <item name="cashier_close_shift" type="id"/>
+    <item name="cashier_add_staff" type="id"/>
+    <item name="cashier_count" type="id"/>
+    <item name="cashier_cash" type="id"/>
+    <item name="cashier_review" type="id"/>
+    <item name="cashier_stage" type="id"/>
+    <item name="cashier_record" type="id"/>
+    <item name="cashier_cancel_reason" type="id"/>
+    <item name="cashier_cancel" type="id"/>
+    <item name="cashier_counted" type="id"/>
+    <item name="cashier_confirm_close" type="id"/>
+    <item name="cashier_confirm_staff" type="id"/>
+    <item name="cashier_back" type="id"/>
+    <item name="cashier_status" type="id"/>
+    <item name="cashier_return_home" type="id"/>
 </resources>

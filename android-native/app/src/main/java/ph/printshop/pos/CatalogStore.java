@@ -285,7 +285,67 @@ public final class CatalogStore extends SQLiteOpenHelper {
         try{T result=action.run(db);db.setTransactionSuccessful();return result;}
         finally{db.endTransaction();}
     }
-    // Explicit synthetic setup only. No default credentials or UI path.
+    boolean fixtureInitialized(){
+        return fixtureTransaction(CashierJournal::initialized);
+    }
+    /** UI training setup: create the owner and deterministic-scope demonstration records together.
+     * The fixture database must be empty; never import or overwrite ordinary preview catalog data.
+     */
+    void bootstrapDemoFixtureOwner(String username,char[] password){
+        fixtureTransaction(db->{
+            try(Cursor c=db.rawQuery("SELECT COUNT(*) FROM catalog",null)){
+                if(!c.moveToFirst()||c.getLong(0)!=0)throw new IllegalStateException("Training catalog must be empty");
+            }
+            CashierJournal.bootstrap(db,username,password,System.currentTimeMillis());
+            CatalogEntry service=CatalogEntry.create(CatalogEntry.Kind.SERVICE,"Training document print","page","2.50");
+            CatalogEntry paper=CatalogEntry.create(CatalogEntry.Kind.MATERIAL,"Training paper","sheet","1.00");
+            db.insertOrThrow("catalog",null,values(service));history(db,service,"CREATE");
+            db.insertOrThrow("catalog",null,values(paper));history(db,paper,"CREATE");
+            appendMovement(db,java.util.UUID.randomUUID().toString(),paper.id,1,0,50000,"Synthetic training initial stock");
+            ContentValues binding=new ContentValues();binding.put("service_id",service.id);binding.put("material_id",paper.id);
+            binding.put("quantity_milli",1000L);binding.put("unit",paper.unit);db.insertOrThrow("service_materials",null,binding);
+            ContentValues audit=new ContentValues();audit.put("service_id",service.id);audit.put("revision",1L);audit.put("material_id",paper.id);
+            audit.put("quantity_milli",1000L);audit.put("unit",paper.unit);audit.put("material_revision",1L);audit.put("service_revision",1L);
+            audit.put("created_ms",System.currentTimeMillis());db.insertOrThrow("recipe_history",null,audit);
+            return null;
+        });
+    }
+    private static CatalogEntry demoService(SQLiteDatabase db){
+        try(Cursor c=db.query("catalog",null,"kind='SERVICE' AND archived=0 AND name='Training document print'",null,null,null,"id")){
+            if(!c.moveToFirst())throw new IllegalStateException("Training service unavailable");
+            CatalogEntry service=entry(c);
+            if(c.moveToNext())throw new IllegalStateException("Training service ambiguous");
+            return service;
+        }
+    }
+    CatalogEntry authorizedDemoService(String token){
+        return fixtureTransaction(db->{CashierJournal.requireSession(db,token,System.currentTimeMillis());return demoService(db);});
+    }
+    CheckoutPlan.Proposal prepareDemoFixtureCheckout(String token,String shiftId,String requestId,int count,long cash){
+        return fixtureTransaction(db->{
+            CashierJournal.Principal actor=CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            CashierJournal.requireShift(db,actor,shiftId,true);
+            CatalogEntry service=demoService(db);PricingProfile profile=readPricing(db,service.id);
+            if(profile.method!=PricingMath.Method.PER_UNIT||profile.pagesAndCopies||!profile.tiers.isEmpty())
+                throw new IllegalStateException("Training service pricing unexpectedly changed");
+            long revision=recipeRevision(db,service.id);
+            CheckoutPlan.Inputs input=new CheckoutPlan.Inputs(count,1,1,null,null,null,CheckoutPlan.UsageBasis.BILLABLE_UNIT,cash);
+            return readCheckoutPlan(db,requestId,service.id,service.revision,profile.revision,revision,input);
+        });
+    }
+    List<CheckoutJournal.Record> recentAuthorizedFixtureReceipts(String token,int limit){
+        return fixtureTransaction(db->{
+            if(limit<1||limit>50)throw new IllegalArgumentException("Invalid receipt limit");
+            CashierJournal.Principal actor=CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            List<CheckoutJournal.Record> records=new ArrayList<>();
+            try(Cursor c=db.rawQuery("SELECT r.request_id FROM cashier_shift_checkouts l JOIN checkout_requests r ON l.request_id=r.request_id WHERE l.operator_id=? AND r.state='APPLIED' ORDER BY r.resolved_ms DESC,r.request_id LIMIT ?",new String[]{actor.id,Integer.toString(limit)})){
+                while(c.moveToNext())records.add(CheckoutJournal.read(db,c.getString(0)));
+            }
+            return records;
+        });
+    }
+
+    // Explicit synthetic setup only. No default credentials or real UI path.
     CashierJournal.Principal bootstrapFixtureOwner(String username,char[] password){
         return fixtureTransaction(db->CashierJournal.bootstrap(db,username,password,System.currentTimeMillis()));
     }

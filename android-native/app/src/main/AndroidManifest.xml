@@ -1,5 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application android:label="Printshop POS Preview" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:allowBackup="false" android:usesCleartextTraffic="false" android:supportsRtl="true">
+        <activity android:name=".CashierPreviewActivity" android:exported="false" />
         <activity android:name=".PricingSettingsActivity" android:exported="false" />
         <activity android:name=".RecipeActivity" android:exported="false" />
         <activity android:name=".StockActivity" android:exported="false" />

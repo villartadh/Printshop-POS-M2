@@ -44,6 +44,8 @@ public final class MainActivity extends Activity {
         Button catalog=new Button(this);catalog.setId(R.id.open_catalog);
         catalog.setText("Open service and material catalog");catalog.setMinHeight(dp(48));root.addView(catalog);
         catalog.setOnClickListener(v->startActivityForResult(new Intent(this,CatalogActivity.class),41));
+        Button cashier=new Button(this);cashier.setId(R.id.open_cashier_training);cashier.setText("Cashier training preview");cashier.setMinHeight(dp(48));root.addView(cashier);
+        cashier.setOnClickListener(v->startActivity(new Intent(this,CashierPreviewActivity.class)));
         linkedService=label(root,"No service linked",16);
         price=field(root,"Base unit price (PHP)",R.id.quote_price,true);
         countSection=section(root);
