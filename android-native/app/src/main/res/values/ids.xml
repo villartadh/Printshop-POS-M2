@@ -11,4 +11,8 @@
     <item name="stock_retry" type="id"/>
     <item name="stock_latest" type="id"/>
     <item name="stock_older" type="id"/>
+    <item name="recipe_material" type="id"/>
+    <item name="recipe_usage" type="id"/>
+    <item name="recipe_save" type="id"/>
+    <item name="recipe_remove" type="id"/>
 </resources>

@@ -18,13 +18,15 @@ public final class NativeQuoteSmoke extends Instrumentation {
     @Override public void onStart() {
         Bundle evidence = new Bundle();
         Activity activity = null;
+        int result = Activity.RESULT_CANCELED;
+        String phase = "start quote Activity";
         try {
             Intent intent = new Intent(Intent.ACTION_MAIN);
             intent.setClassName(getTargetContext().getPackageName(), MainActivity.class.getName());
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             activity = startActivitySync(intent);
             final Activity screen = activity;
-            runOnMainSync(() -> {
+            runOnMainChecked(() -> {
                 EditText price = screen.findViewById(R.id.quote_price);
                 EditText quantity = screen.findViewById(R.id.quote_quantity);
                 EditText received = screen.findViewById(R.id.quote_received);
@@ -47,20 +49,114 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 require(hasText(root, "Total: PHP 0.01"), "centavo total mismatch");
                 require(hasText(root, "Change: PHP 0.00"), "exact tender mismatch");
             });
-            verifyCatalog();
-            verifyCatalogScreen(screen);
-            verifyStockLedger();
-            verifyStockScreen();
-            verifyMaterials();
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_MATERIAL_COST_PASS\n");
-            finish(Activity.RESULT_OK, evidence);
+            phase = "catalog store"; verifyCatalog();
+            phase = "catalog screen"; verifyCatalogScreen(screen);
+            phase = "stock ledger"; verifyStockLedger();
+            phase = "stock screen"; verifyStockScreen();
+            phase = "material costing"; verifyMaterials();
+            phase = "recipe and quote screen"; verifyRecipeScreen(screen);
+            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\n");
+            result = Activity.RESULT_OK;
         } catch (Throwable error) {
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_FAIL: " + error + "\n");
-            finish(Activity.RESULT_CANCELED, evidence);
+            evidence.putString("stream", failureDetails(phase, error));
         } finally {
             if (activity != null) {
                 final Activity screen = activity;
-                runOnMainSync(screen::finish);
+                try { runOnMainChecked(screen::finish); }
+                catch (Throwable cleanup) {
+                    evidence.putString("stream", evidence.getString("stream", "") + failureDetails("Activity cleanup", cleanup));
+                    result = Activity.RESULT_CANCELED;
+                }
+            }
+            finish(result, evidence);
+        }
+    }
+    /** Preserve exceptions from the UI thread without terminating instrumentation. */
+    private void runOnMainChecked(Runnable operation) {
+        java.util.concurrent.atomic.AtomicReference<Throwable> fault = new java.util.concurrent.atomic.AtomicReference<>();
+        runOnMainSync(() -> {
+            try { operation.run(); }
+            catch (Throwable error) { fault.set(error); }
+        });
+        if (fault.get() != null) throw new AssertionError("UI-thread verification failed", fault.get());
+    }
+    private static String failureDetails(String phase, Throwable error) {
+        java.io.StringWriter trace = new java.io.StringWriter();
+        error.printStackTrace(new java.io.PrintWriter(trace));
+        return "NATIVE_QUOTE_SMOKE_FAIL: " + phase + "\n" + trace + "\n";
+    }
+    private void verifyRecipeScreen(Activity screen) {
+        android.content.Context context = getTargetContext();
+        try (CatalogStore store = new CatalogStore(context)) {
+            CatalogEntry service = store.create(CatalogEntry.Kind.SERVICE, "Synthetic recipe service", "page", "5.00");
+            CatalogEntry paper = store.create(CatalogEntry.Kind.MATERIAL, "Synthetic recipe paper", "sheet", "1.99");
+            store.moveStock(java.util.UUID.randomUUID().toString(), paper.id, paper.revision, 0, 1500, "Synthetic stock");
+            waitForIdleSync();
+            ActivityMonitor cm = addMonitor(CatalogActivity.class.getName(), null, false);
+            Activity catalog = null;
+            Activity recipe = null;
+            ActivityMonitor rm = addMonitor(RecipeActivity.class.getName(), null, false);
+            try {
+                runOnMainChecked(() -> screen.findViewById(R.id.open_catalog).performClick());
+                catalog = waitForMonitorWithTimeout(cm, 10000);
+                require(catalog != null, "recipe catalog did not open");
+                final Activity shown = catalog;
+                runOnMainChecked(() -> {
+                    View configure = findText(shown.getWindow().getDecorView(), "Configure service materials");
+                    require(configure != null && configure.performClick(), "recipe configuration action unavailable");
+                });
+                recipe = waitForMonitorWithTimeout(rm, 10000);
+                require(recipe != null, "recipe Activity did not open");
+                final Activity editor = recipe;
+                waitForIdleSync();
+                runOnMainChecked(() -> {
+                    View root = editor.getWindow().getDecorView();
+                    require(hasText(root, "No materials configured."), "empty recipe not distinguished");
+                    EditText usage = editor.findViewById(R.id.recipe_usage);
+                    usage.setText("0.5");
+                    require(editor.findViewById(R.id.recipe_save).performClick(), "recipe save unavailable");
+                    require(hasText(root, "Synthetic recipe paper · 0.5 sheet / page"), "configured material missing");
+                    require(hasText(root, "Estimated cost per unit: PHP 1.00 · Stock sufficient"), "per-unit estimate wrong");
+                });
+                waitForIdleSync();
+                require(store.recipeBindings(service.id).size() == 1, "recipe not persisted");
+                runOnMainChecked(editor::finish);
+                waitForIdleSync();
+                runOnMainChecked(() -> {
+                    View select = findText(shown.getWindow().getDecorView(), "Use in quotation");
+                    require(select != null && select.performClick(), "configured service selection failed");
+                });
+                waitForIdleSync();
+                runOnMainChecked(() -> {
+                    View root = screen.getWindow().getDecorView();
+                    EditText price = screen.findViewById(R.id.quote_price);
+                    EditText qty = screen.findViewById(R.id.quote_quantity);
+                    require(price.getText().toString().equals("5.00"), "configured selling price not copied");
+                    qty.setText("3");
+                    require(hasText(root, "Total: PHP 15.00"), "quote selling total wrong");
+                    require(hasText(root, "Material cost: PHP 2.99 · Stock sufficient"), "quote material estimate wrong");
+                    qty.setText("4");
+                    require(hasText(root, "Material cost: PHP 3.98 · Insufficient stock"), "shortage warning missing");
+                    price.setText("6.00");
+                    require(hasText(root, "Total: PHP 24.00"), "manual selling price lost");
+                    require(hasText(root, "Material cost: PHP 3.98 · Insufficient stock"), "manual selling price altered cost");
+                    View clear = findText(root, "Clear service link");
+                    require(clear != null && clear.performClick(), "clear service link unavailable");
+                    require(hasText(root, "Material cost — select a service"), "stale cost after clearing");
+                    require(hasText(root, "Total: PHP 24.00"), "clear link changed sale estimate");
+                });
+                require(store.stockBalance(paper.id).quantity == 1500, "quote consumed inventory");
+                require(store.get(service.id).centavos == 500, "quote changed catalog selling price");
+            } finally {
+                removeMonitor(cm); removeMonitor(rm);
+                if (recipe != null) { final Activity editor = recipe; runOnMainChecked(editor::finish); }
+                if (catalog != null) { final Activity shown = catalog; runOnMainChecked(shown::finish); }
+                if (store.recipeRevision(service.id) != 0 && !store.recipeBindings(service.id).isEmpty())
+                    store.setMaterialUsage(service.id, service.revision, paper.id, paper.revision, store.recipeRevision(service.id), 0);
+                if (store.stockBalance(paper.id).quantity == 1500)
+                    store.moveStock(java.util.UUID.randomUUID().toString(), paper.id, paper.revision, 1, -1500, "Synthetic cleanup");
+                store.archive(service.id, service.revision, true);
+                if (store.stockBalance(paper.id).quantity == 0) store.archive(paper.id, paper.revision, true);
             }
         }
     }
@@ -113,7 +209,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             Activity stock=startActivitySync(intent);
             try {
-                runOnMainSync(()->{
+                runOnMainChecked(()->{
                     View root=stock.getWindow().getDecorView();
                     EditText qty=stock.findViewById(R.id.stock_quantity);
                     EditText reason=stock.findViewById(R.id.stock_reason);
@@ -137,7 +233,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 java.util.List<CatalogStore.StockMovement> older=store.stockHistory(material.id,2,1);
                 require(older.size()==1&&older.get(0).revision==1,"history older page wrong");
             } finally {
-                runOnMainSync(stock::finish);
+                runOnMainChecked(stock::finish);
                 if(store.stockBalance(material.id).quantity==0)store.archive(material.id,material.revision,true);
             }
         }
@@ -196,11 +292,11 @@ public final class NativeQuoteSmoke extends Instrumentation {
             Activity catalog = null;
             ActivityMonitor monitor = addMonitor(CatalogActivity.class.getName(), null, false);
             try {
-                runOnMainSync(() -> screen.findViewById(R.id.open_catalog).performClick());
+                runOnMainChecked(() -> screen.findViewById(R.id.open_catalog).performClick());
                 catalog = waitForMonitorWithTimeout(monitor, 10000);
                 require(catalog != null, "catalog Activity did not open");
                 final Activity shown = catalog;
-                runOnMainSync(() -> {
+                runOnMainChecked(() -> {
                     View root = shown.getWindow().getDecorView();
                     require(hasText(root, "Services & Materials"), "catalog heading missing");
                     require(hasText(root, "Synthetic service · SERVICE"), "catalog fixture missing");
@@ -209,7 +305,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
                     require(choice != null && choice.performClick(), "service selection failed");
                 });
                 waitForIdleSync();
-                runOnMainSync(() -> {
+                runOnMainChecked(() -> {
                     EditText price = screen.findViewById(R.id.quote_price);
                     require(price.getText().toString().equals("3.25"), "catalog quotation price not copied");
                 });
@@ -217,7 +313,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 removeMonitor(monitor);
                 if (catalog != null) {
                     final Activity shown = catalog;
-                    runOnMainSync(shown::finish);
+                    runOnMainChecked(shown::finish);
                 }
                 CatalogEntry current = store.get(fixture.id);
                 if (!current.archived) store.archive(current.id, current.revision, true);

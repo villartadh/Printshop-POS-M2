@@ -87,6 +87,11 @@ public final class CatalogActivity extends Activity {
                     });
                 }
                 if (!entry.archived && entry.kind == CatalogEntry.Kind.SERVICE) {
+                    button(rows, "Configure service materials", () -> {
+                        Intent intent=new Intent(this,RecipeActivity.class);
+                        intent.putExtra("serviceId",entry.id);
+                        startActivity(intent);
+                    });
                     button(rows, "Use in quotation", () -> {
                         try {
                             CatalogEntry current = store.get(entry.id);
@@ -94,6 +99,7 @@ public final class CatalogActivity extends Activity {
                             Intent result = new Intent();
                             result.putExtra("centavos", current.centavos);
                             result.putExtra("serviceName", current.name);
+                            result.putExtra("serviceId", current.id);
                             setResult(RESULT_OK, result);
                             finish();
                         } catch (RuntimeException ex) { error(ex); refresh(); }
