@@ -448,6 +448,24 @@ async function main(){
     try{assert.equal(verify.prepare('SELECT COUNT(*) AS n FROM transactions WHERE client_mutation_id=?').get(originalPaidRequest.clientMutationId).n,1);}
     finally{verify.close();}
   });
+  await check('complete versioned SQLite backup preserves financial recovery and business export excludes credentials',async()=>{
+    const live=path.join(sandbox,'data','printshop-pos.db'),target=path.join(sandbox,'financial-complete.db');
+    snapshot(live,target);
+    const a=new DatabaseSync(live,{readOnly:true}),b=new DatabaseSync(target,{readOnly:true});
+    try{
+      assert.equal(b.prepare('PRAGMA user_version').get().user_version,1);
+      for(const table of ["transaction_request_identities","inventory_mutation_results","applied_mutations","users","sessions","app_settings","categories","services","supply_categories","inventory_items","stock_movements","customers","transactions","order_conversions","print_jobs","expenses","cashier_shifts","transaction_reversals","drawer_movement_requests","balance_collection_requests","balance_collections","audit_logs","inventory_alert_epochs","inventory_alert_reads"]){
+        const query='SELECT * FROM '+table+' ORDER BY rowid';
+        assert.deepEqual(b.prepare(query).all(),a.prepare(query).all(),table);
+      }
+      for(const table of ['transaction_request_identities','balance_collection_requests','drawer_movement_requests','inventory_mutation_results','stock_movements','audit_logs'])assert.ok(b.prepare('SELECT COUNT(*) AS n FROM '+table).get().n>0,table);
+    }finally{a.close();b.close();}
+    const exported=verifyResponse(await request('/api/backup/export',{auth:true}),200);
+    assert.equal(exported.restorable,false);assert.equal(exported.exportKind,'business-data-only');
+    for(const table of ['transaction_request_identities','balance_collection_requests','drawer_movement_requests','inventory_mutation_results','stock_movements','cashier_shifts','transaction_reversals','balance_collections','audit_logs','inventory_alert_reads'])assert.ok(Array.isArray(exported[table]),table);
+    assert.ok(!('users' in exported)&&!('sessions' in exported)&&!('session_secret' in exported));
+    assert.ok(!JSON.stringify(exported).includes('password_hash')&&!JSON.stringify(exported).includes('pin_hash'));
+  });
   await check('logout revokes session',async()=>{verifyResponse(await request('/api/auth/logout',{method:'POST',auth:true}),200);verifyResponse(await request('/api/bootstrap',{auth:true}),401);});
   await stop();report.status='PASS';
  }catch(e){report.error=String(e.message);console.error(report.status,report.error);process.exitCode=1;}

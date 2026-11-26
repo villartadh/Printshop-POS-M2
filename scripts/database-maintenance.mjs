@@ -4,6 +4,9 @@ import {randomUUID} from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 const required=['users','transactions','inventory_items','stock_movements','app_settings','cashier_shifts','customers','print_jobs'];
+const currentTables=["transaction_request_identities","inventory_mutation_results","applied_mutations","users","sessions","app_settings","categories","services","supply_categories","inventory_items","stock_movements","customers","transactions","order_conversions","print_jobs","expenses","cashier_shifts","transaction_reversals","drawer_movement_requests","balance_collection_requests","balance_collections","audit_logs","inventory_alert_epochs","inventory_alert_reads"];
+const criticalColumns={"transactions":["id","client_mutation_id","receipt_snapshot_json","payments_json","balance_due"],"inventory_items":["id","reserved_quantity","archived_at","archive_reason","minimum_threshold"],"stock_movements":["id","inventory_item_id","purchase_unit_cost","quantity_before","quantity_delta"],"transaction_request_identities":["mutation_id","actor_id","transaction_id","request_digest"],"balance_collection_requests":["mutation_id","actor_id","customer_id","amount","outstanding_after"],"drawer_movement_requests":["mutation_id","actor_id","shift_id","movement_type","amount","reason","movement_id","expected_after"],"inventory_mutation_results":["id","actor_id","request_json","result_json"],"balance_collections":["id","transaction_id","customer_id","shift_id","amount"],"inventory_alert_epochs":["item_id","epoch"],"inventory_alert_reads":["user_id","item_id","epoch"]};
+const requiredTriggers=['inventory_alert_insert','inventory_alert_transition'];
 export function verify(file) {
   if (!fs.existsSync(file)) throw new Error('Database file not found: '+file);
   const db=new DatabaseSync(file,{readOnly:true});
@@ -11,7 +14,19 @@ export function verify(file) {
     const rows=db.prepare('PRAGMA integrity_check').all();
     if(rows.length!==1 || rows[0].integrity_check!=='ok') throw new Error('SQLite integrity check failed');
     const tables=new Set(db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(x=>x.name));
-    if(required.some(t=>!tables.has(t))) throw new Error('Not a complete Printshop POS database');
+    const version=db.prepare('PRAGMA user_version').get().user_version;
+    if(version!==0&&version!==1)throw new Error('Unsupported Printshop POS database schema version: '+version);
+    if(required.some(t=>!tables.has(t)))throw new Error('Not a complete Printshop POS database');
+    if(version===1){
+      const missing=currentTables.filter(t=>!tables.has(t));
+      if(missing.length)throw new Error('Current schema missing required tables: '+missing.join(', '));
+      for(const [table,columns] of Object.entries(criticalColumns)){
+        const found=new Set(db.prepare('PRAGMA table_info('+table+')').all().map(c=>c.name));
+        if(columns.some(c=>!found.has(c)))throw new Error('Current schema missing required columns: '+table);
+      }
+      const triggers=new Set(db.prepare("SELECT name FROM sqlite_master WHERE type='trigger'").all().map(r=>r.name));
+      if(requiredTriggers.some(t=>!triggers.has(t)))throw new Error('Current schema missing required inventory alert triggers');
+    }
     if(db.prepare('PRAGMA foreign_key_check').all().length) throw new Error('Foreign key check failed');
   } finally { db.close(); }
 }

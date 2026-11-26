@@ -2,6 +2,9 @@
 
 Target: v0.9.6 consolidated software pilot, not a production release. Preserve main, baseline/v0.9.5, and the original Printshop-POS repo. Use develop only; inspect current head and both CI runs before advancing. Make cohesive atomic changes, with tests and evidence; never bypass failing gates.
 
+## Verified at 686cd27
+112 regression tests, 32 API scenarios, 14 browser workflows; CI 45730007855 and 45729999746 passed. Checkout and targeted authorization accepted. Schema-version marker and strict marked database completeness checks submitted; legacy version 0 remains eligible for migration, future versions rejected. Financial ledger/replay table snapshot comparison and expanded non-restorable JSON export tests added. Next: actual baseline upgrade and restore acceptance, LDC evidence and release documentation. Browser-local unresolved records and session.secret remain outside SQLite snapshot.
+
 ## Acceptance at 2a52b08
 CI 45728874513 passed; CI 45728882856 failed Windows browser quotation tender entry (actual '20.0010', expected '10'). Regression/API passed. Checkout fields now initialize in layout phase before paint; browser waits for exact initial tender before entry, retaining strict value and insufficient-tender assertions. Cause suspected initialization race, not yet proven. Do not bypass gate. Backup audit: verified SQLite snapshot copies complete database, but JSON export omits financial recovery tables, and current database verifier only checks legacy core tables; strengthen verification with version-aware completeness and recovery evidence after checkout gate passes.
 

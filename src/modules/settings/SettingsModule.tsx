@@ -165,10 +165,10 @@ export const SettingsModule: React.FC = () => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `printshop-pos-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `printshop-pos-business-export-${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     URL.revokeObjectURL(url);
-    notify('Backup exported.', 'success');
+    notify('Business data exported. Use BACKUP.cmd for a restorable database.', 'success');
   };
 
   const handleExportConfig = () => {
@@ -903,7 +903,7 @@ export const SettingsModule: React.FC = () => {
           <Card className="space-y-3">
             <h2 className="text-sm font-semibold">Demonstration Data & Database Backup</h2>
             <p className="text-xs text-[var(--pos-text-muted)]">
-              Sample services, customers, and starter transactions are isolated as demonstration records and can be cleared anytime before production use.
+              Sample records are isolated. JSON exports are for review only and exclude credentials and sessions. Use BACKUP.cmd for a complete, restorable SQLite database; keep exports and backups private.
             </p>
             <div className="flex flex-wrap gap-2">
               {canConfigure && (
@@ -927,7 +927,7 @@ export const SettingsModule: React.FC = () => {
               {isAdmin && (
                 <Button variant="secondary" size="sm" onClick={() => void handleExportBackup()}>
                   <Download className="w-3.5 h-3.5" />
-                  Export Business Data JSON (partial)
+                  Export Business Data JSON (not restorable)
                 </Button>
               )}
             </div>

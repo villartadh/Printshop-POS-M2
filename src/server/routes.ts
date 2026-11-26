@@ -2255,9 +2255,11 @@ apiRouter.get(
     const settingsRow = db.prepare('SELECT value_json FROM app_settings WHERE key = ?').get('app_settings') as
       | { value_json: string }
       | undefined;
-    const backup = {
+    const backup = db.transaction(()=>({
       exportedAt: new Date().toISOString(),
-      schemaVersion: '1.0.0',
+      schemaVersion: '1.1.0',
+      exportKind:'business-data-only',
+      restorable:false,
       exportedBy: req.authUser!.username,
       settings: settingsRow ? parseJsonSafe(settingsRow.value_json, DEFAULT_SETTINGS) : DEFAULT_SETTINGS,
       categories: db.prepare('SELECT * FROM categories').all(),
@@ -2268,7 +2270,20 @@ apiRouter.get(
       print_jobs: db.prepare('SELECT * FROM print_jobs').all(),
       order_conversions: db.prepare('SELECT * FROM order_conversions').all(),
       expenses: db.prepare('SELECT * FROM expenses').all(),
-    };
+      supply_categories:db.prepare('SELECT * FROM supply_categories').all(),
+      stock_movements:db.prepare('SELECT * FROM stock_movements').all(),
+      cashier_shifts:db.prepare('SELECT * FROM cashier_shifts').all(),
+      transaction_reversals:db.prepare('SELECT * FROM transaction_reversals').all(),
+      balance_collections:db.prepare('SELECT * FROM balance_collections').all(),
+      balance_collection_requests:db.prepare('SELECT * FROM balance_collection_requests').all(),
+      drawer_movement_requests:db.prepare('SELECT * FROM drawer_movement_requests').all(),
+      transaction_request_identities:db.prepare('SELECT * FROM transaction_request_identities').all(),
+      inventory_mutation_results:db.prepare('SELECT * FROM inventory_mutation_results').all(),
+      applied_mutations:db.prepare('SELECT * FROM applied_mutations').all(),
+      inventory_alert_epochs:db.prepare('SELECT * FROM inventory_alert_epochs').all(),
+      inventory_alert_reads:db.prepare('SELECT * FROM inventory_alert_reads').all(),
+      audit_logs:db.prepare('SELECT * FROM audit_logs').all(),
+    }))();
     writeAuditLog(
       req.authUser!.id,
       req.authUser!.fullName,
