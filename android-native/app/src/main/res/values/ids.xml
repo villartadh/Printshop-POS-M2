@@ -9,6 +9,7 @@
     <item name="stock_receive" type="id"/>
     <item name="stock_consume" type="id"/>
     <item name="stock_retry" type="id"/>
+    <item name="stock_cancel" type="id"/>
     <item name="stock_latest" type="id"/>
     <item name="stock_older" type="id"/>
     <item name="recipe_material" type="id"/>
