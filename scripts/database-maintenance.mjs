@@ -18,13 +18,12 @@ export function verify(file) {
     if(version!==0&&version!==1&&version!==2)throw new Error('Unsupported Printshop POS database schema version: '+version);
     if(required.some(t=>!tables.has(t)))throw new Error('Not a complete Printshop POS database');
     if(version>=1){
-    if(version===2){
-      currentTables.push('monetary_request_cancellations');
-      Object.assign(criticalColumns,{monetary_request_cancellations:['id','kind','actor_id','mutation_id','reason','created_at'],expenses:['id','client_mutation_id','request_digest','actor_id','voided_at','voided_by','void_reason']});
-    }
-      const missing=currentTables.filter(t=>!tables.has(t));
+      // Derive requirements per verification; mixed-version restore calls share this module.
+      const expectedTables=version===2?[...currentTables,'monetary_request_cancellations']:currentTables;
+      const expectedColumns=version===2?{...criticalColumns,monetary_request_cancellations:['id','kind','actor_id','mutation_id','reason','created_at'],expenses:['id','client_mutation_id','request_digest','actor_id','voided_at','voided_by','void_reason']}:criticalColumns;
+      const missing=expectedTables.filter(t=>!tables.has(t));
       if(missing.length)throw new Error('Current schema missing required tables: '+missing.join(', '));
-      for(const [table,columns] of Object.entries(criticalColumns)){
+      for(const [table,columns] of Object.entries(expectedColumns)){
         const found=new Set(db.prepare('PRAGMA table_info('+table+')').all().map(c=>c.name));
         if(columns.some(c=>!found.has(c)))throw new Error('Current schema missing required columns: '+table);
       }
