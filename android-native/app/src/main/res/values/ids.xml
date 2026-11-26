@@ -4,4 +4,11 @@
     <item name="quote_quantity" type="id"/>
     <item name="quote_received" type="id"/>
     <item name="open_catalog" type="id"/>
+    <item name="stock_quantity" type="id"/>
+    <item name="stock_reason" type="id"/>
+    <item name="stock_receive" type="id"/>
+    <item name="stock_consume" type="id"/>
+    <item name="stock_retry" type="id"/>
+    <item name="stock_latest" type="id"/>
+    <item name="stock_older" type="id"/>
 </resources>
