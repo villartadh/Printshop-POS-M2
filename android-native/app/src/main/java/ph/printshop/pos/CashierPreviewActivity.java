@@ -254,9 +254,26 @@ public final class CashierPreviewActivity extends Activity {
             button("Create training cashier",R.id.cashier_add_staff,this::showStaff);
             button("Manage training cashiers",R.id.cashier_manage_staff,this::showManageStaff);
             button("Training inventory",R.id.cashier_inventory,this::showInventory);
+            button("Administrative history",R.id.cashier_admin_history,()->showAdminHistory(0));
             button("Reset training cashier passphrase",R.id.cashier_reset_pass,()->showCredentialChange(true));
         }
         button("Lock / sign out",R.id.cashier_lock,this::lockAndReload);
+    }
+    private void showAdminHistory(long before){
+        submit(()->store.authorizedFixtureAdminHistory(session(),before,20),v->{
+            mode="admin-history";screen("Training administrative history","Owner-only history of authenticated manual changes. Earlier preview and migrated records are not attributed retrospectively.");
+            @SuppressWarnings("unchecked") List<AdminJournal.Entry> events=(List<AdminJournal.Entry>)v;
+            if(events.isEmpty())label("No administrative events on this page");
+            for(AdminJournal.Entry e:events){
+                label("#"+e.eventNo+" · "+e.action.replace('_',' ')+" · "+e.actorName+" (account revision "+e.actorRevision+")");
+                label("Current item: "+e.subjectName+" · linked revision "+e.revision+" · "+e.subjectId);
+                label(new java.util.Date(e.recordedMs).toString());
+                if(e.requestId!=null)label("Request: "+e.requestId+" · "+e.reason);
+            }
+            if(events.size()==20)button("Older administrative events",R.id.cashier_admin_older,()->showAdminHistory(events.get(events.size()-1).eventNo));
+            if(before!=0)button("Latest administrative events",R.id.cashier_admin_latest,()->showAdminHistory(0));
+            back();
+        });
     }
     private void showStaff(){
         mode="staff";screen("Create training cashier","Owner-only creation. No real shop credentials.");

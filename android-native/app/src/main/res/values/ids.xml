@@ -75,4 +75,7 @@
     <item name="cashier_disable_reason" type="id"/>
     <item name="cashier_disable_pass" type="id"/>
     <item name="cashier_disable_confirm" type="id"/>
+    <item type="id" name="cashier_admin_history"/>
+    <item type="id" name="cashier_admin_older"/>
+    <item type="id" name="cashier_admin_latest"/>
 </resources>

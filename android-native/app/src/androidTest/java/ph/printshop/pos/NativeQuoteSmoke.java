@@ -60,6 +60,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "v6 cashier migration"; verifyCheckoutMigration(6);
             phase = "v7 credential migration"; verifyCheckoutMigration(7);
             phase = "v8 staff audit migration"; verifyCheckoutMigration(8);
+            phase = "v9 administrative audit migration"; verifyCheckoutMigration(9);
             phase = "durable atomic checkout fixture"; verifyDurableCheckout();
             phase = "cashier authorization and shift fixture"; verifyCashierAuthShift();
             phase = "audited credential lifecycle"; verifyCredentialLifecycle();
@@ -71,7 +72,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "pricing settings and document quote"; verifyPricingScreen(screen);
             phase = "measured quote"; verifyMeasuredQuote(screen);
             phase = "native cashier training UI"; verifyCashierTrainingScreen(screen);
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\n");
+            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\n");
             result = Activity.RESULT_OK;
         } catch (Throwable error) {
             evidence.putString("stream", failureDetails(phase, error));
@@ -179,6 +180,12 @@ public final class NativeQuoteSmoke extends Instrumentation {
             awaitText(first,"Training paper · 50 sheet","owner stock removal wrong");
             trainingClick(first,R.id.cashier_back);
             awaitText(first,"No open shift","inventory return failed");
+            trainingClick(first,R.id.cashier_admin_history);
+            awaitText(first,"Training administrative history","owner administrative history absent");
+            awaitText(first,"#6 · STOCK APPLY · "+owner+" (account revision 1)","owner stock audit missing");
+            awaitText(first,"#2 · STOCK CANCEL · "+owner+" (account revision 1)","owner cancel audit missing");
+            trainingClick(first,R.id.cashier_back);
+            awaitText(first,"No open shift","audit dashboard return failed");
             trainingClick(first,R.id.cashier_add_staff);
             awaitText(first,"Owner-only creation. No real shop credentials.","owner-only screen missing");
             trainingField(first,R.id.cashier_username,cashier);
@@ -193,6 +200,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 require(setup.findViewById(R.id.cashier_add_staff)==null,"cashier visible owner-only action");
                 require(setup.findViewById(R.id.cashier_inventory)==null,"cashier visible owner-only inventory");
                 require(setup.findViewById(R.id.cashier_manage_staff)==null,"cashier visible owner-only staff management");
+                require(setup.findViewById(R.id.cashier_admin_history)==null,"cashier visible owner-only audit");
             });
             trainingField(first,R.id.cashier_opening,"10.00");
             trainingClick(first,R.id.cashier_open_shift);
@@ -566,7 +574,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 db.setVersion(4);
             }
             try(CatalogStore store=new CatalogStore(context,filename)){
-                require(store.getReadableDatabase().getVersion()==9,"v4-to-v9 migration version wrong");
+                require(store.getReadableDatabase().getVersion()==10,"v4-to-v10 migration version wrong");
                 require(store.stockBalance(material).quantity==1500&&store.stockHistory(material,0,5).size()==1,"v4 stock lost");
                 require(store.recipeBindings(service).get(0).quantityMilli==500&&store.pricing(service).tiers.get(0).rateCentavos==250,"v4 recipe/pricing lost");
                 require(store.pendingStock(material)==null,"unexpected migrated pending request");
@@ -715,20 +723,25 @@ public final class NativeQuoteSmoke extends Instrumentation {
                     CashierJournal.Shift shift=null;
                     if(former>=7){
                         CashierJournal.create(db);
-                        if(former==8)CredentialJournal.upgrade(db);
+                        if(former>=8)CredentialJournal.upgrade(db);
                         char[] synthetic="Synthetic-Migration-Owner-01".toCharArray();
                         try{
                             long now=System.currentTimeMillis();
                             CashierJournal.Principal owner=CashierJournal.bootstrap(db,"migration-owner",synthetic,now);
                             migratedToken=CashierJournal.signIn(db,owner.username,synthetic,now);
                             shift=CashierJournal.openShift(db,owner,migratedShift,1000,now);
-                            if(former==8){
+                            if(former>=8){
                                 CashierJournal.Principal legacy=CashierJournal.createCashier(db,owner,"legacy-disabled",synthetic,now);
                                 CashierJournal.createCashier(db,owner,"legacy-rotated",synthetic,now);
                                 char[] changed="Synthetic-Migration-Rotated-02".toCharArray();
                                 try{require(CashierJournal.resetCashierCredential(db,owner,synthetic,"legacy-rotated",changed,now),"v8 credential fixture failed");}
                                 finally{java.util.Arrays.fill(changed,'\0');}
                                 db.execSQL("UPDATE cashier_accounts SET active=0,revision=2 WHERE id=?",new Object[]{legacy.id});
+                                if(former>=9){
+                                    StaffJournal.upgrade(db);
+                                    CashierJournal.Principal disabled=CashierJournal.createCashier(db,owner,"v9-disabled",synthetic,now);
+                                    require(CashierJournal.disableCashier(db,owner,disabled.id,1,synthetic,"Synthetic v9 historical disable",now),"v9 disable fixture failed");
+                                }
                             }
                         }finally{java.util.Arrays.fill(synthetic,'\0');}
                     }
@@ -744,10 +757,11 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 db.setVersion(former);
             }
             try(CatalogStore store=former>=7?CatalogStore.checkoutFixture(context,fixture):new CatalogStore(context,filename)){
-                require(store.getReadableDatabase().getVersion()==9,"v5/v6/v7/v8 migration failed");
+                require(store.getReadableDatabase().getVersion()==10,"v5/v6/v7/v8/v9 migration failed");
                 require(store.stockBalance(material).quantity==1500&&store.stockHistory(material,0,10).size()==1,"v5 stock changed");
                 require(store.pendingStock(material)!=null&&store.pendingStock(material).id.equals(pending),"v5 pending stock lost");
                 require(store.get(material).centavos==199,"v5 catalog changed");
+                require(trainingCount(store,"SELECT COUNT(*) FROM cashier_admin_events")==0,"migration invented administrative audit");
                 if(former>=7){
                     rejectStock(()->store.applyStagedStock(pending));
                     require(store.applyAuthorizedFixtureStock(migratedToken,pending).quantity==1000,"authenticated v7 pending stock not recoverable");
@@ -756,9 +770,10 @@ public final class NativeQuoteSmoke extends Instrumentation {
                     require(c.moveToFirst()&&c.getInt(0)==(former>=7?2:former==6?1:0),"migration changed checkout history");
                 }
                 require(CashierJournal.initialized(store.getReadableDatabase())==(former>=7),"migration changed account initialization");
-                require(trainingCount(store,"SELECT COUNT(*) FROM cashier_credential_events")==(former==8?1:0),"migration changed credential audit");
-                require(trainingCount(store,"SELECT COUNT(*) FROM cashier_disable_events")==0,"migration invented disable events");
-                if(former==8){
+                require(trainingCount(store,"SELECT COUNT(*) FROM cashier_credential_events")==(former>=8?1:0),"migration changed credential audit");
+                require(trainingCount(store,"SELECT COUNT(*) FROM cashier_disable_events")== (former>=9?1:0),"migration changed disable events");
+                require(trainingCount(store,"SELECT COUNT(*) FROM cashier_admin_events")== (former>=7?1:0),"only post-migration authenticated resolution should be audited");
+                if(former>=8){
                     require(trainingCount(store,"SELECT COUNT(*) FROM cashier_accounts WHERE username='legacy-disabled' AND active=0 AND revision=2")==1,"v8 disabled identity lost");
                     require(trainingCount(store,"SELECT COUNT(*) FROM cashier_accounts WHERE username='legacy-rotated' AND active=1 AND revision=2")==1,"v8 credential revision lost");
                 }
@@ -857,6 +872,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             try(CatalogStore ordinary=new CatalogStore(context)){
                 rejectStock(()->ordinary.createAuthorizedFixtureCatalog("invalid",CatalogEntry.Kind.MATERIAL,"Denied ordinary","sheet","1.00"));
                 rejectStock(()->ordinary.authorizedFixtureInventory("invalid"));
+                rejectStock(()->ordinary.authorizedFixtureAdminHistory("invalid",0,20));
                 rejectStock(()->ordinary.applyAuthorizedFixtureStock("invalid",stockId()));
             }
             try(CatalogStore store=CatalogStore.checkoutFixture(context,fixture)){
@@ -866,6 +882,11 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 String token=store.signInFixture("admin-owner",owner);
                 store.createFixtureCashier(token,"admin-cashier",staff);
                 String cashier=store.signInFixture("admin-cashier",staff);
+                require(store.authorizedFixtureAdminHistory(token,0,20).isEmpty(),"pre-auth history was misattributed");
+                rejectStock(()->store.authorizedFixtureAdminHistory(cashier,0,20));
+                rejectStock(()->store.authorizedFixtureAdminHistory(null,0,20));
+                rejectStock(()->store.authorizedFixtureAdminHistory(token,-1,20));
+                rejectStock(()->store.authorizedFixtureAdminHistory(token,0,51));
                 CatalogEntry material=store.createAuthorizedFixtureCatalog(token,CatalogEntry.Kind.MATERIAL,"Synthetic admin paper","sheet","1.00");
                 String materialId=material.id,serviceId=service.id,request=stockId();
                 java.util.List<PricingMath.Tier> tiers=java.util.Collections.emptyList();
@@ -894,6 +915,13 @@ public final class NativeQuoteSmoke extends Instrumentation {
                     rejectStock(()->alias.moveStock(request,materialId,1,0,5000,"Denied alias"));
                     rejectStock(()->alias.createAuthorizedFixtureCatalog(token,CatalogEntry.Kind.MATERIAL,"Denied alias","sheet","1.00"));
                 }
+                require(store.authorizedFixtureAdminHistory(token,0,20).size()==1,"denials created audit events");
+                store.getWritableDatabase().execSQL("CREATE TRIGGER fault_admin BEFORE INSERT ON cashier_admin_events BEGIN SELECT RAISE(ABORT,'synthetic audit fault'); END");
+                boolean fault=false;
+                try{store.editAuthorizedFixtureCatalog(token,serviceId,1,"Synthetic fault edit","page","2.50");}
+                catch(android.database.sqlite.SQLiteException expected){fault=true;}
+                finally{store.getWritableDatabase().execSQL("DROP TRIGGER fault_admin");}
+                require(fault&&store.get(serviceId).revision==1&&store.authorizedFixtureAdminHistory(token,0,20).size()==1,"audit failure did not roll back catalog change");
                 CatalogEntry edited=store.editAuthorizedFixtureCatalog(token,serviceId,1,"Synthetic authorized service","page","2.50");
                 require(edited.revision==2,"owner edit not recorded");
                 CatalogEntry spare=store.createAuthorizedFixtureCatalog(token,CatalogEntry.Kind.MATERIAL,"Synthetic spare","sheet","1.00");
@@ -904,6 +932,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 require(store.setAuthorizedFixtureMaterialUsage(token,serviceId,2,materialId,1,0,1000)==1,"owner recipe refused");
                 require(store.stageAuthorizedFixtureStock(token,request,materialId,1,0,5000,"Synthetic owner addition").state.equals("PENDING"),"owner stage refused");
                 require(store.stockBalance(materialId).quantity==0,"stage changed stock");
+                require(store.stageAuthorizedFixtureStock(token,request,materialId,1,0,5000,"Synthetic owner addition").id.equals(request),"stage replay wrong");
                 rejectStock(()->store.applyStagedStock(request));rejectStock(()->store.cancelStagedStock(request));
                 rejectStock(()->store.applyAuthorizedFixtureStock(cashier,request));
                 rejectStock(()->store.cancelAuthorizedFixtureStock(cashier,request));
@@ -915,6 +944,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 rejectStock(()->store.cancelAuthorizedFixtureStock(token,request));
                 String cancelled=stockId();
                 store.stageAuthorizedFixtureStock(token,cancelled,materialId,1,1,-1000,"Synthetic pending removal");
+                store.cancelAuthorizedFixtureStock(token,cancelled);
                 store.cancelAuthorizedFixtureStock(token,cancelled);
                 require(store.stockRequest(cancelled).state.equals("CANCELLED")&&store.stockBalance(materialId).quantity==5000,"owner cancellation mutated stock");
                 rejectStock(()->store.applyAuthorizedFixtureStock(token,cancelled));
@@ -937,6 +967,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 rejectStock(()->store.applyAuthorizedFixtureStock(token,recovery));
                 rejectStock(()->store.cancelAuthorizedFixtureStock(token,recovery));
                 rejectStock(()->store.authorizedFixtureInventory(token));
+                rejectStock(()->store.authorizedFixtureAdminHistory(token,0,20));
                 // A new authenticated owner, after database reopen, can resolve original identity.
                 try(CatalogStore reopened=CatalogStore.checkoutFixture(context,fixture)){
                     String again=reopened.signInFixture("admin-owner",owner);
@@ -944,6 +975,24 @@ public final class NativeQuoteSmoke extends Instrumentation {
                     require(reopened.applyAuthorizedFixtureStock(again,recovery).quantity==5000,"original owner stock recovery failed");
                     require(reopened.applyAuthorizedFixtureStock(again,recovery).revision==3,"recovery replay duplicated movement");
                     require(trainingCount(reopened,"SELECT COUNT(*) FROM stock_movements")==3,"owner stock history wrong");
+                    java.util.List<AdminJournal.Entry> all=reopened.authorizedFixtureAdminHistory(again,0,50);
+                    require(all.size()==16&&all.get(0).action.equals("STOCK_APPLY")&&all.get(0).requestId.equals(recovery),"audit history count or recovery link wrong");
+                    String[] actions={"STOCK_APPLY","STOCK_STAGE","STOCK_APPLY","STOCK_STAGE","STOCK_CANCEL","STOCK_STAGE","STOCK_APPLY","STOCK_STAGE","RECIPE_SAVE","PRICING_SAVE","PRICING_SAVE","CATALOG_RESTORE","CATALOG_ARCHIVE","CATALOG_CREATE","CATALOG_EDIT","CATALOG_CREATE"};
+                    for(int i=0;i<all.size();i++)require(all.get(i).action.equals(actions[i])&&all.get(i).actorRevision==1&&all.get(i).actorName.equals("admin-owner"),"audit chronology or actor incorrect");
+                    java.util.List<AdminJournal.Entry> first=reopened.authorizedFixtureAdminHistory(again,0,5);
+                    java.util.List<AdminJournal.Entry> older=reopened.authorizedFixtureAdminHistory(again,first.get(4).eventNo,50);
+                    require(first.size()==5&&older.size()==11&&older.get(0).eventNo==all.get(5).eventNo,"audit pagination overlap or loss");
+                    char[] changed="Synthetic-Admin-Owner-Changed-03".toCharArray();
+                    try{
+                        reopened.changeFixturePassphrase(again,owner,changed);
+                        rejectStock(()->reopened.authorizedFixtureAdminHistory(again,0,20));
+                        String rotated=reopened.signInFixture("admin-owner",changed);
+                        String last=stockId();
+                        reopened.stageAuthorizedFixtureStock(rotated,last,materialId,1,3,1000,"Synthetic new credential");
+                        reopened.cancelAuthorizedFixtureStock(rotated,last);
+                        java.util.List<AdminJournal.Entry> latest=reopened.authorizedFixtureAdminHistory(rotated,0,3);
+                        require(latest.size()==3&&latest.get(0).actorRevision==2&&latest.get(1).actorRevision==2&&latest.get(2).actorRevision==1,"audit actor revision changed historical identity");
+                    }finally{java.util.Arrays.fill(changed,'\0');}
                 }
             }
         }finally{
@@ -1385,7 +1434,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             }
             java.util.List<PricingMath.Tier> tiers=java.util.Arrays.asList(new PricingMath.Tier(2000,200),new PricingMath.Tier(1000,250));
             try(CatalogStore store=new CatalogStore(context,filename)){
-                require(store.getReadableDatabase().getVersion()==9,"v3-to-v9 migration version wrong");
+                require(store.getReadableDatabase().getVersion()==10,"v3-to-v10 migration version wrong");
                 require(store.pricing(service).revision==0&&!store.pricing(service).needsAdvancedQuote(),"legacy default changed");
                 require(store.recipeRevision(service)==1&&store.stockBalance(material).quantity==1500,"migration changed recipe or stock");
                 PricingProfile saved=store.savePricing(service,1,0,PricingMath.Method.PER_PAGE,true,tiers);
