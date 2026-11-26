@@ -22,4 +22,10 @@
     <item name="pricing_add" type="id"/>
     <item name="pricing_save" type="id"/>
     <item name="pricing_reload" type="id"/>
+    <item name="quote_pages" type="id"/>
+    <item name="quote_copies" type="id"/>
+    <item name="quote_width" type="id"/>
+    <item name="quote_height" type="id"/>
+    <item name="quote_dimension_unit" type="id"/>
+    <item name="quote_material_basis" type="id"/>
 </resources>
