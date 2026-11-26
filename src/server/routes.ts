@@ -2252,12 +2252,11 @@ apiRouter.get(
   requireAuth,
   requireRole(['admin']),
   (req: AuthenticatedRequest, res) => {
-    const settingsRow = db.prepare('SELECT value_json FROM app_settings WHERE key = ?').get('app_settings') as
-      | { value_json: string }
-      | undefined;
-    const backup = db.transaction(()=>({
+    const backup = db.transaction(()=>{
+      const settingsRow = db.prepare('SELECT value_json FROM app_settings WHERE key = ?').get('app_settings') as { value_json: string } | undefined;
+      return {
       exportedAt: new Date().toISOString(),
-      schemaVersion: '1.1.0',
+      schemaVersion: '1.2.0',
       exportKind:'business-data-only',
       restorable:false,
       exportedBy: req.authUser!.username,
@@ -2275,23 +2274,18 @@ apiRouter.get(
       cashier_shifts:db.prepare('SELECT * FROM cashier_shifts').all(),
       transaction_reversals:db.prepare('SELECT * FROM transaction_reversals').all(),
       balance_collections:db.prepare('SELECT * FROM balance_collections').all(),
-      balance_collection_requests:db.prepare('SELECT * FROM balance_collection_requests').all(),
-      drawer_movement_requests:db.prepare('SELECT * FROM drawer_movement_requests').all(),
-      transaction_request_identities:db.prepare('SELECT * FROM transaction_request_identities').all(),
-      inventory_mutation_results:db.prepare('SELECT * FROM inventory_mutation_results').all(),
-      applied_mutations:db.prepare('SELECT * FROM applied_mutations').all(),
-      inventory_alert_epochs:db.prepare('SELECT * FROM inventory_alert_epochs').all(),
-      inventory_alert_reads:db.prepare('SELECT * FROM inventory_alert_reads').all(),
       audit_logs:db.prepare('SELECT * FROM audit_logs').all(),
-    }))();
+      };
+    })();
     writeAuditLog(
       req.authUser!.id,
       req.authUser!.fullName,
       'BACKUP_EXPORTED',
       'system',
       'backup',
-      'Exported business configuration and ledger backup',
+      'Exported private business review data (not restorable)',
     );
+    res.setHeader('Cache-Control','no-store');
     res.json(backup);
   },
 );

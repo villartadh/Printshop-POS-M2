@@ -8,6 +8,8 @@ import {randomUUID} from 'node:crypto';
 import net from 'node:net';
 import { DatabaseSync } from 'node:sqlite';
 import { snapshot } from './database-maintenance.mjs';
+import {reviewSnapshot} from './ledger-review.mjs';
+import {createHash} from 'node:crypto';
 import { calculateServicePrice, calculateCartItemTotals, calculateOrderTotals } from '../src/shared/pricingEngine.ts';
 import { DEFAULT_SETTINGS } from '../src/shared/defaults.ts';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
@@ -336,6 +338,29 @@ async function main(){
     assert.equal(privileged.discountPercent,10);
     assert.deepEqual(userRows.filter(u=>u.id!==cashier.user.id).map(u=>u.email),userRows.filter(u=>u.id!==cashier.user.id).map(()=>''));
     assert.deepEqual(verifyResponse(await request('/api/bootstrap',{headers}),200).auditLogs,[]);
+    verifyResponse(await request('/api/backup/export',{headers}),403);
+  });
+  await check('read-only ledger review validates actual backup and detects corrupted copy',async()=>{
+    const live=path.join(sandbox,'data','printshop-pos.db');
+    const backup=path.join(sandbox,'ledger-review-clean.db');
+    snapshot(live,backup);
+    const digest=file=>createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+    const original=digest(backup);
+    const clean=reviewSnapshot(backup);
+    assert.equal(clean.status,'PASS',JSON.stringify(clean.findings));
+    assert.equal(clean.databaseSha256,original);assert.equal(digest(backup),original);
+    assert.ok(clean.counts.sales>0&&clean.counts.collections>0&&clean.counts.reversals>0);
+    const corrupted=path.join(sandbox,'ledger-review-corrupted.db');
+    fs.copyFileSync(backup,corrupted,fs.constants.COPYFILE_EXCL);
+    const db=new DatabaseSync(corrupted);
+    try{assert.equal(db.prepare("UPDATE transactions SET amount_paid=ROUND(amount_paid+0.01,2) WHERE id=(SELECT id FROM transactions WHERE type='sale' AND is_demo=0 LIMIT 1)").run().changes,1);}
+    finally{db.close();}
+    const badHash=digest(corrupted);
+    const bad=reviewSnapshot(corrupted);
+    assert.equal(bad.status,'REVIEW_REQUIRED');assert.ok(bad.findings.some(f=>f.code==='SALE_TOTAL_MISMATCH'));
+    assert.equal(digest(corrupted),badHash);assert.equal(digest(backup),original);
+    assert.ok(!JSON.stringify(bad).includes('payments_json'));
+    fs.writeFileSync(path.join(evidence,'ledger-review-'+randomUUID()+'.json'),JSON.stringify({scope:clean.scope,cleanStatus:clean.status,cleanCounts:clean.counts,corruptStatus:bad.status,corruptFindingCodes:bad.findings.map(f=>f.code),snapshotUnchanged:true},null,2),{flag:'wx'});
   });
   await check('complete financial history beyond bootstrap caps and Manila midnight boundary',async()=>{
     const db=new DatabaseSync(path.join(sandbox,'data','printshop-pos.db'));
@@ -460,9 +485,13 @@ async function main(){
       }
       for(const table of ['transaction_request_identities','balance_collection_requests','drawer_movement_requests','inventory_mutation_results','stock_movements','audit_logs'])assert.ok(b.prepare('SELECT COUNT(*) AS n FROM '+table).get().n>0,table);
     }finally{a.close();b.close();}
-    const exported=verifyResponse(await request('/api/backup/export',{auth:true}),200);
-    assert.equal(exported.restorable,false);assert.equal(exported.exportKind,'business-data-only');
-    for(const table of ['transaction_request_identities','balance_collection_requests','drawer_movement_requests','inventory_mutation_results','stock_movements','cashier_shifts','transaction_reversals','balance_collections','audit_logs','inventory_alert_reads'])assert.ok(Array.isArray(exported[table]),table);
+    const response=await request('/api/backup/export',{auth:true});
+    const exported=verifyResponse(response,200);
+    assert.equal(response.headers.get('cache-control'),'no-store');
+    assert.equal(exported.schemaVersion,'1.2.0');assert.equal(exported.restorable,false);assert.equal(exported.exportKind,'business-data-only');
+    for(const table of ['stock_movements','cashier_shifts','transaction_reversals','balance_collections','audit_logs','transactions','customers'])assert.ok(Array.isArray(exported[table]),table);
+    for(const table of ['transaction_request_identities','balance_collection_requests','drawer_movement_requests','inventory_mutation_results','applied_mutations','inventory_alert_reads','inventory_alert_epochs'])assert.ok(!(table in exported),table);
+    verifyResponse(await request('/api/backup/export'),401);
     assert.ok(!('users' in exported)&&!('sessions' in exported)&&!('session_secret' in exported));
     assert.ok(!JSON.stringify(exported).includes('password_hash')&&!JSON.stringify(exported).includes('pin_hash'));
   });

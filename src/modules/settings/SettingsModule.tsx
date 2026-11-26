@@ -903,7 +903,7 @@ export const SettingsModule: React.FC = () => {
           <Card className="space-y-3">
             <h2 className="text-sm font-semibold">Demonstration Data & Database Backup</h2>
             <p className="text-xs text-[var(--pos-text-muted)]">
-              Sample records are isolated. JSON exports are for review only and exclude credentials and sessions. Use BACKUP.cmd for a complete, restorable SQLite database; keep exports and backups private.
+              Sample records are isolated. JSON exports are private review records, not backups. They exclude credentials, sessions, internal retry identities and notification acknowledgments, but contain customer and financial data. Use BACKUP.cmd for a complete, restorable SQLite database; keep exports and backups private.
             </p>
             <div className="flex flex-wrap gap-2">
               {canConfigure && (

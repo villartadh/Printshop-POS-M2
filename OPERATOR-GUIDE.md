@@ -64,3 +64,6 @@ Every generated document is a non-tax pilot document, regardless of selected doc
 
 ### Non-fiscal ledger review (developer workspace)
 From a locked source workspace with Node 22, run `node scripts/ledger-review.mjs VERIFIED_BACKUP.db NEW_REPORT.json` on an isolated current-schema SQLite backup, not the live database. Exit 0 means the selected arithmetic/link checks passed; exit 2 requires manager/accountant review; exit 1 indicates a failed review. The report is non-fiscal and references internal record IDs, so keep it private. The tool never repairs data or overwrites an existing report. No BIR journal or certification is implied.
+
+### Business review export privacy (schema 1.2.0)
+The administrator-only JSON export retains business configuration, customers, sales, stock, shifts, expenses, reversals, collections and audit records. It excludes authentication data, internal mutation request/response records, replay identities and per-user notification acknowledgment state. Those remain in the complete SQLite backup. JSON is not a restorable backup or anonymized dataset; protect it as confidential financial and personal data. The HTTP response is marked no-store. Older JSON consumers must account for the schema change.
