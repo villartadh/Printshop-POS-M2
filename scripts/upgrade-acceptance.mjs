@@ -95,7 +95,7 @@ try{
   assert.equal(state.transactions.find(t=>t.id===sale.id).amountPaid,25);
   assert.equal(state.customers.find(c=>c.id===customer.id).outstandingBalance,15);
   inspect(live,db=>{
-   assert.equal(db.prepare('PRAGMA user_version').get().user_version,1);
+   assert.equal(db.prepare('PRAGMA user_version').get().user_version,2);
    for(const [table,prior] of Object.entries(oldRows))assert.deepEqual(rows(db,table,prior.columns.map(c=>'"'+c+'"').join(',')),prior.rows,table);
   });
   await request('/transactions',original,409); // legacy digest unavailable; never recreate paid sale
@@ -127,6 +127,23 @@ try{
   assert.equal(state.transactions.some(t=>t.id===newSale.id),false);
   assert.equal(state.customers.find(c=>c.id===customer.id).outstandingBalance,15);
   assert.equal(hash(path.join(data,'session.secret')),secretHash);
+  await stop();verify(live);
+ });
+ await check('version 1 schema projection migrates without modifying prior data',async()=>{
+  // Project a disposable synthetic backup to the version 1 table layout.
+  // This is a schema migration fixture, not an actual v0.9.6 backend execution.
+  const v1=path.join(sandbox,'version-one.db');snapshot(live,v1);
+  const fixture=new DatabaseSync(v1);
+  try{fixture.exec('DROP TABLE monetary_request_cancellations; PRAGMA user_version=1');}finally{fixture.close();}
+  verify(v1);
+  const preserved=inspect(v1,db=>rows(db,'transactions'));
+  restoreStoppedDatabase(data,v1);
+  await start(root);
+  inspect(live,db=>{
+   assert.equal(db.prepare('PRAGMA user_version').get().user_version,2);
+   assert.deepEqual(rows(db,'transactions'),preserved);
+   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM monetary_request_cancellations').get().n,0);
+  });
   await stop();verify(live);
  });
  report.status='PASS';

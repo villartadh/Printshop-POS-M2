@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Plus, Wallet } from 'lucide-react';
+import {PendingFinancialCancellation} from '../../components/layout/PendingFinancialCancellation.tsx';
 import { useApp } from '../../context/AppContext.tsx';
 import { formatCurrency } from '../../shared/pricingEngine.ts';
 import type { Customer, CustomerGroup } from '../../shared/types.ts';
@@ -125,6 +126,7 @@ export const CustomersModule: React.FC = () => {
         <p className="text-xs break-all">Reference: {pending.clientMutationId}</p>
         <p className="text-sm">Do not collect cash again. Retry the original reference to confirm the previous payment. Other collections on this terminal are blocked until confirmation.</p>
         <Button size="sm" disabled={!isOnline||collecting||!storageReady} onClick={()=>void submitCollection(pending)}>Retry Original Balance Payment</Button>
+        <PendingFinancialCancellation key={pending.clientMutationId} request={{kind:'collection',record:pending}} disabled={!isOnline||collecting||!storageReady} onBusy={value=>{paymentLock.current=value;setCollecting(value);}} onResolved={async()=>{setPending(await readPendingCollection(owner!));setSelected(null);setCollectionError('');}} />
       </div></Card>}
       <Input
         placeholder="Search customer name, phone, or email..."

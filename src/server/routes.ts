@@ -1955,6 +1955,44 @@ apiRouter.post('/customers', requireAuth, (req: AuthenticatedRequest, res) => {
   });
 });
 
+
+type MonetaryRequestKind = 'collection'|'drawer'|'expense';
+const monetaryRequestSources = {
+  collection: 'SELECT actor_id FROM balance_collection_requests WHERE mutation_id=?',
+  drawer: 'SELECT actor_id FROM drawer_movement_requests WHERE mutation_id=?',
+  expense: 'SELECT actor_id FROM expenses WHERE client_mutation_id=?',
+} as const;
+function monetaryCancellation(kind:MonetaryRequestKind,actorId:string,reference:string){
+  return db.prepare('SELECT id,reason FROM monetary_request_cancellations WHERE kind=? AND actor_id=? AND mutation_id=?')
+    .get(kind,actorId,reference) as {id:string;reason:string}|undefined;
+}
+function assertMonetaryNotCancelled(kind:MonetaryRequestKind,actorId:string,reference:string){
+  if(monetaryCancellation(kind,actorId,reference))throw Object.assign(new Error('This original reference was cancelled. Confirm the cancellation in recovery; do not resend the payment.'),{statusCode:409});
+}
+
+// Cancellation is an audited, irreversible reservation outcome, not a refund or void.
+// It can only resolve a request that has never committed, and it fences late retries.
+apiRouter.post('/financial-requests/cancel',requireAuth,(req:AuthenticatedRequest,res)=>{
+  const {kind,clientMutationId,reason,confirmedNoFundsMoved}=req.body||{};
+  if(!['collection','drawer','expense'].includes(kind)||typeof clientMutationId!=='string'||!clientMutationId.trim()||clientMutationId.length>200||
+     typeof reason!=='string'||!reason.trim()||reason.trim().length>500||confirmedNoFundsMoved!==true)
+    return res.status(400).json({error:'Original reference, manager-reviewed reason and confirmation that no funds moved are required.'});
+  const requestKind=kind as MonetaryRequestKind,actor=req.authUser!;
+  const result=db.transaction(()=>{
+    const previous=monetaryCancellation(requestKind,actor.id,clientMutationId);
+    if(previous)return {status:200,body:{kind:requestKind,clientMutationId,ownerId:actor.id,status:'cancelled',reason:previous.reason,duplicate:true}};
+    const existing=db.prepare(monetaryRequestSources[requestKind]).get(clientMutationId) as {actor_id:string}|undefined;
+    if(existing)return {status:409,body:{error:'The reference is already recorded or conflicts with an existing request. Retry the original reference or ask the manager to reconcile it.'}};
+    const id=genId('cancel'),note=reason.trim();
+    db.prepare('INSERT INTO monetary_request_cancellations(id,kind,actor_id,mutation_id,reason,created_at) VALUES (?,?,?,?,?,?)')
+      .run(id,requestKind,actor.id,clientMutationId,note,new Date().toISOString());
+    writeAuditLog(actor.id,actor.fullName,'FINANCIAL_REQUEST_CANCELLED','financial_request',id,requestKind+' — no funds moved attested by operator; '+note);
+    return {status:200,body:{kind:requestKind,clientMutationId,ownerId:actor.id,status:'cancelled',reason:note,duplicate:false}};
+  }).immediate();
+  res.setHeader('Cache-Control','no-store');
+  return res.status(result.status).json(result.body);
+});
+
 apiRouter.post('/customers/:id/pay-balance', requireAuth, (req: AuthenticatedRequest, res) => {
   const id = String(req.params.id);
   const amount = req.body?.amount;
@@ -1967,11 +2005,12 @@ apiRouter.post('/customers/:id/pay-balance', requireAuth, (req: AuthenticatedReq
       if(existing.actor_id!==actor.id||existing.customer_id!==id||existing.amount!==amount)throw Object.assign(new Error('Payment reference belongs to a different collection.'),{statusCode:409});
       return {outstandingBalance:existing.outstanding_after,duplicate:true};
     }
+    assertMonetaryNotCancelled('collection',actor.id,mutationId);
     const balance=collectBalance(db,id,amount,actor.id);
     db.prepare('INSERT INTO balance_collection_requests(mutation_id,actor_id,customer_id,amount,outstanding_after,created_at) VALUES (?,?,?,?,?,?)').run(mutationId,actor.id,id,amount,balance,new Date().toISOString());
     writeAuditLog(actor.id,actor.fullName,'CUSTOMER_BALANCE_PAYMENT','customer',id,`Collected cash ${amount}; reference ${mutationId}`);
     return {outstandingBalance:balance,duplicate:false};
-  })();
+  }).immediate();
   res.setHeader('Cache-Control','no-store');
   res.json({id,clientMutationId:mutationId,amount,...result});
 });
@@ -2006,13 +2045,14 @@ apiRouter.post('/expenses', requireAuth, (req: AuthenticatedRequest, res) => {
       if(existing.actor_id!==actor.id||existing.request_digest!==digest)return {status:409,body:{error:'Expense reference belongs to a different request.'}};
       return {status:200,body:{id:existing.id,category:existing.category,description:existing.description,amount:existing.amount,vendor:existing.vendor,recordedBy:existing.recorded_by,expenseDate:existing.expense_date,isDemo:false,createdAt:existing.created_at,clientMutationId:reference,duplicate:true,voided:Boolean(existing.voided_at)}};
     }
+    assertMonetaryNotCancelled('expense',actor.id,reference);
     db.prepare(`
       INSERT INTO expenses (id, category, description, amount, vendor, recorded_by, expense_date, is_demo, created_at,client_mutation_id,request_digest,actor_id)
       VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
     `).run(record.id,record.category,record.description,record.amount,record.vendor,record.recordedBy,record.expenseDate,record.createdAt,reference,digest,actor.id);
     writeAuditLog(actor.id,actor.fullName,'EXPENSE_RECORDED','expense',id,'Recorded operating expense: '+record.category+', amount '+record.amount);
     return {status:201,body:{...record,clientMutationId:reference,duplicate:false,voided:false}};
-  })();
+  }).immediate();
   res.setHeader('Cache-Control','no-store');
   res.status(result.status).json(result.body);
 });
@@ -2100,6 +2140,7 @@ apiRouter.post('/shifts/:id/movement', requireAuth, (req: AuthenticatedRequest, 
       if(existing.actor_id!==actor.id||existing.shift_id!==id||existing.movement_type!==type||existing.amount!==amount||existing.reason!==note)return fail('Cash movement reference belongs to a different adjustment.');
       return {movementId:existing.movement_id,expectedCash:existing.expected_after,duplicate:true};
     }
+    assertMonetaryNotCancelled('drawer',actor.id,clientMutationId);
     const shift=db.prepare("SELECT * FROM cashier_shifts WHERE id=? AND status='open'").get(id) as Record<string,unknown>|undefined;
     if(!shift)return fail('Open shift not found.',404);
     if(shift.cashier_id!==actor.id&&!['admin','manager'].includes(actor.role))return fail('Cannot manage another cashier’s shift.',403);
@@ -2113,7 +2154,7 @@ apiRouter.post('/shifts/:id/movement', requireAuth, (req: AuthenticatedRequest, 
     db.prepare('INSERT INTO drawer_movement_requests(mutation_id,actor_id,shift_id,movement_type,amount,reason,movement_id,expected_after,created_at) VALUES (?,?,?,?,?,?,?,?,?)').run(clientMutationId,actor.id,id,type,amount,note,movementId,expected,now);
     writeAuditLog(actor.id,actor.fullName,'SHIFT_CASH_MOVEMENT','shift',id,`${type} ${amount}; ${note}; reference ${clientMutationId}`);
     return {movementId,expectedCash:expected,duplicate:false};
-  })();
+  }).immediate();
   res.setHeader('Cache-Control','no-store');
   res.json({id,clientMutationId,type,amount,reason:note,...result});
 });

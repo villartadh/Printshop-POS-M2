@@ -60,7 +60,7 @@ test('versioned incomplete and unknown future database schemas are rejected',()=
    db.exec('PRAGMA user_version=1');
   }finally{db.close();}
   assert.throws(()=>verify(file),/missing required tables/);
-  const newer=new DatabaseSync(file);try{newer.exec('PRAGMA user_version=2');}finally{newer.close();}
+  const newer=new DatabaseSync(file);try{newer.exec('PRAGMA user_version=3');}finally{newer.close();}
   assert.throws(()=>verify(file),/Unsupported/);
  }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });

@@ -77,7 +77,7 @@ try{
   assert.ok(state.customers.some(c=>c.id===customer.id));
   assert.equal(state.inventory.find(i=>i.id===stock.id).quantityOnHand,20);
   assert.equal(state.shifts.find(s=>s.id===shift.id).expectedCash,100);
-  assert.equal(inspect(live,'PRAGMA user_version').user_version,1);
+  assert.equal(inspect(live,'PRAGMA user_version').user_version,2);
   movement={type:'cash_in',amount:0.25,reason:'Synthetic replay proof',clientMutationId:randomUUID()};
   const applied=await request('/shifts/'+shift.id+'/movement',movement);assert.equal(applied.duplicate,false);
   currentBackup=takeBackup(next);

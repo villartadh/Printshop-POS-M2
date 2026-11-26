@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Download, Plus, Printer, Trash2 } from 'lucide-react';
+import {PendingFinancialCancellation} from '../../components/layout/PendingFinancialCancellation.tsx';
 import { useApp } from '../../context/AppContext.tsx';
 import { formatCurrency } from '../../shared/pricingEngine.ts';
 import { downloadCsv } from '../../services/hardwareService.ts';
@@ -192,6 +193,7 @@ export const ExpensesReportsModule: React.FC = () => {
         <p className="text-xs break-all">Reference: {pendingExpense.clientMutationId}</p>
         <p className="text-sm">Do not record the expense again. Confirm this original reference.</p>
         <Button size="sm" disabled={!isOnline||!expenseStorageReady||savingExpense} onClick={()=>void submitExpense(pendingExpense)}>Retry Original Expense</Button>
+        <PendingFinancialCancellation key={pendingExpense.clientMutationId} request={{kind:'expense',record:pendingExpense}} disabled={!isOnline||!expenseStorageReady||savingExpense} onBusy={value=>{expenseSubmitting.current=value;setSavingExpense(value);}} onResolved={async()=>{setPendingExpense(await readPendingExpense(owner!));setAddExpenseOpen(false);setExpenseError('');}} />
       </div></Card>}
       {/* Date Filter & Tabs */}
       <div className="flex flex-wrap items-end justify-between gap-3">

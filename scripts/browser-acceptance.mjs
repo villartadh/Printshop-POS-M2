@@ -538,6 +538,36 @@ try {
     await page.getByText('Unconfirmed expense',{exact:true}).waitFor({state:'hidden'});
     assert.equal((await api('/bootstrap')).expenses.filter(e=>e.description==='Synthetic Expense Recovery').length,1);
   });
+  await check('drawer reconciliation closes only an unapplied original reference',async()=>{
+    await click('Cashier Shifts');
+    const before=await api('/bootstrap');
+    const shift=before.shifts.find(s=>s.status==='open');assert.ok(shift);
+    await click('Cash In / Cash Out');
+    const dialog=page.getByRole('dialog');
+    await dialog.getByLabel('Movement Type').selectOption('cash_out');
+    await dialog.getByLabel(/^Amount /).fill(String(Math.round((shift.expectedCash+1)*100)/100));
+    await dialog.getByLabel('Reason',{exact:true}).fill('Synthetic unapplied drawer');
+    const failed=page.waitForResponse(r=>r.url().endsWith('/movement')&&r.request().method()==='POST');
+    await dialog.getByRole('button',{name:'Record',exact:true}).click();
+    const response=await failed;assert.equal(response.status(),409);
+    const payload=response.request().postDataJSON();
+    await dialog.getByText('Cash movement would exceed supported drawer balance.',{exact:true}).waitFor();
+    await dialog.getByRole('button',{name:'Cancel',exact:true}).click();
+    await dialog.waitFor({state:'hidden'});
+    await waitText('Reference: '+payload.clientMutationId);
+    await click('Reconcile Unapplied Request');
+    assert.equal(await button('Confirm Unapplied Cancellation').isEnabled(),false);
+    await page.getByRole('checkbox',{name:'I reviewed this request with the manager and confirm no money moved.'}).check();
+    await page.getByLabel('Reconciliation reason',{exact:true}).fill('Synthetic reviewed rejection');
+    const cancelled=page.waitForResponse(r=>r.url().endsWith('/financial-requests/cancel'));
+    await click('Confirm Unapplied Cancellation');
+    const ack=await cancelled;assert.equal(ack.status(),200);
+    const body=await ack.json();assert.equal(body.status,'cancelled');assert.equal(body.clientMutationId,payload.clientMutationId);
+    await page.getByText('Unconfirmed drawer adjustment',{exact:true}).waitFor({state:'hidden'});
+    assert.deepEqual((await api('/bootstrap')).shifts,before.shifts);
+    const replay=await api('/shifts/'+shift.id+'/movement',payload,409);assert.match(replay.error,/reference was cancelled/);
+    assert.equal(await button('Cash In / Cash Out').isEnabled(),true);
+  });
   await check('browser DPI simulation at 100, 125 and 150 percent',async()=>{
     const measurements=[];
     for(const scale of [1,1.25,1.5]){

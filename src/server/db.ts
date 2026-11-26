@@ -27,12 +27,16 @@ db.pragma('foreign_keys = ON');
 
 export function initDatabase() {
   const schemaVersion=Number(db.pragma('user_version',{simple:true}));
-  if(schemaVersion!==0&&schemaVersion!==1)throw new Error('Unsupported Printshop POS database schema version: '+schemaVersion);
-  if(schemaVersion===1){
+  if(schemaVersion!==0&&schemaVersion!==1&&schemaVersion!==2)throw new Error('Unsupported Printshop POS database schema version: '+schemaVersion);
+  if(schemaVersion>=1){
     const currentTables=["transaction_request_identities","inventory_mutation_results","applied_mutations","users","sessions","app_settings","categories","services","supply_categories","inventory_items","stock_movements","customers","transactions","order_conversions","print_jobs","expenses","cashier_shifts","transaction_reversals","drawer_movement_requests","balance_collection_requests","balance_collections","audit_logs","inventory_alert_epochs","inventory_alert_reads"];
 const criticalColumns={"transactions":["id","client_mutation_id","receipt_snapshot_json","payments_json","balance_due"],"inventory_items":["id","reserved_quantity","archived_at","archive_reason","minimum_threshold"],"stock_movements":["id","inventory_item_id","purchase_unit_cost","quantity_before","quantity_delta"],"transaction_request_identities":["mutation_id","actor_id","transaction_id","request_digest"],"balance_collection_requests":["mutation_id","actor_id","customer_id","amount","outstanding_after"],"drawer_movement_requests":["mutation_id","actor_id","shift_id","movement_type","amount","reason","movement_id","expected_after"],"inventory_mutation_results":["id","actor_id","request_json","result_json"],"balance_collections":["id","transaction_id","customer_id","shift_id","amount"],"inventory_alert_epochs":["item_id","epoch"],"inventory_alert_reads":["user_id","item_id","epoch"]};
 const requiredTriggers=['inventory_alert_insert','inventory_alert_transition'];
     const tables=new Set((db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as {name:string}[]).map(r=>r.name));
+    if(schemaVersion===2){
+      currentTables.push('monetary_request_cancellations');
+      Object.assign(criticalColumns,{monetary_request_cancellations:['id','kind','actor_id','mutation_id','reason','created_at'],expenses:['id','client_mutation_id','request_digest','actor_id','voided_at','voided_by','void_reason']});
+    }
     if(currentTables.some(t=>!tables.has(t)))throw new Error('Current database schema incomplete. Restore a verified backup; do not recreate missing tables.');
     for(const [table,columns] of Object.entries(criticalColumns)){
       const found=new Set((db.prepare('PRAGMA table_info('+table+')').all() as {name:string}[]).map(r=>r.name));
@@ -292,6 +296,11 @@ const requiredTriggers=['inventory_alert_insert','inventory_alert_transition'];
       mutation_id TEXT PRIMARY KEY, actor_id TEXT NOT NULL, customer_id TEXT NOT NULL,
       amount REAL NOT NULL, outstanding_after REAL NOT NULL, created_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS monetary_request_cancellations (
+      id TEXT PRIMARY KEY, kind TEXT NOT NULL, actor_id TEXT NOT NULL,
+      mutation_id TEXT NOT NULL, reason TEXT NOT NULL, created_at TEXT NOT NULL,
+      UNIQUE(kind, actor_id, mutation_id)
+    );
     CREATE TABLE IF NOT EXISTS balance_collections (
       id TEXT PRIMARY KEY, transaction_id TEXT NOT NULL, customer_id TEXT NOT NULL,
       shift_id TEXT NOT NULL, amount REAL NOT NULL, actor_id TEXT NOT NULL, created_at TEXT NOT NULL
@@ -414,7 +423,7 @@ const requiredTriggers=['inventory_alert_insert','inventory_alert_transition'];
     seedDemoDataset();
   }
   // Stamp only after all additive migrations and initialization finish successfully.
-  db.pragma('user_version = 1');
+  db.pragma('user_version = 2');
 }
 
 export function seedDemoDataset() {

@@ -399,6 +399,7 @@ async function main(){
       assert.ok(adjusted.every(r=>JSON.stringify(r.body)===JSON.stringify(adjusted[0].body)));
       const collection={amount:10,clientMutationId:randomUUID()};
       const collected=await burst('collection','/customers/'+customer.id+'/pay-balance',collection,200);
+      for(const [kind,record] of [['collection',collection],['drawer',movement],['expense',expense]])await write('/financial-requests/cancel',{kind,clientMutationId:record.clientMutationId,reason:'Synthetic reconciliation refusal',confirmedNoFundsMoved:true},409);
       assert.ok(collected.every(r=>r.body.outstandingBalance===15));
       // Different references compete for the same final receivable; only one can succeed.
       const competingCollections=await Promise.all(Array.from({length:2},()=>post('/customers/'+customer.id+'/pay-balance',{amount:15,clientMutationId:randomUUID()})));
@@ -432,6 +433,56 @@ async function main(){
       await write('/expenses/'+expenseId,{reason:'Synthetic concurrency fixture cleanup'},200,'DELETE');
       fs.writeFileSync(path.join(evidence,'concurrency-'+randomUUID()+'.json'),JSON.stringify({scope:'Isolated synthetic single-server HTTP concurrency; not production throughput benchmark',parallel,bursts:results,competingCollection:{accepted:1,rejected:1},competingSales:{accepted:1,rejected:3},stockAndFinancialEffectsVerified:true},null,2),{flag:'wx'});
     }finally{({shift,customer,stock,service}=prior);}
+  });
+  await check('confirmed unapplied financial cancellation survives replay, restart and backup',async()=>{
+    const prior={shift,customer};
+    const cancelUrl='/financial-requests/cancel';
+    try{
+      shift=await write('/shifts/start',{openingCash:0});
+      customer=await write('/customers',{name:'Synthetic cancellation customer'});
+      const collection={amount:1,clientMutationId:randomUUID()};
+      const drawer={type:'cash_out',amount:1,reason:'Synthetic rejected drawer',clientMutationId:randomUUID()};
+      const expense={category:'other',description:'Synthetic unapplied expense',amount:1,vendor:'',expenseDate:'2026-01-01',clientMutationId:randomUUID()};
+      const scenarios=[['collection','/customers/'+customer.id+'/pay-balance',collection],['drawer','/shifts/'+shift.id+'/movement',drawer],['expense','/expenses',expense]];
+      await write(scenarios[0][1],collection,409);
+      await write(scenarios[1][1],drawer,409);
+      const original=await state();
+      for(const [kind,url,record] of scenarios){
+        const body={kind,clientMutationId:record.clientMutationId,reason:'Synthetic manager reconciliation; no cash moved',confirmedNoFundsMoved:true};
+        await write(cancelUrl,{...body,confirmedNoFundsMoved:false},400);
+        await write(cancelUrl,{...body,reason:''},400);
+        const first=await write(cancelUrl,body,200);
+        assert.equal(first.kind,kind);assert.equal(first.clientMutationId,record.clientMutationId);assert.equal(first.status,'cancelled');assert.equal(first.duplicate,false);
+        assert.deepEqual(await write(cancelUrl,{...body,reason:'Different retry reason'},200),{...first,duplicate:true});
+        const refused=await write(url,record,409);assert.match(refused.error,/reference was cancelled/);
+      }
+      await stop();await start();
+      for(const [kind,url,record] of scenarios) {
+        await write(url,record,409);
+        const replay=await write(cancelUrl,{kind,clientMutationId:record.clientMutationId,reason:'Synthetic confirmation after restart',confirmedNoFundsMoved:true},200);
+        assert.equal(replay.duplicate,true);
+      }
+      const after=await state();
+      for(const field of ['expenses','shifts','customers'])assert.deepEqual(after[field],original[field],field);
+      const db=new DatabaseSync(path.join(sandbox,'data','printshop-pos.db'),{readOnly:true});
+      try{
+        const count=(q,...a)=>db.prepare(q).get(...a).n;
+        for(const [kind,,record] of scenarios){
+          assert.equal(count('SELECT COUNT(*) AS n FROM monetary_request_cancellations WHERE kind=? AND mutation_id=?',kind,record.clientMutationId),1);
+          assert.equal(count("SELECT COUNT(*) AS n FROM audit_logs a JOIN monetary_request_cancellations c ON c.id=a.entity_id WHERE a.action='FINANCIAL_REQUEST_CANCELLED' AND c.kind=? AND c.mutation_id=?",kind,record.clientMutationId),1);
+        }
+      }finally{db.close();}
+      // A submitted expense and its cancellation may arrive simultaneously; exactly one outcome is recorded.
+      const racing={...expense,clientMutationId:randomUUID(),description:'Synthetic concurrent reconciliation'};
+      const [apply,cancel]=await Promise.all([
+        request('/api/expenses',{method:'POST',auth:true,body:racing}),
+        request('/api'+cancelUrl,{method:'POST',auth:true,body:{kind:'expense',clientMutationId:racing.clientMutationId,reason:'Synthetic concurrent reconciliation',confirmedNoFundsMoved:true}})
+      ]);
+      assert.ok((apply.status===201&&cancel.status===409)||(apply.status===409&&cancel.status===200),JSON.stringify([apply.status,cancel.status]));
+      if(apply.status===201)await write('/expenses/'+apply.body.id,{reason:'Synthetic fixture cleanup'},200,'DELETE');
+      else assert.match(apply.body.error,/reference was cancelled/);
+      await write('/shifts/'+shift.id+'/close',{actualCash:0,reconciliationNote:'Synthetic cancellation proof'},200);
+    }finally{({shift,customer}=prior);}
   });
   await check('read-only ledger review validates actual backup and detects corrupted copy',async()=>{
     const live=path.join(sandbox,'data','printshop-pos.db');
@@ -571,19 +622,23 @@ async function main(){
     snapshot(live,target);
     const a=new DatabaseSync(live,{readOnly:true}),b=new DatabaseSync(target,{readOnly:true});
     try{
-      assert.equal(b.prepare('PRAGMA user_version').get().user_version,1);
-      for(const table of ["transaction_request_identities","inventory_mutation_results","applied_mutations","users","sessions","app_settings","categories","services","supply_categories","inventory_items","stock_movements","customers","transactions","order_conversions","print_jobs","expenses","cashier_shifts","transaction_reversals","drawer_movement_requests","balance_collection_requests","balance_collections","audit_logs","inventory_alert_epochs","inventory_alert_reads"]){
+      assert.equal(b.prepare('PRAGMA user_version').get().user_version,2);
+      for(const table of ["transaction_request_identities","inventory_mutation_results","applied_mutations","users","sessions","app_settings","categories","services","supply_categories","inventory_items","stock_movements","customers","transactions","order_conversions","print_jobs","expenses","cashier_shifts","transaction_reversals","drawer_movement_requests","balance_collection_requests","balance_collections","audit_logs","inventory_alert_epochs","inventory_alert_reads","monetary_request_cancellations"]){
         const query='SELECT * FROM '+table+' ORDER BY rowid';
         assert.deepEqual(b.prepare(query).all(),a.prepare(query).all(),table);
       }
-      for(const table of ['transaction_request_identities','balance_collection_requests','drawer_movement_requests','inventory_mutation_results','stock_movements','audit_logs'])assert.ok(b.prepare('SELECT COUNT(*) AS n FROM '+table).get().n>0,table);
+      for(const table of ['transaction_request_identities','balance_collection_requests','drawer_movement_requests','inventory_mutation_results','stock_movements','audit_logs','monetary_request_cancellations'])assert.ok(b.prepare('SELECT COUNT(*) AS n FROM '+table).get().n>0,table);
     }finally{a.close();b.close();}
+    // A marked schema-2 backup missing its cancellation ledger must not be restored.
+    const broken=path.join(sandbox,'financial-incomplete.db');fs.copyFileSync(target,broken,fs.constants.COPYFILE_EXCL);
+    const brokenDb=new DatabaseSync(broken);try{brokenDb.exec('DROP TABLE monetary_request_cancellations');}finally{brokenDb.close();}
+    assert.throws(()=>snapshot(broken,path.join(sandbox,'should-not-exist.db')),/missing required tables/);
     const response=await request('/api/backup/export',{auth:true});
     const exported=verifyResponse(response,200);
     assert.equal(response.headers.get('cache-control'),'no-store');
     assert.equal(exported.schemaVersion,'1.2.0');assert.equal(exported.restorable,false);assert.equal(exported.exportKind,'business-data-only');
     for(const table of ['stock_movements','cashier_shifts','transaction_reversals','balance_collections','audit_logs','transactions','customers'])assert.ok(Array.isArray(exported[table]),table);
-    for(const table of ['transaction_request_identities','balance_collection_requests','drawer_movement_requests','inventory_mutation_results','applied_mutations','inventory_alert_reads','inventory_alert_epochs'])assert.ok(!(table in exported),table);
+    for(const table of ['transaction_request_identities','balance_collection_requests','drawer_movement_requests','inventory_mutation_results','applied_mutations','inventory_alert_reads','inventory_alert_epochs','monetary_request_cancellations'])assert.ok(!(table in exported),table);
     verifyResponse(await request('/api/backup/export'),401);
     assert.ok(!('users' in exported)&&!('sessions' in exported)&&!('session_secret' in exported));
     assert.ok(exported.expenses.every(e=>!('request_digest' in e)&&!('client_mutation_id' in e)&&!('actor_id' in e)));

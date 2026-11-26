@@ -15,9 +15,13 @@ export function verify(file) {
     if(rows.length!==1 || rows[0].integrity_check!=='ok') throw new Error('SQLite integrity check failed');
     const tables=new Set(db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(x=>x.name));
     const version=db.prepare('PRAGMA user_version').get().user_version;
-    if(version!==0&&version!==1)throw new Error('Unsupported Printshop POS database schema version: '+version);
+    if(version!==0&&version!==1&&version!==2)throw new Error('Unsupported Printshop POS database schema version: '+version);
     if(required.some(t=>!tables.has(t)))throw new Error('Not a complete Printshop POS database');
-    if(version===1){
+    if(version>=1){
+    if(version===2){
+      currentTables.push('monetary_request_cancellations');
+      Object.assign(criticalColumns,{monetary_request_cancellations:['id','kind','actor_id','mutation_id','reason','created_at'],expenses:['id','client_mutation_id','request_digest','actor_id','voided_at','voided_by','void_reason']});
+    }
       const missing=currentTables.filter(t=>!tables.has(t));
       if(missing.length)throw new Error('Current schema missing required tables: '+missing.join(', '));
       for(const [table,columns] of Object.entries(criticalColumns)){

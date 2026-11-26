@@ -1,5 +1,6 @@
 import React, { useEffect,useRef,useState } from 'react';
 import { ArrowDownLeft, ArrowUpRight, CheckCircle2, Play } from 'lucide-react';
+import {PendingFinancialCancellation} from '../../components/layout/PendingFinancialCancellation.tsx';
 import { useApp } from '../../context/AppContext.tsx';
 import { formatCurrency } from '../../shared/pricingEngine.ts';
 import { Button, Card, Input, Select, StatusIndicator } from '../../components/ui/Primitives.tsx';
@@ -73,6 +74,7 @@ export const ShiftsModule: React.FC = () => {
         <p className="text-xs break-all">Reference: {pending.clientMutationId}</p>
         <p className="text-sm">Do not move the cash again. Confirm the original reference before further drawer adjustments or shift closure on this terminal.</p>
         <Button size="sm" disabled={!isOnline||busy||!storageReady} onClick={()=>void submitMovement(pending)}>Retry Original Drawer Adjustment</Button>
+        <PendingFinancialCancellation key={pending.clientMutationId} request={{kind:'drawer',record:pending}} disabled={!isOnline||busy||!storageReady} onBusy={value=>{lock.current=value;setBusy(value);}} onResolved={async()=>{setPending(await readPendingDrawerMovement(owner!));setMovementOpen(false);setError('');}} />
       </div></Card>}
       {activeShift ? (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">

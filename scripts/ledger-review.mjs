@@ -70,7 +70,7 @@ export function reviewSnapshot(file){
  const db=new DatabaseSync(absolute,{readOnly:true});
  let result;
  try{
-  if(db.prepare('PRAGMA user_version').get().user_version!==1)throw Error('Current versioned backup required; do not migrate the backup in place');
+  if(![1,2].includes(db.prepare('PRAGMA user_version').get().user_version))throw Error('Current versioned backup required; do not migrate the backup in place');
   db.exec('BEGIN');
   try{
    result=reconcileLedger({
