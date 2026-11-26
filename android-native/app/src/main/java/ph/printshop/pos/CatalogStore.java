@@ -198,6 +198,10 @@ public final class CatalogStore extends SQLiteOpenHelper {
         return result;
     }
     public MaterialCost.Estimate estimateMaterials(String serviceId,int quantity) {
+        QuoteMath.total(0,quantity);
+        return estimateMaterialsByHundredths(serviceId,(long)quantity*100);
+    }
+    public MaterialCost.Estimate estimateMaterialsByHundredths(String serviceId,long unitsHundredths) {
         SQLiteDatabase db=getWritableDatabase();
         db.beginTransactionNonExclusive();
         try {
@@ -212,7 +216,7 @@ public final class CatalogStore extends SQLiteOpenHelper {
                     components.add(new MaterialCost.Component(material.centavos,c.getLong(1),stockBalance(db,material.id).quantity));
                 }
             }
-            MaterialCost.Estimate result=MaterialCost.estimate(components,quantity);
+            MaterialCost.Estimate result=MaterialCost.estimateFractional(components,unitsHundredths);
             db.setTransactionSuccessful();return result;
         } finally {db.endTransaction();}
     }
