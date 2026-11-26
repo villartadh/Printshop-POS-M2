@@ -324,6 +324,7 @@ public final class CashierPreviewActivity extends Activity {
         if(d.actor.role==CashierSecurity.Role.OWNER){
             button("Training sale refunds / voids",R.id.cashier_refund_receipts,()->showRefundReceipts(0));
             button("Refund / void history",R.id.cashier_refund_history,()->showRefundHistory(0));
+            button("Training sales reports",R.id.cashier_sales_report,()->showReportPeriod(ReportMath.Period.DAY));
             button("Create training cashier",R.id.cashier_add_staff,this::showStaff);
             button("Manage training cashiers",R.id.cashier_manage_staff,this::showManageStaff);
             button("Manage training services",R.id.cashier_catalog_services,()->showOwnerCatalog(CatalogEntry.Kind.SERVICE,false,0));
@@ -420,6 +421,38 @@ public final class CashierPreviewActivity extends Activity {
             catalogPages(offset,rows.size()>8,()->showDrawerHistory(offset-8),()->showDrawerHistory(offset+8));
             button("Reload drawer history",R.id.cashier_drawer_history,()->showDrawerHistory(0));back();
         });
+    }
+    private void showReportPeriod(ReportMath.Period period){
+        submit(()->store.authorizedFixtureSalesReport(session(),ReportMath.range(period,System.currentTimeMillis())),v->showSalesReport(period,(ReportJournal.Report)v,0));
+    }
+    private static String reportMoney(java.math.BigInteger amount){return ReportMath.display(amount);}
+    private void showSalesReport(ReportMath.Period period,ReportJournal.Report report,int offset){
+        mode="sales-report";screen("Training sales reports","Owner-only · Asia/Manila shop time. Sales use receipt time; refunds/voids use actual resolution date. Net sales is not profit.");
+        java.text.SimpleDateFormat date=new java.text.SimpleDateFormat("yyyy-MM-dd",java.util.Locale.ROOT);
+        date.setTimeZone(java.util.TimeZone.getTimeZone("Asia/Manila"));
+        label("Report period: "+period.name());
+        label(date.format(new java.util.Date(report.range.start))+" to "+date.format(new java.util.Date(report.range.end-1)));
+        button("Today",R.id.cashier_report_day,()->showReportPeriod(ReportMath.Period.DAY));
+        button("This week (Monday–Sunday)",R.id.cashier_report_week,()->showReportPeriod(ReportMath.Period.WEEK));
+        button("This month",R.id.cashier_report_month,()->showReportPeriod(ReportMath.Period.MONTH));
+        ReportMath.Totals total=report.totals;
+        label("Gross sales: "+reportMoney(total.gross));label("Receipts: "+total.sales);
+        label("Cash refunds: "+reportMoney(total.refunds));label("Cash voids: "+reportMoney(total.voids));
+        label("Net sales: "+reportMoney(total.net()),22,Color.rgb(31,95,124));
+        label("Expenses: "+reportMoney(total.expenses));label("Other cash in: "+reportMoney(total.cashIn));label("Other cash out: "+reportMoney(total.cashOut));
+        label("Net drawer movement: "+reportMoney(total.movement()));
+        label("Closed shift reconciliation (whole shifts closed in period)");
+        label("Closed shifts: "+report.closedShifts);label("Expected: "+reportMoney(report.closedExpected));
+        label("Counted: "+reportMoney(report.closedCounted));label("Variance: "+reportMoney(report.closedVariance));
+        label("By service (original sold name)",20,Color.rgb(27,39,58));
+        if(report.services.isEmpty())label("No sales or compensation in this period");
+        for(int i=offset;i<Math.min(offset+8,report.services.size());i++){
+            ReportJournal.Service service=report.services.get(i);
+            label(service.name+" · "+service.id);label("Gross "+reportMoney(service.totals.gross)+" · Refund "+reportMoney(service.totals.refunds)+" · Void "+reportMoney(service.totals.voids));
+            label("Net "+reportMoney(service.totals.net())+" · Receipts "+service.totals.sales);
+        }
+        catalogPages(offset,offset+8<report.services.size(),()->showSalesReport(period,report,offset-8),()->showSalesReport(period,report,offset+8));
+        button("Refresh report",R.id.cashier_sales_report,()->showReportPeriod(period));back();
     }
     private static String refundLabel(RefundJournal.Kind kind){return kind==RefundJournal.Kind.VOID?"Void":"Refund";}
     private void showRefundReceipts(int offset){

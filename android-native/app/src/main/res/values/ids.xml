@@ -140,4 +140,8 @@
     <item type="id" name="cashier_refund_apply"/>
     <item type="id" name="cashier_refund_cancel_reason"/>
     <item type="id" name="cashier_refund_cancel"/>
+    <item type="id" name="cashier_sales_report"/>
+    <item type="id" name="cashier_report_day"/>
+    <item type="id" name="cashier_report_week"/>
+    <item type="id" name="cashier_report_month"/>
 </resources>

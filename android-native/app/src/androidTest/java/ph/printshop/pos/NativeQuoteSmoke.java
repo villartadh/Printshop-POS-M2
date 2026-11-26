@@ -76,7 +76,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "pricing settings and document quote"; verifyPricingScreen(screen);
             phase = "measured quote"; verifyMeasuredQuote(screen);
             phase = "native cashier training UI"; verifyCashierTrainingScreen(screen);
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\n");
+            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\n");
             result = Activity.RESULT_OK;
         } catch (Throwable error) {
             evidence.putString("stream", failureDetails(phase, error));
@@ -354,6 +354,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             verifyOwnerCatalogWorkflow(second,fixtureId,owner,ownerPass);
             verifyDrawerTrainingUI(second,fixtureId,owner,ownerPass);
             verifyRefundTrainingUI(second,fixtureId,owner,ownerPass);
+            verifySalesReportTrainingUI(second,fixtureId,owner,ownerPass);
             try(CatalogStore ordinary=new CatalogStore(context)){
                 java.util.List<CatalogEntry> after=ordinary.list(true);
                 require(before.size()==after.size(),"ordinary catalog changed");
@@ -714,6 +715,35 @@ public final class NativeQuoteSmoke extends Instrumentation {
             require(trainingCount(fixture,"SELECT SUM(compensated) FROM cashier_refund_totals")==2300,"compensation total wrong");
             require(trainingCount(fixture,"SELECT COUNT(*) FROM checkout_sales")==2&&trainingCount(fixture,"SELECT COUNT(*) FROM checkout_cash")==2&&trainingCount(fixture,"SELECT COUNT(*) FROM stock_movements")==5,"compensation changed original history");
         }
+    }
+
+    private void verifySalesReportTrainingUI(Activity activity,String fixtureId,String owner,String ownerPass){
+        try(CatalogStore fixture=CatalogStore.checkoutFixture(getTargetContext(),fixtureId)){
+            char[] pass=ownerPass.toCharArray(),staff="Synthetic-Catalog-Cashier-01".toCharArray();
+            try{
+                String token=fixture.signInFixture(owner,pass),cashier=fixture.signInFixture("catalog-cashier",staff);
+                ReportMath.Range range=new ReportMath.Range(0,Long.MAX_VALUE);
+                ReportJournal.Report report=fixture.authorizedFixtureSalesReport(token,range);
+                require(report.totals.gross.longValueExact()==2600&&report.totals.sales.intValueExact()==2,"report gross or receipt count");
+                require(report.totals.refunds.longValueExact()==200&&report.totals.voids.longValueExact()==2100,"report linked compensation classification");
+                require(report.totals.net().longValueExact()==300&&report.totals.expenses.longValueExact()==125,"report net or expense");
+                require(report.totals.cashIn.longValueExact()==500&&report.totals.cashOut.longValueExact()==200&&report.totals.movement().longValueExact()==475,"report other cash movement");
+                require(report.services.size()==2&&report.closedVariance.longValueExact()==-100,"report service or reconciliation");
+                rejectStock(()->fixture.authorizedFixtureSalesReport(cashier,range));
+                fixture.signOutFixture(token);fixture.signOutFixture(cashier);
+            }finally{java.util.Arrays.fill(pass,'\0');java.util.Arrays.fill(staff,'\0');}
+        }
+        trainingLogin(activity,owner,ownerPass);awaitText(activity,"No open shift","report owner login");
+        trainingClick(activity,R.id.cashier_sales_report);awaitText(activity,"Report period: DAY","report screen");
+        awaitText(activity,"By service (original sold name)","service breakdown");
+        trainingClick(activity,R.id.cashier_report_week);awaitText(activity,"Report period: WEEK","week report");
+        trainingClick(activity,R.id.cashier_report_month);awaitText(activity,"Report period: MONTH","month report");
+        awaitText(activity,"Closed shift reconciliation (whole shifts closed in period)","reconciliation screen");
+        trainingClick(activity,R.id.cashier_back);awaitText(activity,"No open shift","report return");
+        trainingClick(activity,R.id.cashier_lock);awaitText(activity,"Training sign in","report owner signout");
+        trainingLogin(activity,"catalog-cashier","Synthetic-Catalog-Cashier-01");awaitText(activity,"No open shift","report cashier login");
+        runOnMainChecked(()->require(activity.findViewById(R.id.cashier_sales_report)==null,"cashier report exposed"));
+        trainingClick(activity,R.id.cashier_lock);awaitText(activity,"Training sign in","report cashier signout");
     }
 
     /** Preserve exceptions from the UI thread without terminating instrumentation. */

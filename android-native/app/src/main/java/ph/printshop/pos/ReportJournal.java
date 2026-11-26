@@ -1,0 +1,57 @@
+package ph.printshop.pos;
+
+import android.database.Cursor;
+import android.database.sqlite.SQLiteDatabase;
+import java.math.BigInteger;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
+
+/** Read-only report over immutable authenticated receipt and drawer sources. */
+final class ReportJournal {
+    private ReportJournal(){}
+    // Each applied source appears exactly once. Linked compensation has its own kind, never ordinary cash-out.
+    static final String EVENTS="SELECT 'SALE' AS kind,c.paid AS amount,r.service_id AS service_id,r.service_name AS service_name,s.recorded_ms AS event_ms,r.request_id AS event_id FROM checkout_sales s JOIN checkout_cash c ON c.request_id=s.request_id JOIN checkout_requests r ON r.request_id=s.request_id JOIN cashier_shift_checkouts x ON x.request_id=s.request_id WHERE r.state='APPLIED' AND s.recorded_ms>=? AND s.recorded_ms<? UNION ALL SELECT COALESCE(l.kind,d.kind),d.amount,r.service_id,r.service_name,d.resolved_ms,d.id FROM cashier_drawer_requests d LEFT JOIN cashier_refund_links l ON l.drawer_id=d.id LEFT JOIN checkout_requests r ON r.request_id=l.checkout_id WHERE d.state='APPLIED' AND d.resolved_ms>=? AND d.resolved_ms<?";
+    static final String CLOSES="SELECT expected_cash,counted_cash,variance FROM cashier_shifts WHERE state='CLOSED' AND closed_ms>=? AND closed_ms<?";
+    static final class Service {
+        final String id,name;
+        final ReportMath.Totals totals=new ReportMath.Totals();
+        Service(String id,String name){this.id=id;this.name=name;}
+    }
+    static final class Report {
+        final ReportMath.Range range;
+        final ReportMath.Totals totals=new ReportMath.Totals();
+        final List<Service> services=new ArrayList<>();
+        BigInteger closedExpected=BigInteger.ZERO,closedCounted=BigInteger.ZERO,closedVariance=BigInteger.ZERO,closedShifts=BigInteger.ZERO;
+        Report(ReportMath.Range range){this.range=range;}
+    }
+    static Report read(SQLiteDatabase db,CashierJournal.Principal actor,ReportMath.Range range){
+        CashierSecurity.requireOwner(actor.role);
+        Report result=new Report(range);
+        // Group by immutable service ID AND sold name to preserve rename history without merging unrelated services.
+        Map<String,Map<String,Service>> byName=new TreeMap<>();
+        String a=Long.toString(range.start),b=Long.toString(range.end);
+        try(Cursor c=db.rawQuery(EVENTS,new String[]{a,b,a,b})){
+            while(c.moveToNext()){
+                String kind=c.getString(0);long amount=c.getLong(1);
+                result.totals.add(kind,amount);
+                if(!c.isNull(2)){
+                    String id=c.getString(2),name=c.getString(3);
+                    Service service=byName.computeIfAbsent(name,k->new TreeMap<>()).computeIfAbsent(id,k->new Service(id,name));
+                    service.totals.add(kind,amount);
+                }
+            }
+        }
+        for(Map<String,Service> ids:byName.values())result.services.addAll(ids.values());
+        try(Cursor c=db.rawQuery(CLOSES,new String[]{a,b})){
+            while(c.moveToNext()){
+                result.closedExpected=result.closedExpected.add(BigInteger.valueOf(c.getLong(0)));
+                result.closedCounted=result.closedCounted.add(BigInteger.valueOf(c.getLong(1)));
+                result.closedVariance=result.closedVariance.add(BigInteger.valueOf(c.getLong(2)));
+                result.closedShifts=result.closedShifts.add(BigInteger.ONE);
+            }
+        }
+        return result;
+    }
+}
