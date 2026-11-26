@@ -484,12 +484,18 @@ try {
     for(const scale of [1,1.25,1.5]){
       const viewport={width:Math.floor(1920/scale),height:Math.floor(1080/scale)};
       const scaled=await browser.newContext({viewport,deviceScaleFactor:scale});
+      let p;
       try{
-        const p=await scaled.newPage();
+        p=await scaled.newPage();
+        p.setDefaultTimeout(10000);
         await p.goto(origin);
         await p.getByPlaceholder('Enter username').fill('browser-test');
         await p.getByPlaceholder('Enter password',{exact:true}).fill(password);
+        const login=p.waitForResponse(r=>r.url().endsWith('/api/auth/login')&&r.request().method()==='POST');
         await p.getByRole('button',{name:'Sign In',exact:true}).click();
+        assert.equal((await login).status(),200,'Scaled browser authentication');
+        const pos=p.getByRole('button',{name:'POS Terminal',exact:true}).filter({visible:true}).first();
+        await pos.waitFor();await pos.click();
         const service=p.getByText('Synthetic Print',{exact:true}).filter({visible:true}).first();
         await service.waitFor();await service.click();
         const payment=p.getByRole('button',{name:/Receive payment/}).filter({visible:true}).first();
@@ -506,23 +512,26 @@ try {
         await p.screenshot({path:path.join(evidence,'simulated-dpi-'+Math.round(scale*100)+'.png'),animations:'disabled'});
         measurements.push({scale:scale*100,...geometry,scope:'Chromium device scale simulation; not native Windows display setting'});
         await dialog.getByRole('button',{name:'Cancel',exact:true}).click();
-      }finally{await scaled.close();}
+      }catch(error){await p?.screenshot({path:path.join(evidence,'failed-simulated-dpi-'+Math.round(scale*100)+'.png')}).catch(()=>{});throw Error('DPR '+scale+': '+error.message);}finally{await scaled.close();}
     }
     await fs.writeFile(path.join(evidence,'simulated-dpi.json'),JSON.stringify(measurements,null,2));
   });
   await check('mobile touch checkout and offline synchronization with PWA readiness',async()=>{
     const mobile=await browser.newContext({viewport:{width:390,height:844},deviceScaleFactor:3,isMobile:true,hasTouch:true,userAgent:'Mozilla/5.0 (Linux; Android 14; Synthetic Test) AppleWebKit/537.36 Chrome/130.0.0.0 Mobile Safari/537.36'});
+    let p;
     try{
-      const p=await mobile.newPage();
+      p=await mobile.newPage();p.setDefaultTimeout(10000);
       await p.goto(origin);
       await p.getByPlaceholder('Enter username').fill('browser-test');
       await p.getByPlaceholder('Enter password',{exact:true}).fill(password);
+      const login=p.waitForResponse(r=>r.url().endsWith('/api/auth/login')&&r.request().method()==='POST');
       await p.getByRole('button',{name:'Sign In',exact:true}).tap();
+      assert.equal((await login).status(),200,'Touch browser authentication');
+      const nav=p.getByRole('navigation',{name:'Mobile navigation'});
+      await nav.getByRole('button',{name:'POS',exact:true}).tap();
       const service=p.getByText('Synthetic Print',{exact:true}).filter({visible:true}).first();
       await service.waitFor();
       assert.equal(await p.evaluate(()=>navigator.maxTouchPoints>0),true);
-      const nav=p.getByRole('navigation',{name:'Mobile navigation'});
-      await nav.getByRole('button',{name:'POS',exact:true}).waitFor();
       const navSize=await nav.getByRole('button',{name:'POS',exact:true}).boundingBox();
       assert.ok(navSize&&navSize.height>=44);
       const manifest=await p.evaluate(async()=>{
@@ -536,6 +545,7 @@ try {
       await p.waitForFunction(async()=>Boolean((await navigator.serviceWorker.getRegistration())?.active));
       const before=await api('/bootstrap');
       await mobile.setOffline(true);
+      await p.getByRole('button',{name:'Offline Record Recovery',exact:true}).filter({visible:true}).first().waitFor();
       await service.tap();
       await p.getByRole('button',{name:/View cart/}).tap();
       const cart=p.getByRole('dialog').filter({has:p.getByText('Current Order',{exact:true})});
@@ -568,7 +578,7 @@ try {
         await p.screenshot({path:path.join(evidence,'tablet-'+viewport.width+'x'+viewport.height+'.png'),animations:'disabled'});
       }
       await fs.writeFile(path.join(evidence,'mobile-acceptance.json'),JSON.stringify({scope:'Android Chromium touch emulation, not physical device or installed PWA',manifestDisplay:manifest.display,serviceWorker:true,touchCheckout:true,offlineSaleReconciled:true,tabletViewports:[[768,1024],[1024,768]]},null,2));
-    }finally{await mobile.close();}
+    }catch(error){await p?.screenshot({path:path.join(evidence,'failed-mobile-touch.png')}).catch(()=>{});throw error;}finally{await mobile.close();}
   });
   await check('logout and password login',async()=>{
     await page.getByRole('button',{name:'Lock Terminal / Switch User',exact:true}).filter({visible:true}).first().click();

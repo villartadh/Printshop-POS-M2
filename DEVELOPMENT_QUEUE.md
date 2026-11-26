@@ -69,3 +69,6 @@ v0.9.6 b681596d50ee2fb31d40b5ef087bf58169350429 verified by CI 45733269332 and 4
 
 ## Verified at 268e249
 Both CI runs 45734634658 and 45734628690 passed the actual receipt virtual PDF checks across 58mm, 80mm, A4, Letter and custom formats. Submitted two additional browser scenarios: measured Chromium 100/125/150% device-scale simulation with checkout bounds, and Android touch emulation with offline cash sale, reconciliation, PWA manifest/service-worker and tablet geometry evidence. Physical OS scaling, actual installed PWA, physical printing and real devices remain unverified. Next: verify both gates then packaged Windows upgrade/recovery, BIR gap analysis and resilience.
+
+## Expanded gate failure at 7c8ab7e
+CI 45735694564 and 45735685964 failed Windows and Linux before new DPI measurement, waiting for Synthetic Print in a fresh browser context. Earlier gates passed. Fresh contexts now await actual password authentication response and explicitly select POS (desktop sidebar or mobile navigation), with scoped failure screenshots; offline test awaits offline indicator before checkout. Suspected navigation/initialization issue, not confirmed until CI passes. Preserve all existing DPR, geometry, touch and reconciliation assertions.
