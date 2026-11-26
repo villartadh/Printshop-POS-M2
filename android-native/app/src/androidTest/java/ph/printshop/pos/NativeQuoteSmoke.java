@@ -25,9 +25,9 @@ public final class NativeQuoteSmoke extends Instrumentation {
             activity = startActivitySync(intent);
             final Activity screen = activity;
             runOnMainSync(() -> {
-                EditText price = screen.findViewById(1001);
-                EditText quantity = screen.findViewById(1002);
-                EditText received = screen.findViewById(1003);
+                EditText price = screen.findViewById(R.id.quote_price);
+                EditText quantity = screen.findViewById(R.id.quote_quantity);
+                EditText received = screen.findViewById(R.id.quote_received);
                 require(price != null && quantity != null && received != null, "native input widgets missing");
                 View root = screen.getWindow().getDecorView();
                 require(hasText(root, "PREVIEW ONLY — NOT A SALE OR TAX DOCUMENT"), "preview warning missing");
@@ -69,7 +69,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             Activity catalog = null;
             ActivityMonitor monitor = addMonitor(CatalogActivity.class.getName(), null, false);
             try {
-                runOnMainSync(() -> screen.findViewById(1004).performClick());
+                runOnMainSync(() -> screen.findViewById(R.id.open_catalog).performClick());
                 catalog = waitForMonitorWithTimeout(monitor, 10000);
                 require(catalog != null, "catalog Activity did not open");
                 final Activity shown = catalog;
@@ -83,7 +83,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 });
                 waitForIdleSync();
                 runOnMainSync(() -> {
-                    EditText price = screen.findViewById(1001);
+                    EditText price = screen.findViewById(R.id.quote_price);
                     require(price.getText().toString().equals("3.25"), "catalog quotation price not copied");
                 });
             } finally {
