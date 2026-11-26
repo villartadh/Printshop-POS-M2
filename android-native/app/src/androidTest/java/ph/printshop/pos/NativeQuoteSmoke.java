@@ -49,7 +49,8 @@ public final class NativeQuoteSmoke extends Instrumentation {
             });
             verifyCatalog();
             verifyCatalogScreen(screen);
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\n");
+            verifyStockLedger();
+            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\n");
             finish(Activity.RESULT_OK, evidence);
         } catch (Throwable error) {
             evidence.putString("stream", "NATIVE_QUOTE_SMOKE_FAIL: " + error + "\n");
@@ -60,6 +61,52 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 runOnMainSync(screen::finish);
             }
         }
+    }
+    private static void rejectStock(Runnable action) {
+        try { action.run(); } catch (IllegalArgumentException | IllegalStateException expected) { return; }
+        throw new AssertionError("invalid stock operation accepted");
+    }
+    private void verifyStockLedger() {
+        android.content.Context context = getTargetContext();
+        String filename = "stock-migration-" + java.util.UUID.randomUUID() + ".db";
+        String id = java.util.UUID.randomUUID().toString();
+        String request = java.util.UUID.randomUUID().toString();
+        try {
+            // Fixture uses the exact former v1 schema, not a destructive reset.
+            try (android.database.sqlite.SQLiteDatabase db = context.openOrCreateDatabase(filename, 0, null)) {
+        db.execSQL("CREATE TABLE catalog (id TEXT PRIMARY KEY NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('SERVICE','MATERIAL')), name TEXT NOT NULL, unit TEXT NOT NULL, centavos INTEGER NOT NULL CHECK(centavos BETWEEN 0 AND 99999999999), revision INTEGER NOT NULL CHECK(revision >= 1), archived INTEGER NOT NULL CHECK(archived IN (0,1)))");
+        db.execSQL("CREATE TABLE catalog_history (id TEXT NOT NULL REFERENCES catalog(id), revision INTEGER NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL, unit TEXT NOT NULL, centavos INTEGER NOT NULL, archived INTEGER NOT NULL, action TEXT NOT NULL CHECK(action IN ('CREATE','EDIT','ARCHIVE','RESTORE')), PRIMARY KEY(id,revision))");
+                db.execSQL("INSERT INTO catalog VALUES(?,?,?,?,?,?,?)", new Object[]{id,"MATERIAL","Synthetic paper","sheet",199,1,0});
+                db.execSQL("INSERT INTO catalog_history VALUES(?,?,?,?,?,?,?,?)", new Object[]{id,1,"MATERIAL","Synthetic paper","sheet",199,0,"CREATE"});
+                db.setVersion(1);
+            }
+            try (CatalogStore store = new CatalogStore(context,filename)) {
+                require(store.get(id).centavos == 199 && store.get(id).revision == 1, "v1 catalog migration changed record");
+                require(store.stockBalance(id).quantity == 0 && store.stockBalance(id).revision == 0, "initial stock wrong");
+                StockMath.Balance added = store.moveStock(request,id,1,0,1500,"Synthetic receipt");
+                require(added.quantity == 1500 && added.revision == 1, "stock receipt wrong");
+                require(store.moveStock(request,id,1,0,1500,"Synthetic receipt").revision == 1, "exact replay wrong");
+                rejectStock(() -> store.moveStock(request,id,1,0,1501,"Synthetic receipt"));
+                rejectStock(() -> store.moveStock(java.util.UUID.randomUUID().toString(),id,1,0,1,"Stale"));
+                rejectStock(() -> store.moveStock(java.util.UUID.randomUUID().toString(),id,1,1,-1501,"Overdraw"));
+                rejectStock(() -> store.archive(id,1,true));
+                rejectStock(() -> store.edit(id,1,"Synthetic paper","ream","1.99"));
+                require(store.stockBalance(id).quantity == 1500 && store.stockBalance(id).revision == 1, "rejected movement changed stock");
+                store.moveStock(java.util.UUID.randomUUID().toString(),id,1,1,-1500,"Synthetic usage");
+                store.archive(id,1,true);
+                require(store.moveStock(request,id,1,0,1500,"Synthetic receipt").quantity == 1500, "historical replay after archive wrong");
+                require(store.stockBalance(id).quantity == 0 && store.stockBalance(id).revision == 2, "historical replay changed current balance");
+            }
+            try (CatalogStore reopened = new CatalogStore(context,filename)) {
+                require(reopened.get(id).archived && reopened.stockBalance(id).revision == 2, "stock persistence wrong");
+                try (android.database.Cursor c = reopened.getReadableDatabase().rawQuery("SELECT count(*) FROM stock_movements WHERE material_id=?",new String[]{id})) {
+                    require(c.moveToFirst() && c.getInt(0)==2,"stock movement history count wrong");
+                }
+                try (android.database.Cursor c = reopened.getReadableDatabase().rawQuery("SELECT count(*) FROM catalog_history WHERE id=?",new String[]{id})) {
+                    require(c.moveToFirst() && c.getInt(0)==2,"catalog migration history count wrong");
+                }
+            }
+        } finally { context.deleteDatabase(filename); }
     }
     private void verifyCatalogScreen(Activity screen) {
         android.content.Context context = getTargetContext();
