@@ -52,7 +52,8 @@ public final class NativeQuoteSmoke extends Instrumentation {
             verifyStockLedger();
             verifyStockScreen();
             verifyMaterials();
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_MATERIAL_COST_PASS\n");
+            verifyRecipeScreen(screen);
+            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\n");
             finish(Activity.RESULT_OK, evidence);
         } catch (Throwable error) {
             evidence.putString("stream", "NATIVE_QUOTE_SMOKE_FAIL: " + error + "\n");
@@ -61,6 +62,81 @@ public final class NativeQuoteSmoke extends Instrumentation {
             if (activity != null) {
                 final Activity screen = activity;
                 runOnMainSync(screen::finish);
+            }
+        }
+    }
+    private void verifyRecipeScreen(Activity screen) {
+        android.content.Context context = getTargetContext();
+        try (CatalogStore store = new CatalogStore(context)) {
+            CatalogEntry service = store.create(CatalogEntry.Kind.SERVICE, "Synthetic recipe service", "page", "5.00");
+            CatalogEntry paper = store.create(CatalogEntry.Kind.MATERIAL, "Synthetic recipe paper", "sheet", "1.99");
+            store.moveStock(java.util.UUID.randomUUID().toString(), paper.id, paper.revision, 0, 1500, "Synthetic stock");
+            waitForIdleSync();
+            ActivityMonitor cm = addMonitor(CatalogActivity.class.getName(), null, false);
+            Activity catalog = null;
+            Activity recipe = null;
+            ActivityMonitor rm = addMonitor(RecipeActivity.class.getName(), null, false);
+            try {
+                runOnMainSync(() -> screen.findViewById(R.id.open_catalog).performClick());
+                catalog = waitForMonitorWithTimeout(cm, 10000);
+                require(catalog != null, "recipe catalog did not open");
+                final Activity shown = catalog;
+                runOnMainSync(() -> {
+                    View configure = findText(shown.getWindow().getDecorView(), "Configure service materials");
+                    require(configure != null && configure.performClick(), "recipe configuration action unavailable");
+                });
+                recipe = waitForMonitorWithTimeout(rm, 10000);
+                require(recipe != null, "recipe Activity did not open");
+                final Activity editor = recipe;
+                waitForIdleSync();
+                runOnMainSync(() -> {
+                    View root = editor.getWindow().getDecorView();
+                    require(hasText(root, "No materials configured."), "empty recipe not distinguished");
+                    EditText usage = editor.findViewById(R.id.recipe_usage);
+                    usage.setText("0.5");
+                    require(editor.findViewById(R.id.recipe_save).performClick(), "recipe save unavailable");
+                    require(hasText(root, "Synthetic recipe paper · 0.5 sheet / page"), "configured material missing");
+                    require(hasText(root, "Estimated cost per unit: PHP 1.00 · Stock sufficient"), "per-unit estimate wrong");
+                });
+                waitForIdleSync();
+                require(store.recipeBindings(service.id).size() == 1, "recipe not persisted");
+                runOnMainSync(editor::finish);
+                waitForIdleSync();
+                runOnMainSync(() -> {
+                    View select = findText(shown.getWindow().getDecorView(), "Use in quotation");
+                    require(select != null && select.performClick(), "configured service selection failed");
+                });
+                waitForIdleSync();
+                runOnMainSync(() -> {
+                    View root = screen.getWindow().getDecorView();
+                    EditText price = screen.findViewById(R.id.quote_price);
+                    EditText qty = screen.findViewById(R.id.quote_quantity);
+                    require(price.getText().toString().equals("5.00"), "configured selling price not copied");
+                    qty.setText("3");
+                    require(hasText(root, "Total: PHP 15.00"), "quote selling total wrong");
+                    require(hasText(root, "Material cost: PHP 2.99 · Stock sufficient"), "quote material estimate wrong");
+                    qty.setText("4");
+                    require(hasText(root, "Material cost: PHP 3.98 · Insufficient stock"), "shortage warning missing");
+                    price.setText("6.00");
+                    require(hasText(root, "Total: PHP 24.00"), "manual selling price lost");
+                    require(hasText(root, "Material cost: PHP 3.98 · Insufficient stock"), "manual selling price altered cost");
+                    View clear = findText(root, "Clear service link");
+                    require(clear != null && clear.performClick(), "clear service link unavailable");
+                    require(hasText(root, "Material cost — select a service"), "stale cost after clearing");
+                    require(hasText(root, "Total: PHP 24.00"), "clear link changed sale estimate");
+                });
+                require(store.stockBalance(paper.id).quantity == 1500, "quote consumed inventory");
+                require(store.get(service.id).centavos == 500, "quote changed catalog selling price");
+            } finally {
+                removeMonitor(cm); removeMonitor(rm);
+                if (recipe != null) { final Activity editor = recipe; runOnMainSync(editor::finish); }
+                if (catalog != null) { final Activity shown = catalog; runOnMainSync(shown::finish); }
+                if (store.recipeRevision(service.id) != 0 && !store.recipeBindings(service.id).isEmpty())
+                    store.setMaterialUsage(service.id, service.revision, paper.id, paper.revision, store.recipeRevision(service.id), 0);
+                if (store.stockBalance(paper.id).quantity == 1500)
+                    store.moveStock(java.util.UUID.randomUUID().toString(), paper.id, paper.revision, 1, -1500, "Synthetic cleanup");
+                store.archive(service.id, service.revision, true);
+                if (store.stockBalance(paper.id).quantity == 0) store.archive(paper.id, paper.revision, true);
             }
         }
     }
