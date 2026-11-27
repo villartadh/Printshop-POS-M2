@@ -70,6 +70,9 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "v16 quotation migration"; verifyCheckoutMigration(16);
             phase = "v17 conversion migration"; verifyCheckoutMigration(17);
             phase = "v18 credit conversion migration"; verifyCheckoutMigration(18);
+            phase = "v19 production migration"; verifyCheckoutMigration(19);
+            phase = "v20 production policy migration"; verifyCheckoutMigration(20);
+            phase = "v21 quotation job migration"; verifyCheckoutMigration(21);
             phase = "saved quotation journal"; verifySavedQuotation();
             phase = "saved quotation cash conversion"; verifyQuotationCashConversion();
             phase = "saved quotation credit conversion"; verifyQuotationCreditConversion();
@@ -89,7 +92,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "pricing settings and document quote"; verifyPricingScreen(screen);
             phase = "measured quote"; verifyMeasuredQuote(screen);
             phase = "native cashier training UI"; verifyCashierTrainingScreen(screen);
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_RECURRING_UI_PASS\nNATIVE_CUSTOMER_DIRECTORY_PASS\nNATIVE_CUSTOMER_CHECKOUT_PASS\nNATIVE_CREDIT_COLLECTION_API_PASS\nNATIVE_CREDIT_REPORT_PASS\nNATIVE_CREDIT_CHECKOUT_UI_PASS\nNATIVE_CREDIT_COLLECTION_UI_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\nNATIVE_SAVED_QUOTATION_PASS\nNATIVE_QUOTATION_CASH_CONVERSION_PASS\nNATIVE_QUOTATION_CREDIT_CONVERSION_PASS\nNATIVE_QUOTATION_UI_PASS\n");
+            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_RECURRING_UI_PASS\nNATIVE_CUSTOMER_DIRECTORY_PASS\nNATIVE_CUSTOMER_CHECKOUT_PASS\nNATIVE_CREDIT_COLLECTION_API_PASS\nNATIVE_CREDIT_REPORT_PASS\nNATIVE_CREDIT_CHECKOUT_UI_PASS\nNATIVE_CREDIT_COLLECTION_UI_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\nNATIVE_SAVED_QUOTATION_PASS\nNATIVE_QUOTATION_CASH_CONVERSION_PASS\nNATIVE_QUOTATION_CREDIT_CONVERSION_PASS\nNATIVE_QUOTATION_UI_PASS\nNATIVE_PRODUCTION_JOURNAL_PASS\nNATIVE_PRODUCTION_UI_PASS\nNATIVE_PRODUCTION_POLICY_PASS\nNATIVE_QUOTE_PRODUCTION_PASS\nNATIVE_QUOTE_PRODUCTION_UI_PASS\n");
             result = Activity.RESULT_OK;
         } catch (Throwable error) {
             evidence.putString("stream", failureDetails(phase, error));
@@ -374,6 +377,9 @@ public final class NativeQuoteSmoke extends Instrumentation {
             verifyCreditCheckoutUI(second,fixtureId);
             verifyCollectionUI(second,fixtureId,owner,ownerPass);
             verifyQuotationUI(second,fixtureId,owner,ownerPass);
+            verifyProductionPolicy();
+            verifyProductionJournal(fixtureId);
+            verifyProductionUI(second);
             try(CatalogStore ordinary=new CatalogStore(context)){
                 java.util.List<CatalogEntry> after=ordinary.list(true);
                 require(before.size()==after.size(),"ordinary catalog changed");
@@ -909,6 +915,8 @@ public final class NativeQuoteSmoke extends Instrumentation {
             CustomerLinkJournal.Selection selected=store.authorizedFixtureCheckoutCustomers(staff,shift,"credit",0,9).get(0);
             CatalogEntry service=store.authorizedDemoService(staff);
             CatalogStore.CheckoutSelection chosen=store.authorizedFixtureCheckoutSelection(staff,service.id,service.revision);
+            rejectStock(()->store.setAuthorizedFixtureProductionPolicy(staff,service.id,service.revision,0,true));
+            store.setAuthorizedFixtureProductionPolicy(owner,service.id,service.revision,0,true);
             CheckoutPlan.Inputs partial=new CheckoutPlan.Inputs(1,1,1,null,null,null,CheckoutPlan.UsageBasis.BILLABLE_UNIT,100);
             CreditCheckoutPlan plan=store.prepareAuthorizedFixtureCreditCheckout(staff,shift,stockId(),chosen,selected,partial);
             require(plan.total==250&&plan.paid==100&&plan.owed==150,"partial credit pricing");
@@ -925,6 +933,8 @@ public final class NativeQuoteSmoke extends Instrumentation {
             require(store.applyAuthorizedFixtureCreditCheckout(staff,plan.id,plan.fingerprint).state.equals("APPLIED"),"credit apply");
             store.applyAuthorizedFixtureCreditCheckout(staff,plan.id,plan.fingerprint);
             require(store.expectedFixtureCash(staff,shift)==100,"partial credit cash replay");
+            require(store.authorizedFixtureJob(staff,plan.id).financial.balance==150,"automatic direct credit job debt");
+            require(trainingCount(store,"SELECT COUNT(*) FROM production_job_events")==1,"direct credit replay duplicate job");
             require(trainingCount(store,"SELECT COUNT(*) FROM credit_receivable_sources")==1,"credit source replay");
             CheckoutPlan.Inputs unpaid=new CheckoutPlan.Inputs(1,1,1,null,null,null,CheckoutPlan.UsageBasis.BILLABLE_UNIT,0);
             CreditCheckoutPlan second=store.prepareAuthorizedFixtureCreditCheckout(staff,shift,stockId(),chosen,selected,unpaid);
@@ -1011,6 +1021,31 @@ public final class NativeQuoteSmoke extends Instrumentation {
             }
         }finally{java.util.Arrays.fill(ownerPass,'\0');java.util.Arrays.fill(staffPass,'\0');context.deleteDatabase(filename);}
     }
+    private void verifyProductionPolicy(){
+        android.content.Context context=getTargetContext();String fixture=stockId(),filename="checkout-fixture-"+fixture+".db";
+        char[] pass="Synthetic-Policy-Owner-01".toCharArray();
+        try(CatalogStore store=CatalogStore.checkoutFixture(context,fixture)){
+            store.bootstrapDemoFixtureOwner("policy-owner",pass);String owner=store.signInFixture("policy-owner",pass),shift=stockId();
+            CatalogEntry service=store.createAuthorizedFixtureCatalog(owner,CatalogEntry.Kind.SERVICE,"Synthetic policy service","page","5.00");
+            store.openFixtureShift(owner,shift,0);
+            CheckoutPlan.Inputs input=new CheckoutPlan.Inputs(1,1,1,null,null,null,CheckoutPlan.UsageBasis.NONE,500);
+            CheckoutPlan.Proposal manual=store.prepareCheckout(stockId(),service.id,1,0,0,input);
+            store.stageAuthorizedFixtureCheckout(owner,shift,manual);
+            store.applyAuthorizedFixtureCheckout(owner,manual.requestId,manual.fingerprint());
+            require(store.findAuthorizedFixtureJob(owner,manual.requestId)==null,"manual default creates no job");
+            store.setAuthorizedFixtureProductionPolicy(owner,service.id,1,0,true);
+            store.applyAuthorizedFixtureCheckout(owner,manual.requestId,manual.fingerprint());
+            require(store.findAuthorizedFixtureJob(owner,manual.requestId)==null,"old sale replay auto-created job");
+            CheckoutPlan.Proposal auto=store.prepareCheckout(stockId(),service.id,1,0,0,input);
+            store.stageAuthorizedFixtureCheckout(owner,shift,auto);
+            require(store.findAuthorizedFixtureJob(owner,auto.requestId)==null,"pending sale has job");
+            store.applyAuthorizedFixtureCheckout(owner,auto.requestId,auto.fingerprint());
+            store.applyAuthorizedFixtureCheckout(owner,auto.requestId,auto.fingerprint());
+            require(store.authorizedFixtureJob(owner,auto.requestId).revision==1,"automatic job absent");
+            require(trainingCount(store,"SELECT COUNT(*) FROM production_job_events")==1,"duplicate automatic job");
+            require(store.expectedFixtureCash(owner,shift)==1000,"job creation changed cash");
+        }finally{java.util.Arrays.fill(pass,'\0');context.deleteDatabase(filename);}
+    }
     private void verifyQuotationCashConversion(){
         android.content.Context context=getTargetContext();String fixture=stockId(),filename="checkout-fixture-"+fixture+".db";
         char[] pass="Synthetic-Cash-Quote-Owner-01".toCharArray();
@@ -1018,19 +1053,36 @@ public final class NativeQuoteSmoke extends Instrumentation {
             store.bootstrapDemoFixtureOwner("conversion-owner",pass);String owner=store.signInFixture("conversion-owner",pass),shift=stockId();
             CatalogEntry service=store.createAuthorizedFixtureCatalog(owner,CatalogEntry.Kind.SERVICE,"Synthetic conversion","page","5.00");
             CatalogStore.CheckoutSelection selection=store.authorizedFixtureCheckoutSelection(owner,service.id,service.revision);
+            require(!store.authorizedFixtureCatalogDetail(owner,service.id).production.enabled,"default manual policy");
+            require(store.setAuthorizedFixtureProductionPolicy(owner,service.id,service.revision,0,true).revision==1,"enable automatic policy");
+            rejectStock(()->store.setAuthorizedFixtureProductionPolicy(owner,service.id,service.revision,0,false));
             SavedQuotation quote=store.prepareAuthorizedFixtureQuotation(owner,stockId(),selection,new CheckoutPlan.Inputs(2,1,1,null,null,null,CheckoutPlan.UsageBasis.NONE,0));
             store.saveAuthorizedFixtureQuotation(owner,selection,quote,null);
+            String event=stockId();
+            require(store.appendAuthorizedFixtureQuoteJob(owner,quote.id,event,0,ProductionWorkflow.Status.QUOTATION,"Synthetic requested work").revision==1,"manual quotation job creation");
+            require(store.appendAuthorizedFixtureQuoteJob(owner,quote.id,event,0,ProductionWorkflow.Status.QUOTATION,"Synthetic requested work").revision==1,"quotation job replay");
+            rejectStock(()->store.appendAuthorizedFixtureQuoteJob(owner,quote.id,stockId(),1,ProductionWorkflow.Status.COMPLETED,"Forbidden unpaid release"));
+            require(store.appendAuthorizedFixtureQuoteJob(owner,quote.id,stockId(),1,ProductionWorkflow.Status.AWAITING_APPROVAL,"Await approval").revision==2,"quotation approval stage");
+            require(trainingCount(store,"SELECT COUNT(*) FROM checkout_sales")==0,"quotation job invented a sale");
             require(store.authorizedFixtureQuotationHistory(owner,0).rows.size()==1,"quote history unavailable");
             require(store.authorizedFixtureQuotation(owner,quote.id).historical().total==1000,"historical decode incorrect");
             for(int i=0;i<8;i++){SavedQuotation more=store.prepareAuthorizedFixtureQuotation(owner,stockId(),selection,quote.inputs);store.saveAuthorizedFixtureQuotation(owner,selection,more,null);}
             require(store.authorizedFixtureQuotationHistory(owner,0).rows.size()==8&&store.authorizedFixtureQuotationHistory(owner,0).more,"quote page missing lookahead");
             require(store.authorizedFixtureQuotationHistory(owner,8).rows.size()==1&&!store.authorizedFixtureQuotationHistory(owner,8).more,"quote last page incorrect");
+            store.setAuthorizedFixtureProductionPolicy(owner,service.id,service.revision,1,false);
             store.openFixtureShift(owner,shift,0);
             CheckoutPlan.Proposal sale=store.prepareAuthorizedFixtureQuotationCash(owner,shift,quote.id,stockId(),1200);
             require(sale.totalCentavos==1000&&sale.changeCentavos==200,"conversion cash review wrong");
             require(store.expectedFixtureCash(owner,shift)==0,"quote review changed cash");
             store.convertAuthorizedFixtureQuotationCash(owner,shift,quote.id,sale);
             store.convertAuthorizedFixtureQuotationCash(owner,shift,quote.id,sale);
+            require(store.authorizedFixtureJob(owner,sale.requestId).revision==1,"converted quotation job");
+            require(sale.requestId.equals(store.authorizedFixtureQuoteJob(owner,quote.id).receipt),"quoted job conversion provenance");
+            require(store.authorizedFixtureQuoteJobHistory(owner,quote.id,0).size()==2,"original job history lost");
+            require(trainingCount(store,"SELECT COUNT(*) FROM production_job_events")==1,"automatic job replay duplicated");
+            store.setAuthorizedFixtureProductionPolicy(owner,service.id,service.revision,2,true);
+            store.convertAuthorizedFixtureQuotationCash(owner,shift,quote.id,sale);
+            require(trainingCount(store,"SELECT COUNT(*) FROM production_job_events")==1,"policy change affected historical job");
             require(store.expectedFixtureCash(owner,shift)==1000&&trainingCount(store,"SELECT COUNT(*) FROM checkout_sales")==1,"conversion replay duplicated sale");
             require(store.authorizedFixtureQuotation(owner,quote.id).cashCheckout.equals(sale.requestId),"conversion link missing");
             rejectStock(()->store.cancelAuthorizedFixtureQuotation(owner,quote.id,"already converted"));
@@ -1045,6 +1097,9 @@ public final class NativeQuoteSmoke extends Instrumentation {
             store.bootstrapDemoFixtureOwner("credit-quote-owner",pass);String owner=store.signInFixture("credit-quote-owner",pass),shift=stockId(),cid=stockId();
             CatalogEntry service=store.createAuthorizedFixtureCatalog(owner,CatalogEntry.Kind.SERVICE,"Synthetic credit conversion","page","5.00");
             CatalogStore.CheckoutSelection selection=store.authorizedFixtureCheckoutSelection(owner,service.id,service.revision);
+            require(!store.authorizedFixtureCatalogDetail(owner,service.id).production.enabled,"default manual policy");
+            require(store.setAuthorizedFixtureProductionPolicy(owner,service.id,service.revision,0,true).revision==1,"enable automatic policy");
+            rejectStock(()->store.setAuthorizedFixtureProductionPolicy(owner,service.id,service.revision,0,false));
             store.saveFixtureCustomer(owner,cid,0,"Synthetic conversion customer","",true);
             CustomerLinkJournal.Selection customer=new CustomerLinkJournal.Selection(cid,"Synthetic conversion customer",1);
             SavedQuotation quote=store.prepareAuthorizedFixtureQuotation(owner,stockId(),selection,new CheckoutPlan.Inputs(2,1,1,null,null,null,CheckoutPlan.UsageBasis.NONE,0));
@@ -1058,6 +1113,8 @@ public final class NativeQuoteSmoke extends Instrumentation {
             require(store.expectedFixtureCash(owner,shift)==0,"credit review changed cash");
             store.convertAuthorizedFixtureQuotationCredit(owner,shift,quote.id,partial);
             store.convertAuthorizedFixtureQuotationCredit(owner,shift,quote.id,partial);
+            require(store.authorizedFixtureJob(owner,partial.id).financial.balance==600,"automatic credit job debt");
+            require(trainingCount(store,"SELECT COUNT(*) FROM production_job_events")==1,"credit replay duplicated job");
             require(store.expectedFixtureCash(owner,shift)==400&&trainingCount(store,"SELECT COUNT(*) FROM credit_receivable_sources")==1,"credit conversion replay duplicated effects");
             require(store.authorizedFixtureQuotation(owner,quote.id).creditCheckout.equals(partial.id),"credit quote receipt link missing");
             rejectStock(()->store.prepareAuthorizedFixtureQuotationCash(owner,shift,quote.id,stockId(),1000));
@@ -1065,6 +1122,8 @@ public final class NativeQuoteSmoke extends Instrumentation {
             CreditCheckoutPlan zero=store.prepareAuthorizedFixtureQuotationCredit(owner,shift,unpaid.id,stockId(),0);
             store.convertAuthorizedFixtureQuotationCredit(owner,shift,unpaid.id,zero);
             require(store.expectedFixtureCash(owner,shift)==400&&trainingCount(store,"SELECT COUNT(*) FROM credit_receivable_sources")==2,"unpaid conversion affected cash");
+            require(store.authorizedFixtureJob(owner,zero.id).financial.balance==1000,"automatic unpaid job debt");
+            require(trainingCount(store,"SELECT COUNT(*) FROM production_job_events")==2,"credit jobs missing");
             require(trainingCount(store,"SELECT COUNT(*) FROM saved_quotation_credit_conversions")==2,"quote credit history incorrect");
         }finally{java.util.Arrays.fill(pass,'\0');context.deleteDatabase(filename);}
     }
@@ -1249,12 +1308,28 @@ public final class NativeQuoteSmoke extends Instrumentation {
         }
         trainingLogin(a,"catalog-cashier","Synthetic-Catalog-Cashier-01");awaitText(a,"No open shift","quotation login");
         newQuotationUI(a,false);
+        trainingClick(a,R.id.cashier_quote_job);awaitText(a,"Create quotation production job","manual quote job create");
+        trainingField(a,R.id.cashier_job_note,"Synthetic quote instructions");trainingClick(a,R.id.cashier_job_confirm);
+        awaitText(a,"Quotation job · Quotation","quotation job created");
+        trainingSelect(a,"Move to Awaiting approval");awaitText(a,"Confirm quotation job change","approval confirmation");
+        trainingField(a,R.id.cashier_job_note,"Synthetic awaiting approval");trainingClick(a,R.id.cashier_job_confirm);
+        awaitText(a,"Quotation job · Awaiting approval","approval stage");
+        trainingClick(a,R.id.cashier_job_history);awaitText(a,"Quotation job event history","quote job history");
+        awaitText(a,"Synthetic quote instructions","original note preserved");awaitText(a,"Synthetic awaiting approval","approval note preserved");
+        trainingClick(a,R.id.cashier_job_reload);awaitText(a,"Quotation job · Awaiting approval","quote job reload");
+        trainingClick(a,R.id.cashier_quote_reload);awaitText(a,"Training quotation · Saved","return quotation");
         trainingClick(a,R.id.cashier_quote_convert);awaitText(a,"Open your own shift and resolve pending requests before conversion.","shift fence");
         trainingClick(a,R.id.cashier_quote_reload);awaitText(a,"Training quotation · Saved","reload saved quote");
         trainingField(a,R.id.cashier_cancel_reason,"Synthetic quote cancellation");trainingClick(a,R.id.cashier_quote_cancel);
         awaitText(a,"Training quotation · Cancelled","quote cancelled");
+        trainingClick(a,R.id.cashier_quote_job);awaitText(a,"Quotation job · Cancelled","quotation cancellation propagated");
+        trainingClick(a,R.id.cashier_quote_jobs);awaitText(a,"Synthetic UI configured · Cancelled","quote job list");
+        trainingSelect(a,"Synthetic UI configured · Cancelled");awaitText(a,"Quotation job · Cancelled","cancelled job recovery");
         trainingClick(a,R.id.cashier_back);awaitText(a,"No open shift","no payment from quote");
         newQuotationUI(a,true);
+        trainingClick(a,R.id.cashier_quote_job);awaitText(a,"Create quotation production job","credit quote job create");
+        trainingField(a,R.id.cashier_job_note,"Synthetic credit job");trainingClick(a,R.id.cashier_job_confirm);
+        awaitText(a,"Quotation job · Quotation","credit quote job created");
         trainingClick(a,R.id.cashier_back);awaitText(a,"No open shift","saved quote no shift");
         trainingClick(a,R.id.cashier_open_shift);awaitText(a,"Shift open · Expected cash: PHP 0.00","quote conversion shift");
         trainingClick(a,R.id.cashier_quote_history);awaitText(a,"Saved training quotations","history");
@@ -1264,6 +1339,12 @@ public final class NativeQuoteSmoke extends Instrumentation {
         trainingClick(a,R.id.cashier_quote_review);awaitText(a,"Confirm quotation conversion","conversion review");
         awaitText(a,"Original debt: PHP 16.00","credit conversion debt");
         trainingClick(a,R.id.cashier_quote_confirm);awaitText(a,"Training quotation · Credit converted","converted link");
+        trainingClick(a,R.id.cashier_quote_job);awaitText(a,"Quotation job · Converted","receipt handover");
+        trainingClick(a,R.id.cashier_job_reload);awaitText(a,"Training job · Pending","linked receipt job");
+        awaitText(a,"Outstanding: PHP 16.00","handover preserves credit balance");
+        trainingClick(a,R.id.cashier_back);awaitText(a,"Shift open · Expected cash: PHP 5.00","handover cash effect");
+        trainingClick(a,R.id.cashier_quote_history);awaitText(a,"Saved training quotations","converted quote recovery");
+        trainingSelect(a,"Synthetic UI configured · PHP 21.00 · Credit converted");awaitText(a,"Training quotation · Credit converted","credit quote recovered");
         trainingClick(a,R.id.cashier_quote_receipt);awaitText(a,"Recorded training credit receipt","linked receipt");
         trainingClick(a,R.id.cashier_return_home);awaitText(a,"Shift open · Expected cash: PHP 5.00","cash effect once");
         newQuotationUI(a,false);
@@ -1272,7 +1353,19 @@ public final class NativeQuoteSmoke extends Instrumentation {
         awaitText(a,"Confirm quotation conversion","cash review");
         trainingClick(a,R.id.cashier_quote_confirm);awaitText(a,"Training quotation · Cash converted","cash link");
         trainingClick(a,R.id.cashier_quote_receipt);awaitText(a,"Recorded training receipt","cash receipt");
-        trainingClick(a,R.id.cashier_return_home);awaitText(a,"Shift open · Expected cash: PHP 26.00","cash conversion effect once");
+        trainingClick(a,R.id.cashier_job_receipt);awaitText(a,"Create training production job","create job screen");
+        trainingField(a,R.id.cashier_job_note,"Synthetic print instructions");trainingClick(a,R.id.cashier_job_confirm);
+        awaitText(a,"Training job · Pending","job created");
+        for(String stage:new String[]{"In production","Quality checking","Ready for pickup","Completed"}){
+            trainingSelect(a,"Move to "+stage);
+            awaitText(a,stage.equals("Completed")?"Confirm job release":"Confirm production transition","job transition review");
+            trainingField(a,R.id.cashier_job_note,"Synthetic "+stage);trainingClick(a,R.id.cashier_job_confirm);
+            awaitText(a,"Training job · "+stage,"job stage");
+        }
+        trainingClick(a,R.id.cashier_job_history);awaitText(a,"Training job event history","job history");
+        awaitText(a,"#5 · Completed","job final history");awaitText(a,"#1 · Pending","job creation history");
+        trainingClick(a,R.id.cashier_job_reload);awaitText(a,"Training job · Completed","job return");
+        trainingClick(a,R.id.cashier_back);awaitText(a,"Shift open · Expected cash: PHP 26.00","cash conversion effect once");
         trainingClick(a,R.id.cashier_close_shift);awaitText(a,"Close training shift","quote close");
         trainingField(a,R.id.cashier_counted,"26.00");trainingClick(a,R.id.cashier_confirm_close);
         awaitText(a,"Variance: PHP 0.00","quote exact close");
@@ -1283,7 +1376,52 @@ public final class NativeQuoteSmoke extends Instrumentation {
             require(trainingCount(f,"SELECT COUNT(*) FROM saved_quotation_cancellations")==1,"quotation UI cancellation count");
             require(trainingCount(f,"SELECT COUNT(*) FROM saved_quotation_cash_conversions")==1,"quotation UI cash link");
             require(trainingCount(f,"SELECT COUNT(*) FROM saved_quotation_credit_conversions")==1,"quotation UI credit link");
+            require(trainingCount(f,"SELECT COUNT(*) FROM production_quote_events")==3,"quotation job UI event count");
+            require(trainingCount(f,"SELECT COUNT(*) FROM production_quote_current WHERE effective_status='CANCELLED'")==1,"cancelled quote job count");
+            require(trainingCount(f,"SELECT COUNT(*) FROM production_quote_current WHERE receipt_id IS NOT NULL")==1,"converted quote job count");
         }
+    }
+
+    private void verifyProductionJournal(String fixtureId){
+        try(CatalogStore fixture=CatalogStore.checkoutFixture(getTargetContext(),fixtureId)){
+            char[] pw="Synthetic-Catalog-Cashier-01".toCharArray();
+            try{
+                String token=fixture.signInFixture("catalog-cashier",pw);
+                String cash,credit;
+                try(android.database.Cursor c=fixture.getReadableDatabase().rawQuery("SELECT checkout_id FROM saved_quotation_cash_conversions",null)){
+                    require(c.moveToFirst(),"cash conversion missing");cash=c.getString(0);}
+                try(android.database.Cursor c=fixture.getReadableDatabase().rawQuery("SELECT checkout_id FROM saved_quotation_credit_conversions",null)){
+                    require(c.moveToFirst(),"credit conversion missing");credit=c.getString(0);}
+                require(fixture.authorizedFixtureJob(token,cash).status==ProductionWorkflow.Status.COMPLETED,"cash UI release");
+                String event=java.util.UUID.randomUUID().toString();
+                require(fixture.authorizedFixtureJob(token,credit).revision==1,"credit quote handover job");
+                require(fixture.appendAuthorizedFixtureJob(token,credit,event,1,ProductionWorkflow.Status.IN_PRODUCTION,"Synthetic job").revision==2,"credit job stage");
+                require(fixture.appendAuthorizedFixtureJob(token,credit,event,1,ProductionWorkflow.Status.IN_PRODUCTION,"Synthetic job").revision==2,"credit job replay");
+                long revision=2;
+                for(ProductionWorkflow.Status status:new ProductionWorkflow.Status[]{ProductionWorkflow.Status.QUALITY_CHECKING,ProductionWorkflow.Status.READY_FOR_PICKUP}){
+                    ProductionJournal.Job job=fixture.appendAuthorizedFixtureJob(token,credit,java.util.UUID.randomUUID().toString(),revision++,status,"Synthetic transition");
+                    require(job.status==status&&job.revision==revision,"job stage");
+                }
+                try{fixture.appendAuthorizedFixtureJob(token,credit,java.util.UUID.randomUUID().toString(),4,ProductionWorkflow.Status.COMPLETED,"Blocked unpaid release");throw new AssertionError("unpaid job released");}
+                catch(IllegalStateException expected){}
+                require(fixture.authorizedFixtureJob(token,credit).financial.balance==1600,"live job debt");
+                require(fixture.authorizedFixtureJobs(token,0).size()==2,"job page");
+                fixture.signOutFixture(token);
+            }finally{java.util.Arrays.fill(pw,'\0');}
+        }
+    }
+
+    private void verifyProductionUI(Activity a){
+        trainingLogin(a,"catalog-cashier","Synthetic-Catalog-Cashier-01");awaitText(a,"No open shift","job login");
+        trainingClick(a,R.id.cashier_jobs);awaitText(a,"Training production jobs","job page");
+        trainingSelect(a,"Synthetic UI configured · Ready for pickup");awaitText(a,"Training job · Ready for pickup","credit job detail");
+        awaitText(a,"Release blocked: collect outstanding payment first.","unpaid release fence");
+        runOnMainChecked(()->require(a.findViewById(R.id.cashier_job_release)==null,"unpaid release action visible"));
+        trainingClick(a,R.id.cashier_job_reload);awaitText(a,"Training job · Ready for pickup","reload job");
+        trainingClick(a,R.id.cashier_jobs);awaitText(a,"Training production jobs","return job page");
+        trainingSelect(a,"Synthetic UI configured · Completed");awaitText(a,"Training job · Completed","cash job detail");
+        trainingClick(a,R.id.cashier_back);awaitText(a,"No open shift","job dashboard");
+        trainingClick(a,R.id.cashier_lock);awaitText(a,"Training sign in","job logout");
     }
 
     /** Preserve exceptions from the UI thread without terminating instrumentation. */
@@ -1498,7 +1636,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 db.setVersion(4);
             }
             try(CatalogStore store=new CatalogStore(context,filename)){
-                require(store.getReadableDatabase().getVersion()==19,"v4-to-v19 migration version wrong");
+                require(store.getReadableDatabase().getVersion()==22,"v4-to-v22 migration version wrong");
                 require(store.stockBalance(material).quantity==1500&&store.stockHistory(material,0,5).size()==1,"v4 stock lost");
                 require(store.recipeBindings(service).get(0).quantityMilli==500&&store.pricing(service).tiers.get(0).rateCentavos==250,"v4 recipe/pricing lost");
                 require(store.pendingStock(material)==null,"unexpected migrated pending request");
@@ -1693,13 +1831,18 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 if(former>=16){ReceivableJournal.createCandidate(db);CreditCashJournal.createCandidate(db);CreditCheckoutJournal.createCandidate(db);}
                 if(former>=17)QuotationJournal.upgrade(db);
                 if(former>=18)QuotationJournal.upgradeConversion(db);
+                if(former>=19)QuotationJournal.upgradeCreditConversion(db);
+                if(former>=20)ProductionJournal.upgrade(db);
+                if(former>=21)ProductionPolicy.upgrade(db);
                 db.setVersion(former);
             }
             try(CatalogStore store=former>=7?CatalogStore.checkoutFixture(context,fixture):new CatalogStore(context,filename)){
-                require(store.getReadableDatabase().getVersion()==19,"v5-v19 migration failed");
+                require(store.getReadableDatabase().getVersion()==22,"v5-v22 migration failed");
                 require(store.stockBalance(material).quantity==1500&&store.stockHistory(material,0,10).size()==1,"v5 stock changed");
                 require(store.pendingStock(material)!=null&&store.pendingStock(material).id.equals(pending),"v5 pending stock lost");
                 require(store.get(material).centavos==199,"v5 catalog changed");
+                require(trainingCount(store,"SELECT COUNT(*) FROM production_quote_events")==0,"migration invented quotation jobs");
+                require(trainingCount(store,"SELECT COUNT(*) FROM production_service_policy")==0,"migration invented production settings");
                 require(trainingCount(store,"SELECT COUNT(*) FROM saved_quotations")==0,"migration invented quotations");
                 require(trainingCount(store,"SELECT COUNT(*) FROM cashier_admin_events")== (former>=10?1:0),"migration changed administrative audit");
                 require(trainingCount(store,"SELECT COUNT(*) FROM cashier_refund_links")==0,"migration invented refund links");
@@ -2612,7 +2755,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             }
             java.util.List<PricingMath.Tier> tiers=java.util.Arrays.asList(new PricingMath.Tier(2000,200),new PricingMath.Tier(1000,250));
             try(CatalogStore store=new CatalogStore(context,filename)){
-                require(store.getReadableDatabase().getVersion()==19,"v3-to-v19 migration version wrong");
+                require(store.getReadableDatabase().getVersion()==22,"v3-to-v22 migration version wrong");
                 require(store.pricing(service).revision==0&&!store.pricing(service).needsAdvancedQuote(),"legacy default changed");
                 require(store.recipeRevision(service)==1&&store.stockBalance(material).quantity==1500,"migration changed recipe or stock");
                 PricingProfile saved=store.savePricing(service,1,0,PricingMath.Method.PER_PAGE,true,tiers);

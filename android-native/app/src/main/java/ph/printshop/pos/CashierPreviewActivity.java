@@ -198,6 +198,12 @@ public final class CashierPreviewActivity extends Activity {
             case "Zero-value checkout requires a separate policy":
             case "Enter a positive quantity; use Remove to unlink":
             case "Only active services and materials may be linked":
+            case "Job changed; reload":
+            case "Job unavailable":
+            case "Job already exists or invalid initial status":
+            case "Production event identity changed":
+            case "Resolve pending receipt compensation first":
+            case "Invalid production transition or outstanding payment":
             case "Quotation cannot be converted":
             case "Quotation terms changed; save a new quotation":
             case "Quotation customer changed; save a new quotation":
@@ -352,6 +358,7 @@ public final class CashierPreviewActivity extends Activity {
         }
         button("New training quotation",R.id.cashier_quote_new,()->showQuoteServices(0));
         button("Saved training quotations",R.id.cashier_quote_history,()->showQuoteHistory(0));
+        button("Training production jobs",R.id.cashier_jobs,()->showJobs(0));
         button("Recorded training receipts",R.id.cashier_history,this::showHistory);
         button("Recorded training credit receipts",R.id.cashier_credit_history,this::showCreditHistory);
         button("Training collection history",R.id.cashier_collection_history,()->showCollectionHistory(0));
@@ -862,6 +869,14 @@ public final class CashierPreviewActivity extends Activity {
                     button("Configure training pricing",R.id.cashier_catalog_pricing,()->showOwnerPricing(detail));
                     label("Recipe: "+detail.bindings.size()+" linked material(s) · revision "+detail.recipeRevision);
                     button("Configure training recipe",R.id.cashier_catalog_recipe,()->showOwnerRecipe(detail,0));
+                    label("Production jobs: "+(detail.production.enabled?"Automatic":"Manual")+" · revision "+detail.production.revision);
+                    button("Configure production jobs",R.id.cashier_production_policy,()->{
+                        mode="production-policy";screen("Production job setting","Applies only to future successful sales. Existing receipts and jobs are unchanged.");
+                        boolean enabled=!detail.production.enabled;
+                        button(enabled?"Enable automatic jobs":"Use manual jobs",R.id.cashier_production_policy_save,()->submit(
+                            ()->store.setAuthorizedFixtureProductionPolicy(session(),item.id,item.revision,detail.production.revision,enabled),v2->showOwnerDetail(item.id)));
+                        button("Keep current setting",R.id.cashier_catalog_return,()->showOwnerDetail(item.id));back();
+                    });
                 }
             }
             button(item.archived?"Restore training item":"Archive training item",R.id.cashier_catalog_archive,()->showCatalogArchive(item));
@@ -1109,6 +1124,90 @@ public final class CashierPreviewActivity extends Activity {
             })){Arrays.fill(old,'\0');Arrays.fill(replacement,'\0');}
         });back();
     }
+    private String jobStatus(ProductionWorkflow.Status status){
+        switch(status){
+            case IN_PRODUCTION:return "In production";
+            case QUALITY_CHECKING:return "Quality checking";
+            case READY_FOR_PICKUP:return "Ready for pickup";
+            case COMPLETED:return "Completed";
+            case CANCELLED:return "Cancelled";
+            case AWAITING_APPROVAL:return "Awaiting approval";
+            case QUOTATION:return "Quotation";
+            default:return "Pending";
+        }
+    }
+    private void openOrCreateJob(String receipt,String service,long total){
+        submit(()->store.findAuthorizedFixtureJob(session(),receipt),v->{
+            if(v!=null){showJob((ProductionJournal.Job)v);return;}
+            mode="job-create";screen("Create training production job","Only create a job for work requiring production. This does not change payment or inventory.");
+            label(service);label("Receipt: "+receipt);label("Total: "+QuoteMath.display(total));
+            EditText note=field("Production instructions",R.id.cashier_job_note,InputType.TYPE_CLASS_TEXT,160,null);
+            String event=UUID.randomUUID().toString();
+            button("Create job",R.id.cashier_job_confirm,()->{
+                String raw=text(note);
+                submit(()->store.appendAuthorizedFixtureJob(session(),receipt,event,0,ProductionWorkflow.Status.PENDING,raw),x->showJob((ProductionJournal.Job)x));
+            });
+            button("Reload original receipt job",R.id.cashier_job_reload,()->openOrCreateJob(receipt,service,total));back();
+        });
+    }
+    private void showJobs(int offset){
+        submit(()->store.authorizedFixtureJobs(session(),offset),v->{
+            @SuppressWarnings("unchecked") List<ProductionJournal.Job> rows=(List<ProductionJournal.Job>)v;
+            mode="jobs";screen("Training production jobs","Select a job to review the current stage, payment and history.");
+            button("Quotation production jobs",R.id.cashier_quote_jobs,()->showQuoteJobs(0));
+            if(rows.isEmpty())label("No recorded-sale production jobs. Create one from a receipt or quotation.");
+            for(int i=0;i<Math.min(8,rows.size());i++){
+                ProductionJournal.Job j=rows.get(i);
+                button(j.service+" · "+jobStatus(j.status),0,()->openJob(j.receipt));
+            }
+            catalogPages(offset,rows.size()>8,()->showJobs(offset-8),()->showJobs(offset+8));back();
+        });
+    }
+    private void openJob(String receipt){
+        submit(()->store.authorizedFixtureJob(session(),receipt),v->showJob((ProductionJournal.Job)v));
+    }
+    private void showJob(ProductionJournal.Job job){
+        mode="job-detail";screen("Training job · "+jobStatus(job.status),"Payment is read from the original financial ledger.");
+        label(job.service);label("Receipt: "+job.receipt);label("Revision: "+job.revision);
+        label("Total: "+QuoteMath.display(job.financial.total));label("Outstanding: "+QuoteMath.display(job.financial.balance));
+        label("Payment: "+job.financial.payment);label("Last note: "+job.note);
+        if(job.pendingCompensation)label("Resolve pending receipt compensation before advancing.");
+        else if(job.financial.reversed())label("Receipt reversed; production progression blocked.");
+        else{
+            if(job.status==ProductionWorkflow.Status.READY_FOR_PICKUP&&job.financial.balance>0)label("Release blocked: collect outstanding payment first.");
+            for(ProductionWorkflow.Status next:ProductionWorkflow.allowed(job.status,job.financial))
+                button("Move to "+jobStatus(next),next==ProductionWorkflow.Status.COMPLETED?R.id.cashier_job_release:0,()->showJobTransition(job,next));
+        }
+        button("Job event history",R.id.cashier_job_history,()->showJobHistory(job.receipt,0));
+        button("Reload job",R.id.cashier_job_reload,()->openJob(job.receipt));
+        button("Production jobs",R.id.cashier_jobs,()->showJobs(0));back();
+    }
+    private void showJobTransition(ProductionJournal.Job job,ProductionWorkflow.Status next){
+        mode="job-transition";screen(next==ProductionWorkflow.Status.COMPLETED?"Confirm job release":"Confirm production transition","Review current status. The ledger and revision are checked again at confirmation.");
+        label(job.service);label(jobStatus(job.status)+" → "+jobStatus(next));
+        label("Outstanding: "+QuoteMath.display(job.financial.balance));
+        EditText note=field("Transition note",R.id.cashier_job_note,InputType.TYPE_CLASS_TEXT,160,null);
+        String event=UUID.randomUUID().toString();
+        button("Confirm transition",R.id.cashier_job_confirm,()->{
+            String raw=text(note);
+            submit(()->store.appendAuthorizedFixtureJob(session(),job.receipt,event,job.revision,next,raw),v->showJob((ProductionJournal.Job)v));
+        });
+        button("Reload job",R.id.cashier_job_reload,()->openJob(job.receipt));back();
+    }
+    private void showJobHistory(String receipt,int offset){
+        submit(()->store.authorizedFixtureJobHistory(session(),receipt,offset),v->{
+            @SuppressWarnings("unchecked") List<ProductionJournal.Event> rows=(List<ProductionJournal.Event>)v;
+            mode="job-history";screen("Training job event history","Original status changes and actor revisions are retained.");
+            for(int i=0;i<Math.min(8,rows.size());i++){
+                ProductionJournal.Event e=rows.get(i);
+                label("#"+e.revision+" · "+jobStatus(ProductionWorkflow.Status.valueOf(e.status)));
+                label(e.actor+" · Account revision "+e.actorRevision+" · "+new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm",java.util.Locale.ROOT).format(new java.util.Date(e.created)));
+                label(e.note);
+            }
+            catalogPages(offset,rows.size()>8,()->showJobHistory(receipt,offset-8),()->showJobHistory(receipt,offset+8));
+            button("Return to job",R.id.cashier_job_reload,()->openJob(receipt));back();
+        });
+    }
     private void showQuoteServices(int offset){
         submit(()->store.authorizedFixtureCheckoutServices(session(),offset),v->{
             CatalogStore.CatalogPage page=(CatalogStore.CatalogPage)v;
@@ -1223,8 +1322,64 @@ public final class CashierPreviewActivity extends Activity {
             EditText reason=field("Cancellation reason",R.id.cashier_cancel_reason,InputType.TYPE_CLASS_TEXT,160,null);
             button("Cancel quotation",R.id.cashier_quote_cancel,()->{String note=text(reason);submit(()->store.cancelAuthorizedFixtureQuotation(session(),q.id,note),v->showQuoteDetail((QuotationJournal.Record)v));});
         }
+        button("Quotation production job",R.id.cashier_quote_job,()->openQuoteJob(q));
         button("Reload quotation",R.id.cashier_quote_reload,()->openQuote(q.id));
         button("Quotation history",R.id.cashier_quote_history,()->showQuoteHistory(0));back();
+    }
+    private void showQuoteJobs(int offset){
+        submit(()->store.authorizedFixtureQuoteJobs(session(),offset),v->{
+            @SuppressWarnings("unchecked") List<QuoteProductionJournal.Job> rows=(List<QuoteProductionJournal.Job>)v;
+            mode="quote-jobs";screen("Quotation production jobs","Pre-sale work requests and original conversion links.");
+            if(rows.isEmpty())label("No quotation production jobs");
+            for(int i=0;i<Math.min(8,rows.size());i++){
+                QuoteProductionJournal.Job j=rows.get(i);button(j.service+" · "+(j.receipt==null?jobStatus(ProductionWorkflow.Status.valueOf(j.status)):"Converted"),0,()->reloadQuoteJob(j.quote));
+            }
+            catalogPages(offset,rows.size()>8,()->showQuoteJobs(offset-8),()->showQuoteJobs(offset+8));
+            button("Recorded-sale jobs",R.id.cashier_jobs,()->showJobs(0));back();
+        });
+    }
+    private void openQuoteJob(QuotationJournal.Record q){
+        submit(()->store.authorizedFixtureQuoteJob(session(),q.id),v->{
+            if(v!=null){showQuoteJob((QuoteProductionJournal.Job)v);return;}
+            mode="quote-job-create";screen("Create quotation production job","No payment or inventory changes. Production begins after conversion.");
+            if(q.cancelled||q.cashCheckout!=null||q.creditCheckout!=null)label("No pre-sale job for this resolved quotation.");
+            else quoteJobConfirmation(q.id,0,ProductionWorkflow.Status.QUOTATION);
+            button("Return to quotation",R.id.cashier_quote_reload,()->openQuote(q.id));back();
+        });
+    }
+    private void reloadQuoteJob(String quote){
+        submit(()->store.authorizedFixtureQuoteJob(session(),quote),v->{if(v==null){openQuote(quote);return;}showQuoteJob((QuoteProductionJournal.Job)v);});
+    }
+    private void showQuoteJob(QuoteProductionJournal.Job job){
+        mode="quote-job-detail";screen("Quotation job · "+(job.receipt==null?jobStatus(ProductionWorkflow.Status.valueOf(job.status)):"Converted"),"The saved quotation and original notes are retained.");
+        label(job.service);label("Quotation: "+job.quote);label("Estimated total: "+QuoteMath.display(job.total));label("Last note: "+job.note);
+        if(job.receipt!=null){label("Linked receipt: "+job.receipt);if(!"CANCELLED".equals(job.status))button("Open recorded-sale job",R.id.cashier_job_reload,()->openJob(job.receipt));}
+        else if(!"CANCELLED".equals(job.status)){
+            label("No recorded payment. Convert quotation before starting production.");
+            ProductionWorkflow.Status next="QUOTATION".equals(job.status)?ProductionWorkflow.Status.AWAITING_APPROVAL:ProductionWorkflow.Status.QUOTATION;
+            for(ProductionWorkflow.Status target:new ProductionWorkflow.Status[]{next,ProductionWorkflow.Status.CANCELLED})
+                button("Move to "+jobStatus(target),0,()->{
+                    mode="quote-job-transition";screen("Confirm quotation job change",jobStatus(target));quoteJobConfirmation(job.quote,job.revision,target);back();
+                });
+        }
+        button("Quotation job history",R.id.cashier_job_history,()->showQuoteJobHistory(job.quote,0));
+        button("Return to quotation",R.id.cashier_quote_reload,()->openQuote(job.quote));
+        button("Quotation production jobs",R.id.cashier_quote_jobs,()->showQuoteJobs(0));back();
+    }
+    private void quoteJobConfirmation(String quote,long prior,ProductionWorkflow.Status target){
+        EditText note=field("Job note",R.id.cashier_job_note,InputType.TYPE_CLASS_TEXT,160,null);String event=UUID.randomUUID().toString();
+        button(prior==0?"Create quotation job":"Confirm change",R.id.cashier_job_confirm,()->{
+            String raw=text(note);submit(()->store.appendAuthorizedFixtureQuoteJob(session(),quote,event,prior,target,raw),v->showQuoteJob((QuoteProductionJournal.Job)v));
+        });
+    }
+    private void showQuoteJobHistory(String quote,int offset){
+        submit(()->store.authorizedFixtureQuoteJobHistory(session(),quote,offset),v->{
+            @SuppressWarnings("unchecked") List<ProductionJournal.Event> rows=(List<ProductionJournal.Event>)v;
+            mode="quote-job-history";screen("Quotation job event history","Immutable pre-sale notes and operator revisions.");
+            for(int i=0;i<Math.min(8,rows.size());i++){ProductionJournal.Event e=rows.get(i);label("#"+e.revision+" · "+e.status+" · "+e.actor+" · Account revision "+e.actorRevision);label(e.note);}
+            catalogPages(offset,rows.size()>8,()->showQuoteJobHistory(quote,offset-8),()->showQuoteJobHistory(quote,offset+8));
+            button("Return to quotation job",R.id.cashier_job_reload,()->reloadQuoteJob(quote));back();
+        });
     }
     private void showQuoteTender(QuotationJournal.Record q,Dashboard d){
         mode="quote-tender";screen("Convert training quotation","Current commercial terms, stock and shift are checked again.");
@@ -1349,6 +1504,7 @@ public final class CashierPreviewActivity extends Activity {
             EditText reason=field("Cancellation reason",R.id.cashier_cancel_reason,InputType.TYPE_CLASS_TEXT,160,null);
             button("Cancel unrecorded credit request",R.id.cashier_cancel,()->{String note=text(reason);submit(()->store.cancelAuthorizedFixtureCreditCheckout(session(),r.id,r.fingerprint,note),v->showCreditRecord((CreditCheckoutJournal.Record)v));});
         }else if(r.cancelReason!=null)label("Cancellation: "+r.cancelReason);
+        if(applied)button("Production job",R.id.cashier_job_receipt,()->openOrCreateJob(r.id,r.serviceName,r.total));
         button("Return to training cashier",R.id.cashier_return_home,this::refreshDashboard);
     }
     private void showDebtors(String shift,String search,int offset){
@@ -1501,6 +1657,7 @@ public final class CashierPreviewActivity extends Activity {
     private void renderReceipt(CheckoutJournal.Record r,CustomerLinkJournal.Selection customer){
         mode="receipt";screen("Recorded training receipt","Historical synthetic record only. No tax receipt or physical printing.");
         label(r.previewReceipt(),18,Color.rgb(27,39,58));checkoutCustomerLabel(customer);
+        button("Production job",R.id.cashier_job_receipt,()->openOrCreateJob(r.id,r.serviceName,r.total));
         button("Return to training cashier",R.id.cashier_return_home,this::refreshDashboard);
     }
     private void showHistory(){
