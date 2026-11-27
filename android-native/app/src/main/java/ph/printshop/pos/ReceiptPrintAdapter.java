@@ -41,7 +41,7 @@ final class ReceiptPrintAdapter extends PrintDocumentAdapter {
         if(current==null){callback.onWriteFailed("Receipt layout unavailable");return;}
         List<PageRange> written=new ArrayList<>();
         boolean[] selected=new boolean[current.pages.size()];
-        for(int i=0;i<selected.length;i++)for(PageRange range:ranges)if(range.contains(i)){selected[i]=true;break;}
+        for(int i=0;i<selected.length;i++)for(PageRange range:ranges)if(i>=range.getStart()&&i<=range.getEnd()){selected[i]=true;break;}
         for(int i=0;i<selected.length;i++)if(selected[i]){
             int start=i;while(i+1<selected.length&&selected[i+1])i++;
             written.add(new PageRange(start,i));

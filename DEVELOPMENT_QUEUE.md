@@ -518,3 +518,7 @@ Exact next: implement owner-only definition CRUD/archival (new revision, explici
 
 ## 2026-11-27 — quotation UI test fixture repair
 - PR #15 head d8c6190ae20e903c3f14d0545c4725cdfaf80898: software run 45984591020 passed Windows/Linux; native run 45984591047 passed SDK build/lint, pure Java and SQLite gates, but installed UI failed because prior collection test deliberately archived the synthetic customer. Confirm archived customer is excluded from quotation picker, restore via authorized owner API, then rerun the unchanged end-to-end quotation flow. Fresh complete hosted acceptance required; PR remains draft and develop untouched.
+
+## 2026-11-27 — receipt native SDK repair
+- PR #16 head 82278dcd1837a725b6075c81c4dc383c27dd1eb9 against develop 2ff9d412c91f590ab24b2f632dc6f3f4d3b15f8b passed Windows/Linux 45998818324 (132 each) and Android 45998818399 (installed production journal/UI markers). Manual quote-only jobs and service policy still remain; keep draft.
+- PR #17 head 9ea8ae8b2b41294331254bba4afd86ec99376462 against same develop passed software 45999215446; Android 45999215467 failed real SDK compilation because PageRange.contains is not public SDK API. Replace with inclusive getStart/getEnd bounds; rerun full gates, including original-receipt installed acceptance. Keep draft until verified and reconciled. No physical printing claim.
