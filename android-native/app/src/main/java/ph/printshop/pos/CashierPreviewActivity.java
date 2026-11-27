@@ -1341,7 +1341,7 @@ public final class CashierPreviewActivity extends Activity {
     private void openQuoteJob(QuotationJournal.Record q){
         submit(()->store.authorizedFixtureQuoteJob(session(),q.id),v->{
             if(v!=null){showQuoteJob((QuoteProductionJournal.Job)v);return;}
-            mode="quote-job-create";screen("Quotation production job","No payment or inventory changes. Production begins after conversion.");
+            mode="quote-job-create";screen("Create quotation production job","No payment or inventory changes. Production begins after conversion.");
             if(q.cancelled||q.cashCheckout!=null||q.creditCheckout!=null)label("No pre-sale job for this resolved quotation.");
             else quoteJobConfirmation(q.id,0,ProductionWorkflow.Status.QUOTATION);
             button("Return to quotation",R.id.cashier_quote_reload,()->openQuote(q.id));back();
