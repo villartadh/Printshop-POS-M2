@@ -82,6 +82,10 @@ with sqlite3.connect(":memory:") as db:
     events=re.search(r'String EVENTS="([^"]+)"',report_source).group(1)
     rows=db.execute(events,(0,2**63-1,0,2**63-1)).fetchall()
     check(sorted((r[0],r[1],r[5]) for r in rows)==[("EXPENSE",100,"feb"),("EXPENSE",100,"jan")],"report counts recurring expenses once and excludes cancelled")
+    provenance=re.search(r'String RECURRING_PROVENANCE="([^"]+)"',report_source).group(1)
+    check(db.execute(provenance,("jan",)).fetchone()==("rent",1,"2024-01-31","Synthetic rent"),"original recurring revision provenance after archive")
+    check(db.execute(provenance,("feb",)).fetchone()==("rent",1,"2024-02-29","Synthetic rent"),"exact due date provenance")
+    check(db.execute(provenance,("unknown",)).fetchone() is None,"ordinary expense no recurring provenance")
     history_source=(root/"RecurringJournal.java").read_text()
     history=re.search(r'db.rawQuery\("(SELECT o.drawer_id FROM cashier_recurring_occurrences[^"]+)"',history_source).group(1)
     check(db.execute(history,("owner","2","0")).fetchall()==[("pending",),("jan",)],"history bounded")
@@ -92,3 +96,4 @@ with sqlite3.connect(":memory:") as db:
     check(due("weekly")[2]=="2024-12-30" and due("daily")[2]=="2024-12-31","weekly and daily")
     check(not db.execute("PRAGMA foreign_key_check").fetchall(),"foreign keys")
 print(f"Recurring journal actual SQLite: {prior.checks-start} checks PASS")
+

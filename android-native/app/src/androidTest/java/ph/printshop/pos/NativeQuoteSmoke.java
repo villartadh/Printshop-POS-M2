@@ -78,7 +78,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "pricing settings and document quote"; verifyPricingScreen(screen);
             phase = "measured quote"; verifyMeasuredQuote(screen);
             phase = "native cashier training UI"; verifyCashierTrainingScreen(screen);
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\n");
+            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_RECURRING_UI_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\n");
             result = Activity.RESULT_OK;
         } catch (Throwable error) {
             evidence.putString("stream", failureDetails(phase, error));
@@ -357,6 +357,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             verifyDrawerTrainingUI(second,fixtureId,owner,ownerPass);
             verifyRefundTrainingUI(second,fixtureId,owner,ownerPass);
             verifySalesReportTrainingUI(second,fixtureId,owner,ownerPass);
+            verifyRecurringTrainingUI(second,fixtureId,owner,ownerPass);
             try(CatalogStore ordinary=new CatalogStore(context)){
                 java.util.List<CatalogEntry> after=ordinary.list(true);
                 require(before.size()==after.size(),"ordinary catalog changed");
@@ -773,6 +774,65 @@ public final class NativeQuoteSmoke extends Instrumentation {
         trainingLogin(activity,"catalog-cashier","Synthetic-Catalog-Cashier-01");awaitText(activity,"No open shift","report cashier login");
         runOnMainChecked(()->require(activity.findViewById(R.id.cashier_sales_report)==null,"cashier report exposed"));
         trainingClick(activity,R.id.cashier_lock);awaitText(activity,"Training sign in","report cashier signout");
+    }
+
+    private void verifyRecurringTrainingUI(Activity activity,String fixtureId,String owner,String ownerPass){
+        trainingLogin(activity,owner,ownerPass);awaitText(activity,"No open shift","recurring owner login");
+        trainingField(activity,R.id.cashier_opening,"10.00");trainingClick(activity,R.id.cashier_open_shift);
+        awaitText(activity,"Shift open · Expected cash: PHP 10.00","recurring opening");
+        trainingClick(activity,R.id.cashier_recurring);awaitText(activity,"Training recurring expenses","schedule list missing");
+        trainingClick(activity,R.id.cashier_recurring_new);
+        trainingField(activity,R.id.cashier_recurring_name,"Synthetic UI rent");
+        trainingField(activity,R.id.cashier_recurring_category,"Rent");
+        trainingField(activity,R.id.cashier_recurring_amount,"2.00");
+        trainingClick(activity,R.id.cashier_recurring_save);awaitText(activity,"Synthetic UI rent · PHP 2.00 · MONTHLY","schedule not saved");
+        trainingSelect(activity,"Review Synthetic UI rent");awaitText(activity,"Synthetic UI rent","schedule detail");
+        trainingClick(activity,R.id.cashier_recurring_due);awaitText(activity,"Prepare due training expense","due form");
+        trainingField(activity,R.id.cashier_recurring_reason,"Synthetic UI rent payment");
+        trainingClick(activity,R.id.cashier_recurring_review);awaitText(activity,"Proposed after: PHP 8.00","due review");
+        trainingClick(activity,R.id.cashier_recurring_stage);awaitText(activity,"Training recurring expense · PENDING","due stage");
+        trainingClick(activity,R.id.cashier_back);awaitText(activity,"Unresolved training recurring expense","pending routing");
+        awaitText(activity,"Shift open · Expected cash: PHP 10.00","stage debited cash");
+        trainingClick(activity,R.id.cashier_lock);awaitText(activity,"Training sign in","recurring lock");
+        trainingLogin(activity,owner,ownerPass);awaitText(activity,"Unresolved training recurring expense","pending recovery");
+        trainingClick(activity,R.id.cashier_drawer);awaitText(activity,"Training recurring expense · PENDING","dedicated recovery");
+        trainingField(activity,R.id.cashier_recurring_cancel_reason,"Synthetic cancellation");
+        trainingClick(activity,R.id.cashier_recurring_cancel);awaitText(activity,"Training recurring expense · CANCELLED","due cancel");
+        trainingClick(activity,R.id.cashier_back);awaitText(activity,"Shift open · Expected cash: PHP 10.00","cancel debited cash");
+        trainingClick(activity,R.id.cashier_recurring);awaitText(activity,"Training recurring expenses","recurring list reload");trainingSelect(activity,"Review Synthetic UI rent");awaitText(activity,"Synthetic UI rent","recurring detail reload");
+        trainingClick(activity,R.id.cashier_recurring_due);trainingField(activity,R.id.cashier_recurring_reason,"Synthetic retry");
+        trainingClick(activity,R.id.cashier_recurring_review);trainingClick(activity,R.id.cashier_recurring_stage);
+        awaitText(activity,"Training recurring expense · PENDING","retry stage");
+        trainingClick(activity,R.id.cashier_recurring_apply);awaitText(activity,"Training recurring expense · APPLIED","record missing");
+        awaitText(activity,"After: PHP 8.00","applied amount");
+        trainingClick(activity,R.id.cashier_recurring_history);awaitText(activity,"Training recurring expense history","history missing");
+        awaitText(activity,"CANCELLED · Synthetic UI rent · PHP 2.00","cancelled history missing");
+        awaitText(activity,"APPLIED · Synthetic UI rent · PHP 2.00","applied history missing");
+        trainingClick(activity,R.id.cashier_back);awaitText(activity,"Shift open · Expected cash: PHP 8.00","cash not exact");
+        trainingClick(activity,R.id.cashier_recurring);awaitText(activity,"Training recurring expenses","recurring list reload");trainingSelect(activity,"Review Synthetic UI rent");awaitText(activity,"Synthetic UI rent","recurring detail reload");
+        runOnMainChecked(()->require(!activity.findViewById(R.id.cashier_recurring_due).isEnabled(),"future occurrence enabled"));
+        trainingClick(activity,R.id.cashier_recurring_archive);trainingClick(activity,R.id.cashier_recurring_save);
+        awaitText(activity,"Archived","schedule archive missing");
+        trainingClick(activity,R.id.cashier_back);awaitText(activity,"Shift open · Expected cash: PHP 8.00","archive affected cash");
+        trainingClick(activity,R.id.cashier_close_shift);awaitText(activity,"Close training shift","recurring close");
+        trainingField(activity,R.id.cashier_counted,"8.00");trainingClick(activity,R.id.cashier_confirm_close);
+        awaitText(activity,"Variance: PHP 0.00","recurring close variance");
+        trainingClick(activity,R.id.cashier_return_home);awaitText(activity,"No open shift","recurring shift closed");
+        trainingClick(activity,R.id.cashier_lock);awaitText(activity,"Training sign in","recurring owner logout");
+        trainingLogin(activity,"catalog-cashier","Synthetic-Catalog-Cashier-01");awaitText(activity,"No open shift","recurring cashier login");
+        runOnMainChecked(()->require(activity.findViewById(R.id.cashier_recurring)==null,"cashier recurring access"));
+        trainingClick(activity,R.id.cashier_lock);awaitText(activity,"Training sign in","recurring cashier logout");
+        try(CatalogStore fixture=CatalogStore.checkoutFixture(getTargetContext(),fixtureId)){
+            require(trainingCount(fixture,"SELECT COUNT(*) FROM cashier_recurring_occurrences")==2,"recurring UI occurrence count");
+            char[] pass=ownerPass.toCharArray();
+            try{
+                String token=fixture.signInFixture(owner,pass);
+                boolean found=false;
+                for(ReportJournal.Event e:fixture.authorizedFixtureReportEvents(token,new ReportMath.Range(0,Long.MAX_VALUE),0,51))
+                    if("Synthetic UI rent".equals(e.recurringName)){found=true;require("EXPENSE".equals(e.kind)&&e.amount==200&&e.recurringRevision==1,"recurring report provenance");}
+                require(found,"recurring report occurrence missing");fixture.signOutFixture(token);
+            }finally{java.util.Arrays.fill(pass,'\0');}
+        }
     }
 
     /** Preserve exceptions from the UI thread without terminating instrumentation. */

@@ -60,9 +60,12 @@ final class ReportJournal {
         }
         return result;
     }
+    static final String RECURRING_PROVENANCE="SELECT o.schedule_id,o.schedule_revision,o.due_date,v.name FROM cashier_recurring_occurrences o JOIN cashier_recurring_versions v ON v.id=o.schedule_id AND v.revision=o.schedule_revision WHERE o.drawer_id=?";
     static final class Event {
         final String kind,serviceId,serviceName,id,shiftId,operatorId,receiptId,reason;
         final long amount,recordedMs;
+        String recurringSchedule,recurringDue,recurringName;
+        Long recurringRevision;
         Event(Cursor c){
             kind=c.getString(0);amount=c.getLong(1);serviceId=c.getString(2);serviceName=c.getString(3);
             recordedMs=c.getLong(4);id=c.getString(5);shiftId=c.getString(6);operatorId=c.getString(7);receiptId=c.getString(8);reason=c.getString(9);
@@ -76,7 +79,16 @@ final class ReportJournal {
         try(Cursor c=db.rawQuery(EVENT_PAGE,new String[]{a,b,a,b,Integer.toString(limit),Integer.toString(offset)})){
             while(c.moveToNext())result.add(new Event(c));
         }
+        for(Event event:result)if("EXPENSE".equals(event.kind)){
+            try(Cursor c=db.rawQuery(RECURRING_PROVENANCE,new String[]{event.id})){
+                if(c.moveToFirst()){
+                    event.recurringSchedule=c.getString(0);event.recurringRevision=c.getLong(1);
+                    event.recurringDue=c.getString(2);event.recurringName=c.getString(3);
+                }
+            }
+        }
         return result;
     }
 
 }
+

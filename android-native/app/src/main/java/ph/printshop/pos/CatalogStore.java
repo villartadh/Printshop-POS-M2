@@ -593,6 +593,13 @@ public final class CatalogStore extends SQLiteOpenHelper {
     List<DrawerJournal.Request> authorizedFixtureDrawerHistory(String token,int offset,int limit){
         return fixtureTransaction(db->DrawerJournal.history(db,CashierJournal.requireSession(db,token,System.currentTimeMillis()),offset,limit));
     }
+    boolean isFixtureRecurring(String token,String id){
+        return fixtureTransaction(db->{
+            CashierJournal.Principal actor=CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            DrawerJournal.requireRequest(db,actor,id);
+            return RecurringJournal.linked(db,id);
+        });
+    }
     List<RecurringJournal.Definition> authorizedFixtureRecurringDefinitions(String token,int offset,int limit){
         return fixtureTransaction(db->RecurringJournal.list(db,requireFixtureOwner(db,token),offset,limit));
     }
@@ -1024,3 +1031,4 @@ public final class CatalogStore extends SQLiteOpenHelper {
         db.insertOrThrow("catalog_history", null, record);
     }
 }
+

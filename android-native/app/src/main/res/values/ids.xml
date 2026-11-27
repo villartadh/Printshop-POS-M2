@@ -147,4 +147,22 @@
     <item type="id" name="cashier_report_chart"/>
     <item type="id" name="cashier_report_events"/>
     <item type="id" name="cashier_report_return"/>
+    <item type="id" name="cashier_recurring"/>
+    <item type="id" name="cashier_recurring_new"/>
+    <item type="id" name="cashier_recurring_history"/>
+    <item type="id" name="cashier_recurring_due"/>
+    <item type="id" name="cashier_recurring_edit"/>
+    <item type="id" name="cashier_recurring_archive"/>
+    <item type="id" name="cashier_recurring_name"/>
+    <item type="id" name="cashier_recurring_category"/>
+    <item type="id" name="cashier_recurring_amount"/>
+    <item type="id" name="cashier_recurring_cadence"/>
+    <item type="id" name="cashier_recurring_date"/>
+    <item type="id" name="cashier_recurring_save"/>
+    <item type="id" name="cashier_recurring_reason"/>
+    <item type="id" name="cashier_recurring_review"/>
+    <item type="id" name="cashier_recurring_stage"/>
+    <item type="id" name="cashier_recurring_apply"/>
+    <item type="id" name="cashier_recurring_cancel_reason"/>
+    <item type="id" name="cashier_recurring_cancel"/>
 </resources>

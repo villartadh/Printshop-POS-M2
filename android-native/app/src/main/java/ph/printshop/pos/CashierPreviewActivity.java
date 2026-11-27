@@ -137,6 +137,11 @@ public final class CashierPreviewActivity extends Activity {
             case "Owner authorization required":return message;
             case "Original receipt changed or amount is invalid; review again":
             case "Authorized original cash receipt unavailable":
+            case "Invalid expense date":
+            case "Invalid recurring expense":
+            case "Recurring expense changed; reload":
+            case "Recurring expense changed or not yet due":
+            case "Use recurring expense review":
             case "Use receipt compensation review":
             case "Resolve pending drawer activity first":
             case "Resolve pending checkout before drawer activity":
@@ -282,8 +287,8 @@ public final class CashierPreviewActivity extends Activity {
         final long expected;
         final int pending;
         final DrawerJournal.Request pendingDrawer;
-        final boolean pendingRefund;
-        Dashboard(CashierJournal.Principal a,CashierJournal.Shift s,long e,int p,DrawerJournal.Request drawer,boolean refund){actor=a;shift=s;expected=e;pending=p;pendingDrawer=drawer;pendingRefund=refund;}
+        final boolean pendingRefund,pendingRecurring;
+        Dashboard(CashierJournal.Principal a,CashierJournal.Shift s,long e,int p,DrawerJournal.Request drawer,boolean refund,boolean recurring){actor=a;shift=s;expected=e;pending=p;pendingDrawer=drawer;pendingRefund=refund;pendingRecurring=recurring;}
     }
     private Dashboard dashboard(){
         String token=session();CashierJournal.Principal actor=store.fixturePrincipal(token);
@@ -291,7 +296,7 @@ public final class CashierPreviewActivity extends Activity {
         long expected=shift==null?0:store.expectedFixtureCash(token,shift.id);
         int pending=shift==null?0:store.pendingAuthorizedFixtureCheckouts(token,shift.id,50).size();
         DrawerJournal.Request drawer=shift==null?null:store.pendingFixtureDrawer(token,shift.id);
-        return new Dashboard(actor,shift,expected,pending,drawer,drawer!=null&&store.isFixtureRefund(token,drawer.id));
+        return new Dashboard(actor,shift,expected,pending,drawer,drawer!=null&&store.isFixtureRefund(token,drawer.id),drawer!=null&&store.isFixtureRecurring(token,drawer.id));
     }
     private void refreshDashboard(){
         submit(this::dashboard,v->showDashboard((Dashboard)v));
@@ -311,9 +316,9 @@ public final class CashierPreviewActivity extends Activity {
             Button next=button("New training checkout",R.id.cashier_new_checkout,()->showCheckoutChoices(d.shift.id,0));
             next.setEnabled(d.pending==0&&d.pendingDrawer==null);
             button("Recover pending checkouts",R.id.cashier_pending,()->showPendingList(d.shift.id));
-            if(d.pendingDrawer!=null)label(d.pendingRefund?"Unresolved training refund/void":"Unresolved training drawer activity");
-            Button drawer=button(d.pendingDrawer==null?"Training drawer activity":d.pendingRefund?"Recover pending refund/void":"Recover pending drawer activity",R.id.cashier_drawer,()->{
-                if(d.pendingDrawer==null)showDrawerOptions(d);else if(d.pendingRefund)openRefundRecord(d.pendingDrawer.id);else openDrawerRequest(d.pendingDrawer.id);
+            if(d.pendingDrawer!=null)label(d.pendingRefund?"Unresolved training refund/void":d.pendingRecurring?"Unresolved training recurring expense":"Unresolved training drawer activity");
+            Button drawer=button(d.pendingDrawer==null?"Training drawer activity":d.pendingRefund?"Recover pending refund/void":d.pendingRecurring?"Recover pending recurring expense":"Recover pending drawer activity",R.id.cashier_drawer,()->{
+                if(d.pendingDrawer==null)showDrawerOptions(d);else if(d.pendingRefund)openRefundRecord(d.pendingDrawer.id);else if(d.pendingRecurring)openRecurringRecord(d.pendingDrawer.id);else openDrawerRequest(d.pendingDrawer.id);
             });
             drawer.setEnabled(d.pending==0);
             Button close=button("Close training shift",R.id.cashier_close_shift,()->showClose(d));close.setEnabled(d.pending==0&&d.pendingDrawer==null);
@@ -324,6 +329,7 @@ public final class CashierPreviewActivity extends Activity {
         if(d.actor.role==CashierSecurity.Role.OWNER){
             button("Training sale refunds / voids",R.id.cashier_refund_receipts,()->showRefundReceipts(0));
             button("Refund / void history",R.id.cashier_refund_history,()->showRefundHistory(0));
+            button("Recurring expenses",R.id.cashier_recurring,()->showRecurringDefinitions(0));
             button("Training sales reports",R.id.cashier_sales_report,()->showReportPeriod(ReportMath.Period.DAY));
             button("Create training cashier",R.id.cashier_add_staff,this::showStaff);
             button("Manage training cashiers",R.id.cashier_manage_staff,this::showManageStaff);
@@ -519,6 +525,7 @@ public final class CashierPreviewActivity extends Activity {
         if(event.receiptId!=null)label("Original receipt: "+event.receiptId);
         if(event.serviceName!=null)label("Original service: "+event.serviceName+" · "+event.serviceId);
         if(event.reason!=null)label("Reason: "+event.reason);
+        if(event.recurringSchedule!=null){label("Recurring expense: "+event.recurringName);label("Schedule: "+event.recurringSchedule+" · Revision "+event.recurringRevision);label("Due: "+event.recurringDue);}
         button("Back to transactions",R.id.cashier_report_events,()->showReportEvents(period,report,offset));
         button("Back to report",R.id.cashier_report_return,()->showSalesReport(period,report,0));back();
     }
@@ -622,6 +629,112 @@ public final class CashierPreviewActivity extends Activity {
             }
             catalogPages(offset,rows.size()>8,()->showRefundHistory(offset-8),()->showRefundHistory(offset+8));
             button("Reload compensation history",R.id.cashier_refund_history,()->showRefundHistory(0));back();
+        });
+    }
+    private void showRecurringDefinitions(int offset){
+        submit(()->store.authorizedFixtureRecurringDefinitions(session(),offset,9),v->{
+            @SuppressWarnings("unchecked") List<RecurringJournal.Definition> rows=(List<RecurringJournal.Definition>)v;
+            mode="recurring-list";screen("Training recurring expenses","Owner only. Philippine calendar. No automatic debit; review and record each due expense.");
+            String today=RecurringMath.today(System.currentTimeMillis());
+            button("New recurring expense",R.id.cashier_recurring_new,()->showRecurringEditor(null,false));
+            if(rows.isEmpty())label("No recurring expense definitions");
+            for(int i=0;i<Math.min(8,rows.size());i++){
+                RecurringJournal.Definition d=rows.get(i);
+                label(d.name+" · "+QuoteMath.display(d.amount)+" · "+d.cadence);
+                label(!d.active?"Archived":d.nextDue==null?"No supported next date":(d.nextDue.compareTo(today)<=0?"Due: ":"Next due: ")+d.nextDue);
+                button("Review "+d.name,0,()->showRecurringDetail(d));
+            }
+            catalogPages(offset,rows.size()>8,()->showRecurringDefinitions(offset-8),()->showRecurringDefinitions(offset+8));
+            button("Recurring expense history",R.id.cashier_recurring_history,()->showRecurringHistory(0));back();
+        });
+    }
+    private void showRecurringDetail(RecurringJournal.Definition d){
+        submit(this::dashboard,v->{
+            Dashboard h=(Dashboard)v;
+            mode="recurring-detail";screen(d.name,"Training schedule · Revision "+d.revision);
+            label(d.category+" · "+QuoteMath.display(d.amount)+" · "+d.cadence);
+            label("First due: "+d.firstDue+" · Next due: "+(d.nextDue==null?"Unavailable":d.nextDue));
+            boolean due=d.active&&d.nextDue!=null&&d.nextDue.compareTo(RecurringMath.today(System.currentTimeMillis()))<=0;
+            boolean ready=due&&h.shift!=null&&h.pending==0&&h.pendingDrawer==null;
+            if(due&&!ready)label("Open your own shift and resolve all pending activity first.");
+            button("Prepare due expense",R.id.cashier_recurring_due,()->showRecurringEntry(h,d)).setEnabled(ready);
+            button(d.active?"Edit schedule":"Reactivate schedule",R.id.cashier_recurring_edit,()->showRecurringEditor(d,false));
+            if(d.active)button("Archive schedule",R.id.cashier_recurring_archive,()->showRecurringEditor(d,true));
+            button("Back to recurring expenses",R.id.cashier_recurring,()->showRecurringDefinitions(0));back();
+        });
+    }
+    private void showRecurringEditor(RecurringJournal.Definition d,boolean archive){
+        mode="recurring-editor";screen(archive?"Archive training schedule":d==null?"New training schedule":"Revise training schedule",
+            "Saving a revision supersedes old unpaid dates. Enter an effective first due date after every previously paid occurrence. Historical records remain; no cash is moved.");
+        String id=d==null?UUID.randomUUID().toString():d.id;
+        EditText name=field("Name",R.id.cashier_recurring_name,InputType.TYPE_CLASS_TEXT,80,d==null?null:d.name);
+        EditText category=field("Category",R.id.cashier_recurring_category,InputType.TYPE_CLASS_TEXT,80,d==null?null:d.category);
+        EditText amount=cashField("Amount (PHP)",R.id.cashier_recurring_amount,d==null?null:java.math.BigDecimal.valueOf(d.amount,2).toPlainString());
+        Spinner cadence=choices("Frequency",R.id.cashier_recurring_cadence,Arrays.asList("Daily","Weekly","Monthly"),d==null?2:d.cadence.ordinal());
+        EditText date=field("Effective first due (YYYY-MM-DD)",R.id.cashier_recurring_date,InputType.TYPE_CLASS_TEXT,10,d==null?RecurringMath.today(System.currentTimeMillis()):d.nextDue);
+        if(archive){name.setEnabled(false);category.setEnabled(false);amount.setEnabled(false);cadence.setEnabled(false);}
+        button(archive?"Confirm archive":"Save schedule revision",R.id.cashier_recurring_save,()->{
+            String n=text(name),c=text(category),a=text(amount),f=text(date);
+            RecurringMath.Cadence frequency=RecurringMath.Cadence.values()[cadence.getSelectedItemPosition()];
+            submit(()->store.saveFixtureRecurringDefinition(session(),id,d==null?0:d.revision,n,c,(archive?d.amount:QuoteMath.parseCentavos(a)),frequency,f,!archive),v->showRecurringDefinitions(0));
+        });
+        button("Discard unsaved changes",R.id.cashier_recurring,()->showRecurringDefinitions(0));back();
+    }
+    private void showRecurringEntry(Dashboard h,RecurringJournal.Definition d){
+        mode="recurring-entry";screen("Prepare due training expense",d.name+" · Due "+d.nextDue);
+        label(d.category+" · "+QuoteMath.display(d.amount));
+        EditText reason=field("Synthetic payment reason",R.id.cashier_recurring_reason,InputType.TYPE_CLASS_TEXT,160,null);
+        String id=UUID.randomUUID().toString();
+        button("Review due expense",R.id.cashier_recurring_review,()->{
+            try{
+                long after=ShiftMath.drawerAfter(h.expected,ShiftMath.DrawerKind.EXPENSE,d.amount);
+                showRecurringConfirmation(h,d,id,StockMath.reason(text(reason)),after);
+            }catch(IllegalArgumentException|IllegalStateException ex){status.setText(safeFailure(ex.getMessage()));}
+        });back();
+    }
+    private void showRecurringConfirmation(Dashboard h,RecurringJournal.Definition d,String id,String reason,long after){
+        mode="recurring-review";screen("Review due training expense","Saving does not move cash. Apply the saved occurrence explicitly.");
+        label(d.name+" · Due "+d.nextDue+" · Revision "+d.revision);
+        label(d.category+" · "+QuoteMath.display(d.amount));label("Reason: "+reason);
+        label("Before: "+QuoteMath.display(h.expected));label("Proposed after: "+QuoteMath.display(after));
+        button("Save pending recurring expense",R.id.cashier_recurring_stage,()->submit(()->store.stageFixtureRecurringExpense(session(),h.shift.id,id,d.id,d.revision,d.nextIndex,d.nextDue,d.amount,d.category,reason,h.expected),v->showRecurringRecord((RecurringJournal.Occurrence)v)));
+        back();
+    }
+    private void openRecurringRecord(String id){
+        submit(()->store.authorizedFixtureRecurringExpense(session(),id),v->showRecurringRecord((RecurringJournal.Occurrence)v));
+    }
+    private void showRecurringRecord(RecurringJournal.Occurrence occurrence){
+        DrawerJournal.Request d=occurrence.drawer;boolean pending="PENDING".equals(d.state);
+        mode="recurring-record";screen("Training recurring expense · "+d.state,"Original saved schedule and due date. Cancellation does not debit cash.");
+        label(occurrence.name+" · Due "+occurrence.dueDate+" · Revision "+occurrence.revision);
+        label("Schedule: "+occurrence.scheduleId+" · Occurrence "+occurrence.index);
+        label(d.category+" · "+QuoteMath.display(d.amount));label("Reason: "+d.reason);
+        label("Before: "+QuoteMath.display(d.before));label(("APPLIED".equals(d.state)?"After: ":"Proposed after: ")+QuoteMath.display(d.after));
+        label("Request: "+d.id+" · Shift: "+d.shiftId);label("Staged: "+eventDate(d.createdMs));
+        if(d.resolvedMs!=null)label("Resolved: "+eventDate(d.resolvedMs));
+        if(d.cancelReason!=null)label("Cancellation reason: "+d.cancelReason);
+        if(pending){
+            button("Apply saved recurring expense",R.id.cashier_recurring_apply,()->submit(()->store.resolveFixtureRecurringExpense(session(),d.id,true,null),v->showRecurringRecord((RecurringJournal.Occurrence)v)));
+            EditText reason=field("Cancellation reason",R.id.cashier_recurring_cancel_reason,InputType.TYPE_CLASS_TEXT,160,null);
+            button("Cancel saved recurring expense",R.id.cashier_recurring_cancel,()->{
+                String note=text(reason);submit(()->store.resolveFixtureRecurringExpense(session(),d.id,false,note),v->showRecurringRecord((RecurringJournal.Occurrence)v));
+            });
+        }
+        button("Recurring expense history",R.id.cashier_recurring_history,()->showRecurringHistory(0));back();
+    }
+    private void showRecurringHistory(int offset){
+        submit(()->store.authorizedFixtureRecurringHistory(session(),offset,9),v->{
+            @SuppressWarnings("unchecked") List<RecurringJournal.Occurrence> rows=(List<RecurringJournal.Occurrence>)v;
+            mode="recurring-history";screen("Training recurring expense history","Original pending, applied and cancelled occurrences. Live history.");
+            if(rows.isEmpty())label("No recurring expense occurrences");
+            for(int i=0;i<Math.min(8,rows.size());i++){
+                RecurringJournal.Occurrence occurrence=rows.get(i);
+                label(occurrence.drawer.state+" · "+occurrence.name+" · "+QuoteMath.display(occurrence.drawer.amount));
+                label("Due "+occurrence.dueDate+" · Revision "+occurrence.revision);
+                button("Review "+occurrence.drawer.id,0,()->openRecurringRecord(occurrence.drawer.id));
+            }
+            catalogPages(offset,rows.size()>8,()->showRecurringHistory(offset-8),()->showRecurringHistory(offset+8));
+            button("Back to recurring expenses",R.id.cashier_recurring,()->showRecurringDefinitions(0));back();
         });
     }
     private void showOwnerCatalog(CatalogEntry.Kind kind,boolean archived,int offset){
@@ -1018,3 +1131,4 @@ public final class CashierPreviewActivity extends Activity {
         super.onBackPressed();
     }
 }
+
