@@ -11,7 +11,7 @@ import java.util.List;
 /** App-private preview catalog. No cross-platform import or sales. */
 public final class CatalogStore extends SQLiteOpenHelper {
     public CatalogStore(Context context) { this(context, "preview-catalog.db"); }
-    CatalogStore(Context context, String filename) { super(context, filename, null, 4); }
+    CatalogStore(Context context, String filename) { super(context, filename, null, 5); }
     @Override public void onConfigure(SQLiteDatabase db) {
         super.onConfigure(db);
         db.setForeignKeyConstraintsEnabled(true);
@@ -22,6 +22,7 @@ public final class CatalogStore extends SQLiteOpenHelper {
         createStockLedger(db);
         createRecipeSchema(db);
         createPricingSchema(db);
+        createStockRequests(db);
     }
     private static void createStockLedger(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE stock_movements (request_id TEXT PRIMARY KEY NOT NULL, material_id TEXT NOT NULL REFERENCES catalog(id), catalog_revision INTEGER NOT NULL CHECK(catalog_revision>=1), stock_revision INTEGER NOT NULL CHECK(stock_revision>=1), unit TEXT NOT NULL, reason TEXT NOT NULL, delta INTEGER NOT NULL CHECK(delta BETWEEN -999999999999 AND 999999999999 AND delta<>0), before_quantity INTEGER NOT NULL CHECK(before_quantity BETWEEN 0 AND 999999999999), after_quantity INTEGER NOT NULL CHECK(after_quantity BETWEEN 0 AND 999999999999 AND after_quantity=before_quantity+delta), created_ms INTEGER NOT NULL, UNIQUE(material_id,stock_revision))");
@@ -34,11 +35,19 @@ public final class CatalogStore extends SQLiteOpenHelper {
         db.execSQL("CREATE TABLE pricing_profile_versions (service_id TEXT NOT NULL REFERENCES catalog(id), revision INTEGER NOT NULL CHECK(revision>=1), method TEXT NOT NULL CHECK(method IN ('FIXED','PER_UNIT','PER_PAGE','PER_COPY','PER_SHEET','PER_SQFT','PER_LINEAR_FT','PER_METER','TIERED_BULK')), pages_copies INTEGER NOT NULL CHECK(pages_copies IN (0,1) AND (pages_copies=0 OR method IN ('PER_PAGE','PER_COPY','PER_SHEET'))), service_revision INTEGER NOT NULL CHECK(service_revision>=1), catalog_unit TEXT NOT NULL, created_ms INTEGER NOT NULL, PRIMARY KEY(service_id,revision))");
         db.execSQL("CREATE TABLE pricing_tier_versions (service_id TEXT NOT NULL, profile_revision INTEGER NOT NULL, threshold_hundredths INTEGER NOT NULL CHECK(threshold_hundredths BETWEEN 1 AND 10000000), rate_centavos INTEGER NOT NULL CHECK(rate_centavos BETWEEN 0 AND 99999999999), PRIMARY KEY(service_id,profile_revision,threshold_hundredths), FOREIGN KEY(service_id,profile_revision) REFERENCES pricing_profile_versions(service_id,revision))");
     }
+    private static void createStockRequests(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE stock_requests (request_id TEXT PRIMARY KEY NOT NULL, material_id TEXT NOT NULL REFERENCES catalog(id), catalog_revision INTEGER NOT NULL CHECK(catalog_revision>=1), expected_stock_revision INTEGER NOT NULL CHECK(expected_stock_revision>=0 AND expected_stock_revision<9223372036854775807), delta INTEGER NOT NULL CHECK(delta BETWEEN -999999999999 AND 999999999999 AND delta<>0), reason TEXT NOT NULL CHECK(length(reason) BETWEEN 1 AND 160), created_ms INTEGER NOT NULL, state TEXT NOT NULL CHECK(state IN ('PENDING','APPLIED','CANCELLED')), resolved_ms INTEGER, CHECK((state='PENDING' AND resolved_ms IS NULL) OR (state<>'PENDING' AND resolved_ms IS NOT NULL)))");
+        db.execSQL("CREATE UNIQUE INDEX one_pending_stock_request ON stock_requests(material_id) WHERE state='PENDING'");
+        db.execSQL("CREATE TRIGGER stock_request_no_delete BEFORE DELETE ON stock_requests BEGIN SELECT RAISE(ABORT,'Stock request audit cannot be deleted'); END");
+        db.execSQL("CREATE TRIGGER stock_request_initial_state BEFORE INSERT ON stock_requests WHEN NEW.state<>'PENDING' BEGIN SELECT RAISE(ABORT,'Stock request must begin pending'); END");
+        db.execSQL("CREATE TRIGGER stock_request_resolution BEFORE UPDATE ON stock_requests WHEN OLD.state<>'PENDING' OR NEW.state NOT IN ('APPLIED','CANCELLED') OR NEW.request_id IS NOT OLD.request_id OR NEW.material_id IS NOT OLD.material_id OR NEW.catalog_revision IS NOT OLD.catalog_revision OR NEW.expected_stock_revision IS NOT OLD.expected_stock_revision OR NEW.delta IS NOT OLD.delta OR NEW.reason IS NOT OLD.reason OR NEW.created_ms IS NOT OLD.created_ms OR (NEW.state='APPLIED' AND NOT EXISTS (SELECT 1 FROM stock_movements m WHERE m.request_id=OLD.request_id AND m.material_id=OLD.material_id AND m.catalog_revision=OLD.catalog_revision AND m.stock_revision=OLD.expected_stock_revision+1 AND m.delta=OLD.delta AND m.reason=OLD.reason)) OR (NEW.state='CANCELLED' AND EXISTS (SELECT 1 FROM stock_movements m WHERE m.request_id=OLD.request_id)) BEGIN SELECT RAISE(ABORT,'Invalid stock request transition'); END");
+    }
     @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-        if (newVersion == 4 && oldVersion >= 1 && oldVersion <= 3) {
+        if (newVersion == 5 && oldVersion >= 1 && oldVersion <= 4) {
             if (oldVersion < 2) createStockLedger(db);
             if (oldVersion < 3) createRecipeSchema(db);
-            createPricingSchema(db); return;
+            if (oldVersion < 4) createPricingSchema(db);
+            createStockRequests(db); return;
         }
         throw new IllegalStateException("No migration path; existing catalog preserved");
     }
@@ -116,6 +125,7 @@ public final class CatalogStore extends SQLiteOpenHelper {
             if (current.revision != expectedRevision) throw new IllegalStateException("Catalog entry changed; reload before editing");
             CatalogEntry next = change.apply(current);
             if (current.kind == CatalogEntry.Kind.MATERIAL) {
+                if (pendingStock(db,id)!=null) throw new IllegalStateException("Resolve the pending stock movement before editing this material");
                 StockMath.Balance stock = stockBalance(db, id);
                 if (stock.revision > 0 && !current.unit.equals(next.unit)) throw new IllegalStateException("Material unit cannot change after stock movement history exists");
                 if (!current.unit.equals(next.unit) && hasReference(db,"recipe_history",id)) throw new IllegalStateException("Material unit cannot change after recipe history exists");
@@ -230,38 +240,141 @@ public final class CatalogStore extends SQLiteOpenHelper {
             return c.moveToFirst() ? new StockMath.Balance(c.getLong(0),c.getLong(1)) : new StockMath.Balance(0,0);
         }
     }
-    public StockMath.Balance moveStock(String requestId,String id,long catalogRevision,long expectedStockRevision,long delta,String note) {
+    /** The request payload remains immutable; the only transition is pending to applied or explicitly cancelled. */
+    public static final class StockRequest {
+        public final String id, materialId, reason, state;
+        public final long catalogRevision, stockRevision, delta;
+        private StockRequest(Cursor c) {
+            id=c.getString(0);materialId=c.getString(1);catalogRevision=c.getLong(2);
+            stockRevision=c.getLong(3);delta=c.getLong(4);reason=c.getString(5);state=c.getString(6);
+        }
+        private void verify(String material,long catalog,long stock,long amount,String note) {
+            if(!materialId.equals(material)||catalogRevision!=catalog||stockRevision!=stock||delta!=amount||!reason.equals(note))
+                throw new IllegalStateException("Movement identity already used for different request");
+        }
+    }
+    private static StockRequest readRequest(SQLiteDatabase db,String where,String value) {
+        try(Cursor c=db.query("stock_requests",new String[]{"request_id","material_id","catalog_revision","expected_stock_revision","delta","reason","state"},where,new String[]{value},null,null,null,"1")) {
+            return c.moveToFirst()?new StockRequest(c):null;
+        }
+    }
+    private static StockRequest pendingStock(SQLiteDatabase db,String materialId) {
+        return readRequest(db,"material_id=? AND state='PENDING'",materialId);
+    }
+    public StockRequest pendingStock(String materialId) {
+        return pendingStock(getReadableDatabase(),materialId);
+    }
+    public StockRequest stockRequest(String requestId) {
         StockMath.validateRequestId(requestId);
-        String reason = StockMath.reason(note);
-        if (catalogRevision < 1 || expectedStockRevision < 0 || expectedStockRevision == Long.MAX_VALUE)
+        return readRequest(getReadableDatabase(),"request_id=?",requestId);
+    }
+    private static void validateMovement(String requestId,long catalogRevision,long stockRevision) {
+        StockMath.validateRequestId(requestId);
+        if(catalogRevision<1||stockRevision<0||stockRevision==Long.MAX_VALUE)
             throw new IllegalArgumentException("Invalid movement revision.");
-        SQLiteDatabase db = getWritableDatabase();
-        db.beginTransaction();
+    }
+    private static StockMath.Balance previousMovement(SQLiteDatabase db,String requestId,String id,long catalogRevision,long expectedStockRevision,long delta,String reason) {
+        try(Cursor c=db.query("stock_movements",new String[]{"material_id","catalog_revision","stock_revision","delta","reason","after_quantity"},"request_id=?",new String[]{requestId},null,null,null)) {
+            if(!c.moveToFirst())return null;
+            if(!id.equals(c.getString(0))||catalogRevision!=c.getLong(1)||expectedStockRevision+1!=c.getLong(2)||delta!=c.getLong(3)||!reason.equals(c.getString(4)))
+                throw new IllegalStateException("Movement identity already used for different request");
+            return new StockMath.Balance(c.getLong(5),c.getLong(2));
+        }
+    }
+    private static CatalogEntry eligibleMaterial(SQLiteDatabase db,String id,long catalogRevision,long expectedStockRevision,long delta) {
+        CatalogEntry material=read(db,id);
+        if(material.kind!=CatalogEntry.Kind.MATERIAL||material.archived)throw new IllegalStateException("Only active materials can have stock movements");
+        if(material.revision!=catalogRevision)throw new IllegalStateException("Material changed; reload before adjusting stock");
+        StockMath.Balance before=stockBalance(db,id);
+        if(before.revision!=expectedStockRevision)throw new IllegalStateException("Stock changed; reload before adjusting");
+        StockMath.apply(before.quantity,delta);
+        return material;
+    }
+    /** Commit the identity and exact payload before attempting any stock adjustment. */
+    public StockRequest stageStock(String requestId,String id,long catalogRevision,long expectedStockRevision,long delta,String note) {
+        validateMovement(requestId,catalogRevision,expectedStockRevision);
+        String reason=StockMath.reason(note);
+        SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
         try {
-            try (Cursor c = db.query("stock_movements",new String[]{"material_id","catalog_revision","stock_revision","delta","reason","after_quantity"},"request_id=?",new String[]{requestId},null,null,null)) {
-                if (c.moveToFirst()) {
-                    if (!id.equals(c.getString(0)) || catalogRevision != c.getLong(1) || expectedStockRevision+1 != c.getLong(2) || delta != c.getLong(3) || !reason.equals(c.getString(4)))
-                        throw new IllegalStateException("Movement identity already used for different request");
-                    StockMath.Balance original = new StockMath.Balance(c.getLong(5),c.getLong(2));
-                    db.setTransactionSuccessful();
-                    return original;
-                }
+            StockRequest prior=readRequest(db,"request_id=?",requestId);
+            if(prior!=null){
+                prior.verify(id,catalogRevision,expectedStockRevision,delta,reason);
+                db.setTransactionSuccessful();return prior;
             }
-            CatalogEntry material = read(db,id);
-            if (material.kind != CatalogEntry.Kind.MATERIAL || material.archived) throw new IllegalStateException("Only active materials can have stock movements");
-            if (material.revision != catalogRevision) throw new IllegalStateException("Material changed; reload before adjusting stock");
-            StockMath.Balance before = stockBalance(db,id);
-            if (before.revision != expectedStockRevision) throw new IllegalStateException("Stock changed; reload before adjusting");
-            long after = StockMath.apply(before.quantity,delta);
-            long revision = Math.addExact(before.revision,1);
-            ContentValues values = new ContentValues();
-            values.put("request_id",requestId); values.put("material_id",id); values.put("catalog_revision",catalogRevision);
-            values.put("stock_revision",revision); values.put("unit",material.unit); values.put("reason",reason); values.put("delta",delta);
-            values.put("before_quantity",before.quantity); values.put("after_quantity",after); values.put("created_ms",System.currentTimeMillis());
-            db.insertOrThrow("stock_movements",null,values);
+            if(previousMovement(db,requestId,id,catalogRevision,expectedStockRevision,delta,reason)!=null)
+                throw new IllegalStateException("Movement identity already recorded in legacy ledger");
+            if(pendingStock(db,id)!=null)throw new IllegalStateException("Resolve the existing pending stock movement first");
+            eligibleMaterial(db,id,catalogRevision,expectedStockRevision,delta);
+            ContentValues row=new ContentValues();
+            row.put("request_id",requestId);row.put("material_id",id);row.put("catalog_revision",catalogRevision);
+            row.put("expected_stock_revision",expectedStockRevision);row.put("delta",delta);row.put("reason",reason);
+            row.put("created_ms",System.currentTimeMillis());row.put("state","PENDING");
+            db.insertOrThrow("stock_requests",null,row);
+            StockRequest staged=readRequest(db,"request_id=?",requestId);
+            if(staged==null)throw new IllegalStateException("Staged movement unavailable");
+            db.setTransactionSuccessful();return staged;
+        }finally{db.endTransaction();}
+    }
+    private static StockMath.Balance appendMovement(SQLiteDatabase db,String requestId,String id,long catalogRevision,long expectedStockRevision,long delta,String reason) {
+        CatalogEntry material=eligibleMaterial(db,id,catalogRevision,expectedStockRevision,delta);
+        StockMath.Balance before=stockBalance(db,id);
+        long after=StockMath.apply(before.quantity,delta),revision=Math.addExact(before.revision,1);
+        ContentValues values=new ContentValues();
+        values.put("request_id",requestId);values.put("material_id",id);values.put("catalog_revision",catalogRevision);
+        values.put("stock_revision",revision);values.put("unit",material.unit);values.put("reason",reason);values.put("delta",delta);
+        values.put("before_quantity",before.quantity);values.put("after_quantity",after);values.put("created_ms",System.currentTimeMillis());
+        db.insertOrThrow("stock_movements",null,values);
+        return new StockMath.Balance(after,revision);
+    }
+    private static void resolveRequest(SQLiteDatabase db,String requestId,String status) {
+        ContentValues row=new ContentValues();row.put("state",status);row.put("resolved_ms",System.currentTimeMillis());
+        if(db.update("stock_requests",row,"request_id=? AND state='PENDING'",new String[]{requestId})!=1)
+            throw new IllegalStateException("Pending movement changed; reload");
+    }
+    /** Ledger insert and APPLIED state commit together, or neither commits. Repeat returns original result. */
+    public StockMath.Balance applyStagedStock(String requestId) {
+        StockMath.validateRequestId(requestId);
+        SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
+        try {
+            StockRequest r=readRequest(db,"request_id=?",requestId);
+            if(r==null||"CANCELLED".equals(r.state))throw new IllegalStateException("No applicable staged movement");
+            StockMath.Balance prior=previousMovement(db,r.id,r.materialId,r.catalogRevision,r.stockRevision,r.delta,r.reason);
+            if("APPLIED".equals(r.state)){
+                if(prior==null)throw new IllegalStateException("Applied request missing ledger row; review required");
+                db.setTransactionSuccessful();return prior;
+            }
+            if(prior!=null)throw new IllegalStateException("Pending request already has a ledger row; review required");
+            StockMath.Balance applied=appendMovement(db,r.id,r.materialId,r.catalogRevision,r.stockRevision,r.delta,r.reason);
+            resolveRequest(db,requestId,"APPLIED");
+            db.setTransactionSuccessful();return applied;
+        }finally{db.endTransaction();}
+    }
+    /** Explicit cancellation is allowed only if the movement has not been recorded. Keep the audit record. */
+    public void cancelStagedStock(String requestId) {
+        StockMath.validateRequestId(requestId);
+        SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
+        try {
+            StockRequest r=readRequest(db,"request_id=?",requestId);
+            if(r==null||"APPLIED".equals(r.state))throw new IllegalStateException("Applied or unknown movement cannot be cancelled");
+            if(previousMovement(db,r.id,r.materialId,r.catalogRevision,r.stockRevision,r.delta,r.reason)!=null)
+                throw new IllegalStateException("Recorded movement cannot be cancelled");
+            if("PENDING".equals(r.state))resolveRequest(db,requestId,"CANCELLED");
             db.setTransactionSuccessful();
-            return new StockMath.Balance(after,revision);
-        } finally { db.endTransaction(); }
+        }finally{db.endTransaction();}
+    }
+    /** Legacy exact replay remains valid. New direct mutations cannot bypass a pending request. */
+    public StockMath.Balance moveStock(String requestId,String id,long catalogRevision,long expectedStockRevision,long delta,String note) {
+        validateMovement(requestId,catalogRevision,expectedStockRevision);
+        String reason=StockMath.reason(note);
+        SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
+        try {
+            if(readRequest(db,"request_id=?",requestId)!=null)throw new IllegalStateException("Use staged movement recovery for this identity");
+            StockMath.Balance prior=previousMovement(db,requestId,id,catalogRevision,expectedStockRevision,delta,reason);
+            if(prior!=null){db.setTransactionSuccessful();return prior;}
+            if(pendingStock(db,id)!=null)throw new IllegalStateException("Resolve the pending stock movement first");
+            StockMath.Balance result=appendMovement(db,requestId,id,catalogRevision,expectedStockRevision,delta,reason);
+            db.setTransactionSuccessful();return result;
+        }finally{db.endTransaction();}
     }
     public static final class StockMovement {
         public final long revision, delta, before, after, createdMs;
