@@ -583,6 +583,23 @@ public final class CatalogStore extends SQLiteOpenHelper {
         if(current==null||current.revision!=revision)throw new IllegalStateException("Customer changed; review again");
         return new ReceivableJournal.Review(id,customer,revision,shift,actor.id,ReceivableMath.collect(customer,amount,DrawerJournal.expected(db,shift),ReceivableJournal.debts(db,customer)));
     }
+    List<ReceivableJournal.Debtor> authorizedFixtureDebtors(String token,String shift,String search,int offset,int limit){
+        return fixtureTransaction(db->{
+            CashierJournal.requireShift(db,CashierJournal.requireSession(db,token,System.currentTimeMillis()),shift,true);
+            return ReceivableJournal.debtors(db,search,offset,limit);
+        });
+    }
+    List<ReceivableJournal.Record> authorizedFixtureCollectionHistory(String token,int offset,int limit){
+        return fixtureTransaction(db->{
+            if(offset<0||limit<1||limit>51)throw new IllegalArgumentException("Invalid collection history page");
+            CashierJournal.Principal actor=CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            List<ReceivableJournal.Record> rows=new ArrayList<>();
+            try(Cursor c=db.rawQuery(ReceivableJournal.HISTORY_PAGE,new String[]{actor.id,Integer.toString(limit),Integer.toString(offset)})){
+                while(c.moveToNext())rows.add(requireCollectionRecord(db,actor,c.getString(0)));
+            }
+            return rows;
+        });
+    }
     ReceivableJournal.Review prepareAuthorizedFixtureCollection(String token,String shift,String id,String customer,long revision,long amount){
         return fixtureTransaction(db->readCollectionReview(db,CashierJournal.requireSession(db,token,System.currentTimeMillis()),shift,id,customer,revision,amount));
     }

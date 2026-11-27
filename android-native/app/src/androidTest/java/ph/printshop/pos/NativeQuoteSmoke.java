@@ -83,7 +83,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "pricing settings and document quote"; verifyPricingScreen(screen);
             phase = "measured quote"; verifyMeasuredQuote(screen);
             phase = "native cashier training UI"; verifyCashierTrainingScreen(screen);
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_RECURRING_UI_PASS\nNATIVE_CUSTOMER_DIRECTORY_PASS\nNATIVE_CUSTOMER_CHECKOUT_PASS\nNATIVE_CREDIT_COLLECTION_API_PASS\nNATIVE_CREDIT_REPORT_PASS\nNATIVE_CREDIT_CHECKOUT_UI_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\n");
+            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_RECURRING_UI_PASS\nNATIVE_CUSTOMER_DIRECTORY_PASS\nNATIVE_CUSTOMER_CHECKOUT_PASS\nNATIVE_CREDIT_COLLECTION_API_PASS\nNATIVE_CREDIT_REPORT_PASS\nNATIVE_CREDIT_CHECKOUT_UI_PASS\nNATIVE_CREDIT_COLLECTION_UI_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\n");
             result = Activity.RESULT_OK;
         } catch (Throwable error) {
             evidence.putString("stream", failureDetails(phase, error));
@@ -366,6 +366,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             verifyCustomerTrainingUI(second,fixtureId,owner,ownerPass);
             verifyCustomerCheckoutUI(second);
             verifyCreditCheckoutUI(second,fixtureId);
+            verifyCollectionUI(second,fixtureId,owner,ownerPass);
             try(CatalogStore ordinary=new CatalogStore(context)){
                 java.util.List<CatalogEntry> after=ordinary.list(true);
                 require(before.size()==after.size(),"ordinary catalog changed");
@@ -1057,6 +1058,59 @@ public final class NativeQuoteSmoke extends Instrumentation {
         try(CatalogStore fixture=CatalogStore.checkoutFixture(getTargetContext(),fixtureId)){
             require(trainingCount(fixture,"SELECT COUNT(*) FROM credit_receivable_sources WHERE total=2100 AND paid=500")==1,"credit UI source");
             require(trainingCount(fixture,"SELECT COUNT(*) FROM credit_checkout_requests WHERE state='CANCELLED' AND paid=0")==1,"unpaid UI cancel");
+        }
+    }
+
+    private void verifyCollectionUI(Activity activity,String fixtureId,String ownerName,String ownerPassphrase){
+        try(CatalogStore fixture=CatalogStore.checkoutFixture(getTargetContext(),fixtureId)){
+            char[] password=ownerPassphrase.toCharArray();
+            try{
+                String owner=fixture.signInFixture(ownerName,password);
+                CustomerJournal.Customer debtor=fixture.authorizedFixtureCustomers(owner,true,"Synthetic Customer Updated",0,9).get(0);
+                fixture.saveFixtureCustomer(owner,debtor.id,debtor.revision,debtor.name,debtor.contact,false);
+                fixture.signOutFixture(owner);
+            }finally{java.util.Arrays.fill(password,'\0');}
+        }
+        trainingLogin(activity,"catalog-cashier","Synthetic-Catalog-Cashier-01");awaitText(activity,"No open shift","collection cashier login");
+        trainingField(activity,R.id.cashier_opening,"0.00");trainingClick(activity,R.id.cashier_open_shift);
+        awaitText(activity,"Shift open · Expected cash: PHP 0.00","collection shift");
+        trainingClick(activity,R.id.cashier_collection_new);awaitText(activity,"Select training debtor","debtor picker");
+        awaitText(activity,"Synthetic Customer Updated · Archived","archived debtor available");
+        awaitText(activity,"Outstanding: PHP 16.00","debtor balance");
+        trainingSelect(activity,"Collect from Synthetic Customer Updated");awaitText(activity,"New training debt collection","collection amount");
+        trainingField(activity,R.id.cashier_collection_amount,"16.01");trainingClick(activity,R.id.cashier_collection_review);
+        awaitText(activity,"Enter a collection amount no greater than the outstanding balance.","overpayment refused");
+        trainingField(activity,R.id.cashier_collection_amount,"6.00");trainingClick(activity,R.id.cashier_collection_review);
+        awaitText(activity,"Review training debt collection","collection review");
+        awaitText(activity,"Outstanding after: PHP 10.00","allocation balance");
+        trainingClick(activity,R.id.cashier_collection_stage);awaitText(activity,"Pending training debt collection","collection stage");
+        trainingClick(activity,R.id.cashier_return_home);awaitText(activity,"Recover pending debt collection","collection pending dashboard");
+        trainingClick(activity,R.id.cashier_lock);awaitText(activity,"Training sign in","collection lock");
+        trainingLogin(activity,"catalog-cashier","Synthetic-Catalog-Cashier-01");awaitText(activity,"Recover pending debt collection","collection recovery login");
+        trainingClick(activity,R.id.cashier_collection_pending);awaitText(activity,"Pending training debt collection","collection recovered");
+        awaitText(activity,"Payment: PHP 6.00","recovered payment");
+        trainingClick(activity,R.id.cashier_collection_record);awaitText(activity,"Recorded training debt collection","collection recorded");
+        trainingClick(activity,R.id.cashier_return_home);awaitText(activity,"Shift open · Expected cash: PHP 6.00","collection cash");
+        trainingClick(activity,R.id.cashier_collection_new);awaitText(activity,"Outstanding: PHP 10.00","remaining balance after settlement");
+        trainingSelect(activity,"Collect from Synthetic Customer Updated");awaitText(activity,"New training debt collection","second collection");
+        trainingField(activity,R.id.cashier_collection_amount,"1.00");trainingClick(activity,R.id.cashier_collection_review);
+        awaitText(activity,"Review training debt collection","second review");
+        trainingClick(activity,R.id.cashier_collection_stage);awaitText(activity,"Pending training debt collection","second pending");
+        trainingField(activity,R.id.cashier_cancel_reason,"Synthetic cancelled collection");trainingClick(activity,R.id.cashier_cancel);
+        awaitText(activity,"Cancelled training debt collection","collection cancelled");
+        trainingClick(activity,R.id.cashier_return_home);awaitText(activity,"Shift open · Expected cash: PHP 6.00","cancel no cash");
+        trainingClick(activity,R.id.cashier_collection_history);awaitText(activity,"Training collection history","collection history");
+        trainingSelect(activity,"Synthetic Customer Updated · PHP 6.00");awaitText(activity,"Recorded training debt collection","history applied");
+        trainingClick(activity,R.id.cashier_return_home);awaitText(activity,"Shift open · Expected cash: PHP 6.00","return collection history");
+        trainingClick(activity,R.id.cashier_close_shift);awaitText(activity,"Close training shift","collection close");
+        trainingField(activity,R.id.cashier_counted,"6.00");trainingClick(activity,R.id.cashier_confirm_close);
+        awaitText(activity,"Variance: PHP 0.00","collection exact close");
+        trainingClick(activity,R.id.cashier_return_home);awaitText(activity,"No open shift","collection closed");
+        trainingClick(activity,R.id.cashier_lock);awaitText(activity,"Training sign in","collection signout");
+        try(CatalogStore fixture=CatalogStore.checkoutFixture(getTargetContext(),fixtureId)){
+            require(trainingCount(fixture,"SELECT COUNT(*) FROM credit_collection_requests WHERE state='APPLIED' AND amount=600")==1,"collection UI applied once");
+            require(trainingCount(fixture,"SELECT COUNT(*) FROM credit_collection_requests WHERE state='CANCELLED' AND amount=100")==1,"collection UI cancelled");
+            require(trainingCount(fixture,"SELECT COUNT(*) FROM credit_receivable_open WHERE remaining=1000")==1,"collection remaining exact");
         }
     }
 

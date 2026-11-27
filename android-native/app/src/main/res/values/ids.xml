@@ -183,4 +183,12 @@
     <item type="id" name="cashier_credit_history"/>
     <item type="id" name="cashier_credit_stage"/>
     <item type="id" name="cashier_credit_record"/>
+    <item type="id" name="cashier_collection_pending"/>
+    <item type="id" name="cashier_collection_new"/>
+    <item type="id" name="cashier_collection_history"/>
+    <item type="id" name="cashier_collection_amount"/>
+    <item type="id" name="cashier_collection_review"/>
+    <item type="id" name="cashier_collection_stage"/>
+    <item type="id" name="cashier_collection_amount_edit"/>
+    <item type="id" name="cashier_collection_record"/>
 </resources>

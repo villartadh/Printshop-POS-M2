@@ -138,6 +138,9 @@ public final class CashierPreviewActivity extends Activity {
             case "Original receipt changed or amount is invalid; review again":
             case "Authorized original cash receipt unavailable":
             case "Invalid customer details":
+            case "Collection exceeds outstanding balance":return "Enter a collection amount no greater than the outstanding balance.";
+            case "Invalid collection":return "Enter a positive collection amount.";
+            case "Collection changed; review again":return "Collection changed. Reload the balance or cancel the saved request.";
             case "Payment mode and cash amount do not match":return "Partial cash needs a positive amount; unpaid needs PHP 0.00.";
             case "Partial payment requires customer and positive tender below total":return "Partial cash must be greater than zero and less than the sale total.";
             case "Credit checkout changed; review again":return "Credit checkout changed. Cancel the saved request or review a new checkout.";
@@ -325,7 +328,9 @@ public final class CashierPreviewActivity extends Activity {
             Button next=button("New training checkout",R.id.cashier_new_checkout,()->showCheckoutChoices(d.shift.id,0));
             next.setEnabled(d.clear());
             if(d.pendingCredit!=null)button("Recover pending credit checkout",R.id.cashier_credit_pending,()->showCreditRecord(d.pendingCredit));
-            if(d.pendingCollection!=null)label("Unresolved training debt collection");
+            if(d.pendingCollection!=null)button("Recover pending debt collection",R.id.cashier_collection_pending,()->showCollectionRecord(d.pendingCollection,0));
+            Button collect=button("Collect customer debt",R.id.cashier_collection_new,()->showDebtors(d.shift.id,"",0));
+            collect.setEnabled(d.clear());
             button("Recover pending checkouts",R.id.cashier_pending,()->showPendingList(d.shift.id));
             if(d.pendingDrawer!=null)label(d.pendingRefund?"Unresolved training refund/void":d.pendingRecurring?"Unresolved training recurring expense":"Unresolved training drawer activity");
             Button drawer=button(d.pendingDrawer==null?"Training drawer activity":d.pendingRefund?"Recover pending refund/void":d.pendingRecurring?"Recover pending recurring expense":"Recover pending drawer activity",R.id.cashier_drawer,()->{
@@ -336,6 +341,7 @@ public final class CashierPreviewActivity extends Activity {
         }
         button("Recorded training receipts",R.id.cashier_history,this::showHistory);
         button("Recorded training credit receipts",R.id.cashier_credit_history,this::showCreditHistory);
+        button("Training collection history",R.id.cashier_collection_history,()->showCollectionHistory(0));
         button("Training drawer history",R.id.cashier_drawer_history,()->showDrawerHistory(0));
         button("Change my training passphrase",R.id.cashier_change_pass,()->showCredentialChange(false));
         if(d.actor.role==CashierSecurity.Role.OWNER){
@@ -1183,6 +1189,81 @@ public final class CashierPreviewActivity extends Activity {
             button("Cancel unrecorded credit request",R.id.cashier_cancel,()->{String note=text(reason);submit(()->store.cancelAuthorizedFixtureCreditCheckout(session(),r.id,r.fingerprint,note),v->showCreditRecord((CreditCheckoutJournal.Record)v));});
         }else if(r.cancelReason!=null)label("Cancellation: "+r.cancelReason);
         button("Return to training cashier",R.id.cashier_return_home,this::refreshDashboard);
+    }
+    private void showDebtors(String shift,String search,int offset){
+        submit(()->store.authorizedFixtureDebtors(session(),shift,search,offset,9),v->{
+            @SuppressWarnings("unchecked") List<ReceivableJournal.Debtor> rows=(List<ReceivableJournal.Debtor>)v;
+            mode="debtors";screen("Select training debtor","Only customers with outstanding debt, including archived customers. Balances are live; no contact details.");
+            EditText query=field("Search customer name",R.id.cashier_customer_search,InputType.TYPE_CLASS_TEXT,80,search);
+            button("Search",R.id.cashier_customer_find,()->showDebtors(shift,text(query),0));
+            if(rows.isEmpty())label("No outstanding debt on this page");
+            for(int i=0;i<Math.min(8,rows.size());i++){
+                ReceivableJournal.Debtor debtor=rows.get(i);
+                label(debtor.name+(debtor.active?"":" · Archived"));
+                label("Outstanding: "+reportMoney(debtor.outstanding));label(debtor.id);
+                button("Collect from "+debtor.name,0,()->showCollectionAmount(shift,debtor));
+            }
+            catalogPages(offset,rows.size()>8,()->showDebtors(shift,search,offset-8),()->showDebtors(shift,search,offset+8));
+            back();
+        });
+    }
+    private void showCollectionAmount(String shift,ReceivableJournal.Debtor debtor){
+        mode="collection-amount";screen("New training debt collection","Record actual cash only. The oldest outstanding sales are settled first.");
+        label("Customer: "+debtor.name+(debtor.active?"":" · Archived"));
+        label("Outstanding: "+reportMoney(debtor.outstanding));
+        EditText amount=cashField("Cash received (PHP)",R.id.cashier_collection_amount,null);
+        button("Review collection",R.id.cashier_collection_review,()->{
+            String raw=text(amount),id=UUID.randomUUID().toString();
+            submit(()->store.prepareAuthorizedFixtureCollection(session(),shift,id,debtor.id,debtor.revision,QuoteMath.parseCentavos(raw)),v->showCollectionReview(debtor,(ReceivableJournal.Review)v,0));
+        });
+        button("Reload debtors",R.id.cashier_collection_new,()->showDebtors(shift,"",0));back();
+    }
+    private void allocationLine(String debt,long before,long amount,long after){
+        label("Original receipt: "+debt);
+        label("Before "+QuoteMath.display(before)+" · Payment "+QuoteMath.display(amount)+" · After "+QuoteMath.display(after));
+    }
+    private void showCollectionReview(ReceivableJournal.Debtor debtor,ReceivableJournal.Review review,int offset){
+        mode="collection-review";screen("Review training debt collection","No cash or debt changes yet. Review the exact FIFO allocations.");
+        ReceivableMath.Collection c=review.collection;
+        label("Customer: "+debtor.name);label("Payment: "+QuoteMath.display(c.amount),20,Color.rgb(27,39,58));
+        label("Outstanding before: "+reportMoney(c.outstandingBefore));label("Outstanding after: "+reportMoney(c.outstandingAfter));
+        label("Drawer before: "+QuoteMath.display(c.drawerBefore));label("Drawer after: "+QuoteMath.display(c.drawerAfter));
+        for(int i=offset;i<Math.min(offset+8,c.allocations.size());i++){
+            ReceivableMath.Allocation a=c.allocations.get(i);allocationLine(a.debtId,a.before,a.amount,a.after);
+        }
+        catalogPages(offset,offset+8<c.allocations.size(),()->showCollectionReview(debtor,review,offset-8),()->showCollectionReview(debtor,review,offset+8));
+        button("Save pending collection",R.id.cashier_collection_stage,()->submit(()->store.stageAuthorizedFixtureCollection(session(),review),v->showCollectionRecord((ReceivableJournal.Record)v,0)));
+        button("Edit collection amount",R.id.cashier_collection_amount_edit,()->showCollectionAmount(review.shift,debtor));back();
+    }
+    private void showCollectionRecord(ReceivableJournal.Record record,int offset){
+        boolean pending="PENDING".equals(record.state),applied="APPLIED".equals(record.state);
+        mode="collection-record";screen(pending?"Pending training debt collection":applied?"Recorded training debt collection":"Cancelled training debt collection",
+            pending?"Review the original saved payment. Confirm once or cancel without changing cash or debt.":"Historical collection only · Not sales revenue or a fiscal receipt.");
+        label("Customer: "+record.customerName);label("Customer ID: "+record.customer+" · Revision "+record.customerRevision);
+        label("Payment: "+QuoteMath.display(record.amount),20,Color.rgb(27,39,58));label("Request: "+record.id);
+        label("Reviewed drawer before: "+QuoteMath.display(record.before));label("Reviewed drawer after: "+QuoteMath.display(record.after));
+        for(int i=offset;i<Math.min(offset+8,record.allocations.size());i++){
+            ReceivableJournal.AllocationRow a=record.allocations.get(i);allocationLine(a.debt,a.before,a.amount,a.after);
+        }
+        catalogPages(offset,offset+8<record.allocations.size(),()->showCollectionRecord(record,offset-8),()->showCollectionRecord(record,offset+8));
+        if(pending){
+            button("Record debt collection",R.id.cashier_collection_record,()->submit(()->store.applyAuthorizedFixtureCollection(session(),record.id,record.fingerprint),v->showCollectionRecord((ReceivableJournal.Record)v,0)));
+            EditText reason=field("Cancellation reason",R.id.cashier_cancel_reason,InputType.TYPE_CLASS_TEXT,160,null);
+            button("Cancel unrecorded collection",R.id.cashier_cancel,()->{String note=text(reason);submit(()->store.cancelAuthorizedFixtureCollection(session(),record.id,record.fingerprint,note),v->showCollectionRecord((ReceivableJournal.Record)v,0));});
+        }else if(record.reason!=null)label("Cancellation: "+record.reason);
+        button("Return to training cashier",R.id.cashier_return_home,this::refreshDashboard);
+    }
+    private void showCollectionHistory(int offset){
+        submit(()->store.authorizedFixtureCollectionHistory(session(),offset,9),v->{
+            @SuppressWarnings("unchecked") List<ReceivableJournal.Record> rows=(List<ReceivableJournal.Record>)v;
+            mode="collection-history";screen("Training collection history","Your applied and cancelled debt collections. Pending payments are recovered from the dashboard.");
+            if(rows.isEmpty())label("No collections on this page");
+            for(int i=0;i<Math.min(8,rows.size());i++){
+                ReceivableJournal.Record row=rows.get(i);label(row.state+" · "+eventDate(row.recordedMs));
+                button(row.customerName+" · "+QuoteMath.display(row.amount),0,()->submit(()->store.authorizedFixtureCollection(session(),row.id),x->showCollectionRecord((ReceivableJournal.Record)x,0)));
+            }
+            catalogPages(offset,rows.size()>8,()->showCollectionHistory(offset-8),()->showCollectionHistory(offset+8));back();
+        });
     }
     private void showCreditHistory(){
         submit(()->store.recentAuthorizedFixtureCreditReceipts(session(),20),v->{

@@ -50,17 +50,33 @@ final class ReceivableJournal {
             fingerprint=identity(id,customer,revision,shift,operator,collection.amount,collection.drawerBefore,collection.drawerAfter,rows);
         }
     }
+    static final class Debtor {
+        final String id,name;final long revision;final boolean active;final BigInteger outstanding;
+        Debtor(String id,String name,long revision,boolean active,BigInteger outstanding){
+            this.id=id;this.name=name;this.revision=revision;this.active=active;this.outstanding=outstanding;
+        }
+    }
+    static final String DEBTOR_PAGE="SELECT c.id,c.name,c.revision,c.active FROM cashier_customer_current c WHERE instr(lower(c.name),lower(?))>0 AND EXISTS(SELECT 1 FROM credit_receivable_open d WHERE d.customer_id=c.id AND d.remaining>0) ORDER BY c.name COLLATE NOCASE,c.id LIMIT ? OFFSET ?";
+    static List<Debtor> debtors(SQLiteDatabase db,String search,int offset,int limit){
+        if(offset<0||limit<1||limit>51)throw new IllegalArgumentException("Invalid debtor page");
+        search=CustomerJournal.text(search,80,false);List<Debtor> rows=new ArrayList<>();
+        try(Cursor c=db.rawQuery(DEBTOR_PAGE,new String[]{search,Integer.toString(limit),Integer.toString(offset)})){
+            while(c.moveToNext())rows.add(new Debtor(c.getString(0),c.getString(1),c.getLong(2),c.getInt(3)==1,outstanding(db,c.getString(0))));
+        }
+        return rows;
+    }
     static final class AllocationRow {
         final String debt;final long before,amount,after;
         AllocationRow(String debt,long before,long amount,long after){this.debt=debt;this.before=before;this.amount=amount;this.after=after;}
     }
     static final class Record {
-        final String id,customer,shift,operator,state,reason,fingerprint;
+        final String id,customer,shift,operator,state,reason,fingerprint,customerName;
+        final long recordedMs;
         final long customerRevision,amount,before,after;
         final List<AllocationRow> allocations;
         Record(Cursor c,List<AllocationRow> rows){
             id=c.getString(0);customer=c.getString(1);customerRevision=c.getLong(2);shift=c.getString(3);operator=c.getString(4);
-            amount=c.getLong(5);before=c.getLong(6);after=c.getLong(7);state=c.getString(8);reason=c.getString(9);
+            amount=c.getLong(5);before=c.getLong(6);after=c.getLong(7);state=c.getString(8);reason=c.getString(9);customerName=c.getString(10);recordedMs=c.getLong(11);
             allocations=Collections.unmodifiableList(new ArrayList<>(rows));
             fingerprint=identity(id,customer,customerRevision,shift,operator,amount,before,after,allocations);
         }
@@ -92,12 +108,13 @@ final class ReceivableJournal {
     static BigInteger outstanding(SQLiteDatabase db,String customer){
         BigInteger value=BigInteger.ZERO;for(ReceivableMath.Debt debt:debts(db,customer))value=value.add(BigInteger.valueOf(debt.remaining()));return value;
     }
+    static final String HISTORY_PAGE="SELECT id FROM credit_collection_requests WHERE operator_id=? AND state<>'PENDING' ORDER BY resolved_ms DESC,id LIMIT ? OFFSET ?";
     static Record read(SQLiteDatabase db,String id){
         StockMath.validateRequestId(id);List<AllocationRow> rows=new ArrayList<>();
         try(Cursor c=db.rawQuery("SELECT a.debt_id,a.before_owed,a.amount,a.after_owed FROM credit_collection_allocations a JOIN credit_receivable_sources d ON d.id=a.debt_id WHERE a.collection_id=? ORDER BY d.opened_ms,d.id",new String[]{id})){
             while(c.moveToNext())rows.add(new AllocationRow(c.getString(0),c.getLong(1),c.getLong(2),c.getLong(3)));
         }
-        try(Cursor c=db.rawQuery("SELECT id,customer_id,customer_revision,shift_id,operator_id,amount,before_cash,after_cash,state,cancel_reason FROM credit_collection_requests WHERE id=?",new String[]{id})){
+        try(Cursor c=db.rawQuery("SELECT r.id,r.customer_id,r.customer_revision,r.shift_id,r.operator_id,r.amount,r.before_cash,r.after_cash,r.state,r.cancel_reason,v.name,COALESCE(r.resolved_ms,r.created_ms) FROM credit_collection_requests r JOIN cashier_customer_versions v ON v.id=r.customer_id AND v.revision=r.customer_revision WHERE r.id=?",new String[]{id})){
             return c.moveToFirst()?new Record(c,rows):null;
         }
     }
