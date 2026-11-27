@@ -14,7 +14,7 @@ public final class CatalogStore extends SQLiteOpenHelper {
     public CatalogStore(Context context) { this(context, "preview-catalog.db"); }
     CatalogStore(Context context, String filename) { this(context,filename,false); }
     private CatalogStore(Context context,String filename,boolean fixtureCheckoutWrites) {
-        super(context,filename,null,16);this.fixtureCheckoutWrites=fixtureCheckoutWrites;
+        super(context,filename,null,17);this.fixtureCheckoutWrites=fixtureCheckoutWrites;
     }
     /** No production/ordinary preview API can record sales or consume stock through checkout.
      * Only a separately identified synthetic fixture database opts in to transaction experiments.
@@ -66,6 +66,7 @@ public final class CatalogStore extends SQLiteOpenHelper {
         CustomerJournal.upgrade(db);
         CustomerLinkJournal.upgrade(db);
         upgradeCreditSchema(db);
+        QuotationJournal.upgrade(db);
     }
     private static void upgradeCreditSchema(SQLiteDatabase db){
         ReceivableJournal.createCandidate(db); CreditCashJournal.createCandidate(db); CreditCheckoutJournal.createCandidate(db);
@@ -89,7 +90,7 @@ public final class CatalogStore extends SQLiteOpenHelper {
         db.execSQL("CREATE TRIGGER stock_request_resolution BEFORE UPDATE ON stock_requests WHEN OLD.state<>'PENDING' OR NEW.state NOT IN ('APPLIED','CANCELLED') OR NEW.request_id IS NOT OLD.request_id OR NEW.material_id IS NOT OLD.material_id OR NEW.catalog_revision IS NOT OLD.catalog_revision OR NEW.expected_stock_revision IS NOT OLD.expected_stock_revision OR NEW.delta IS NOT OLD.delta OR NEW.reason IS NOT OLD.reason OR NEW.created_ms IS NOT OLD.created_ms OR (NEW.state='APPLIED' AND NOT EXISTS (SELECT 1 FROM stock_movements m WHERE m.request_id=OLD.request_id AND m.material_id=OLD.material_id AND m.catalog_revision=OLD.catalog_revision AND m.stock_revision=OLD.expected_stock_revision+1 AND m.delta=OLD.delta AND m.reason=OLD.reason)) OR (NEW.state='CANCELLED' AND EXISTS (SELECT 1 FROM stock_movements m WHERE m.request_id=OLD.request_id)) BEGIN SELECT RAISE(ABORT,'Invalid stock request transition'); END");
     }
     @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-        if (newVersion == 16 && oldVersion >= 1 && oldVersion <= 15) {
+        if (newVersion == 17 && oldVersion >= 1 && oldVersion <= 16) {
             if (oldVersion < 2) createStockLedger(db);
             if (oldVersion < 3) createRecipeSchema(db);
             if (oldVersion < 4) createPricingSchema(db);
@@ -104,7 +105,8 @@ public final class CatalogStore extends SQLiteOpenHelper {
             if(oldVersion<13) RecurringJournal.upgrade(db);
             if(oldVersion<14) CustomerJournal.upgrade(db);
             if(oldVersion<15) CustomerLinkJournal.upgrade(db);
-            upgradeCreditSchema(db); return;
+            if(oldVersion<16) upgradeCreditSchema(db);
+            QuotationJournal.upgrade(db); return;
         }
         throw new IllegalStateException("No migration path; existing catalog preserved");
     }
@@ -486,6 +488,37 @@ public final class CatalogStore extends SQLiteOpenHelper {
                 throw new IllegalStateException("Service changed; reload and select again");
             return new CheckoutSelection(service,readPricing(db,id),recipeRevision(db,id),!readRecipeBindings(db,id).isEmpty());
         });
+    }
+    private static SavedQuotation readQuotationReview(SQLiteDatabase db,String id,CheckoutSelection selected,CheckoutPlan.Inputs inputs){
+        if(selected==null)throw new IllegalArgumentException("Select an active service");
+        CatalogEntry service=read(db,selected.service.id);PricingProfile profile=readPricing(db,service.id);long recipe=recipeRevision(db,service.id);
+        if(service.revision!=selected.service.revision||profile.revision!=selected.profile.revision||recipe!=selected.recipeRevision)
+            throw new IllegalStateException("Service changed; review quotation again");
+        return SavedQuotation.review(id,service,profile,recipe,inputs,readCheckoutMaterials(db,service.id));
+    }
+    SavedQuotation prepareAuthorizedFixtureQuotation(String token,String id,CheckoutSelection selected,CheckoutPlan.Inputs inputs){
+        return fixtureTransaction(db->{CashierJournal.requireSession(db,token,System.currentTimeMillis());return readQuotationReview(db,id,selected,inputs);});
+    }
+    QuotationJournal.Record saveAuthorizedFixtureQuotation(String token,CheckoutSelection selected,SavedQuotation reviewed,CustomerLinkJournal.Selection customer){
+        return fixtureTransaction(db->{
+            long now=System.currentTimeMillis();CashierJournal.Principal actor=CashierJournal.requireSession(db,token,now);
+            if(reviewed==null)throw new IllegalArgumentException("Review quotation first");
+            QuotationJournal.Record existing=QuotationJournal.read(db,reviewed.id);
+            if(existing!=null){existing.verifyReplay(actor,reviewed,customer);return existing;}
+            SavedQuotation current=readQuotationReview(db,reviewed.id,selected,reviewed.inputs);
+            if(!reviewed.commercialSnapshot().equals(current.commercialSnapshot()))throw new IllegalStateException("Quotation changed; review again");
+            return QuotationJournal.save(db,actor,current,customer,now);
+        });
+    }
+    QuotationJournal.Record authorizedFixtureQuotation(String token,String id){
+        return fixtureTransaction(db->{CashierJournal.Principal actor=CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            StockMath.validateRequestId(id);QuotationJournal.Record record=QuotationJournal.read(db,id);
+            if(record==null||(!actor.id.equals(record.actor)&&actor.role!=CashierSecurity.Role.OWNER))throw new IllegalStateException("Quotation unavailable");
+            return record;});
+    }
+    QuotationJournal.Record cancelAuthorizedFixtureQuotation(String token,String id,String reason){
+        return fixtureTransaction(db->{long now=System.currentTimeMillis();StockMath.validateRequestId(id);
+            return QuotationJournal.cancel(db,CashierJournal.requireSession(db,token,now),id,reason,now);});
     }
     CheckoutPlan.Proposal prepareAuthorizedFixtureCheckout(String token,String shiftId,String requestId,CheckoutSelection selected,CheckoutPlan.Inputs inputs){
         return fixtureTransaction(db->{

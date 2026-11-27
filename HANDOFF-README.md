@@ -186,3 +186,6 @@ The owner enabled the isolated VMware route; see SELF_HOSTED_RUNNER.md for the a
 
 ## Latest integration checkpoint — 2026-11-27
 PRs #10–#12 are merged to develop after successful exact hosted Windows/Linux/Android acceptance. PR #13 passed installed Android on its former stacked base and is now reconciled with develop b017ab480bfc1431052c34a8aeec42be6ed984fd. Fresh full gates mandatory before merging checkout. The public repository uses GitHub-hosted runners only. Read the final DEVELOPMENT_QUEUE.md checkpoint; older pending statuses above are historical. Preserve main and immutable baselines.
+
+## Current continuation — saved quotations v17
+Checkout PR #13 integrated with verified hosted gates. Draft PR #15 is the next critical feature: native immutable saved quotations and conversion. See android-native/QUOTATION_ACCEPTANCE.md and latest DEVELOPMENT_QUEUE.md. Native v17 save/cancel foundation has no financial or inventory effects, not yet usable from UI; implement authenticated history and dedicated atomic conversion linkage before exposure. Tracker #14 covers remaining scope. No production claims.

@@ -81,6 +81,26 @@ final class SavedQuotation {
         return new SavedQuotation(id,service,profile,recipe,inputs,price,MaterialCost.estimateFractional(costs,usage),materials,pendingStock);
     }
 
+    /** Canonical immutable commercial snapshot; no tender, stock balances or credentials. */
+    String commercialSnapshot() {
+        try {
+            java.io.ByteArrayOutputStream bytes=new java.io.ByteArrayOutputStream();
+            java.io.DataOutputStream out=new java.io.DataOutputStream(bytes);
+            out.writeUTF("SAVED-QUOTATION-V1");out.writeUTF(id);out.writeUTF(serviceId);out.writeUTF(serviceName);out.writeUTF(serviceUnit);
+            out.writeLong(serviceRevision);out.writeLong(pricingRevision);out.writeLong(recipeRevision);out.writeUTF(method.name());
+            out.writeLong(quantityHundredths);out.writeLong(baseRateCentavos);out.writeLong(rateCentavos);out.writeLong(totalCentavos);
+            out.writeLong(materialCostCentavos);out.writeInt(inputs.count);out.writeInt(inputs.pages);out.writeInt(inputs.copies);
+            nullable(out,inputs.width);nullable(out,inputs.height);nullable(out,inputs.dimensionUnit==null?null:inputs.dimensionUnit.name());
+            out.writeUTF(inputs.basis.name());out.writeInt(materials.size());
+            for(Material m:materials){out.writeUTF(m.id);out.writeUTF(m.name);out.writeUTF(m.unit);out.writeLong(m.revision);
+                out.writeLong(m.perUnitMilli);out.writeLong(m.unitCost);out.writeLong(m.requiredHundredthMilli);}
+            out.flush();return java.util.Base64.getEncoder().encodeToString(bytes.toByteArray());
+        }catch(java.io.IOException ex){throw new IllegalStateException("Quotation snapshot encoding failed",ex);}
+    }
+    private static void nullable(java.io.DataOutputStream out,String value)throws java.io.IOException {
+        out.writeBoolean(value!=null);if(value!=null)out.writeUTF(value);
+    }
+
     /** Stock availability/tender may change. Commercial inputs and provenance must not.
      * The checkout writer must independently revalidate its own current full snapshot.
      */

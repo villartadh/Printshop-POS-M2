@@ -33,7 +33,8 @@ public final class SavedQuotationTest {
         refuse(()->SavedQuotation.review(Q,S,P,0,unpaid,List.of(material(M,1000,0,0,false))));
         refuse(()->SavedQuotation.review(Q,S,P,1,unpaid,Collections.emptyList()));
         SavedQuotation pending=SavedQuotation.review(Q,S,P,1,unpaid,List.of(material(M,1000,4,20000,true)));
-        check(pending.stockSufficientAtReview);check(pending.pendingStockAtReview);check(!q.pendingStockAtReview);
+        check(pending.stockSufficientAtReview);check(pending.pendingStockAtReview);check(!q.pendingStockAtReview);check(q.commercialSnapshot().equals(pending.commercialSnapshot()));
+        check(!q.commercialSnapshot().equals(SavedQuotation.review(Q,S,P,1,inputs("3","4",0,CheckoutPlan.UsageBasis.BILLABLE_UNIT),List.of(material(M,1000,4,20000,false))).commercialSnapshot()));
         refuse(()->CheckoutPlan.prepare(R,S,P,1,inputs("2","6",35000,CheckoutPlan.UsageBasis.BILLABLE_UNIT),List.of(material(M,1000,4,20000,true))));
         SavedQuotation fractional=SavedQuotation.review(Q,S,P,1,inputs("1","1.25",0,CheckoutPlan.UsageBasis.BILLABLE_UNIT),List.of(material(M,1,4,20000,false)));
         check(!fractional.representableForCheckout);check(fractional.materials.get(0).requiredHundredthMilli==125);
