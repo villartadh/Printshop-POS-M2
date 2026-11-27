@@ -90,7 +90,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "measured quote"; verifyMeasuredQuote(screen);
             phase = "native cashier training UI"; verifyCashierTrainingScreen(screen);
             phase = "native receipt PDF"; verifyReceiptPdf();
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_RECURRING_UI_PASS\nNATIVE_CUSTOMER_DIRECTORY_PASS\nNATIVE_CUSTOMER_CHECKOUT_PASS\nNATIVE_CREDIT_COLLECTION_API_PASS\nNATIVE_CREDIT_REPORT_PASS\nNATIVE_CREDIT_CHECKOUT_UI_PASS\nNATIVE_CREDIT_COLLECTION_UI_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\nNATIVE_SAVED_QUOTATION_PASS\nNATIVE_QUOTATION_CASH_CONVERSION_PASS\nNATIVE_QUOTATION_CREDIT_CONVERSION_PASS\nNATIVE_QUOTATION_UI_PASS\nNATIVE_RECEIPT_PDF_PASS\n");
+            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_RECURRING_UI_PASS\nNATIVE_CUSTOMER_DIRECTORY_PASS\nNATIVE_CUSTOMER_CHECKOUT_PASS\nNATIVE_CREDIT_COLLECTION_API_PASS\nNATIVE_CREDIT_REPORT_PASS\nNATIVE_CREDIT_CHECKOUT_UI_PASS\nNATIVE_CREDIT_COLLECTION_UI_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\nNATIVE_SAVED_QUOTATION_PASS\nNATIVE_QUOTATION_CASH_CONVERSION_PASS\nNATIVE_QUOTATION_CREDIT_CONVERSION_PASS\nNATIVE_QUOTATION_UI_PASS\nNATIVE_RECEIPT_PDF_PASS\nNATIVE_RECEIPT_REPRINT_PASS\n");
             result = Activity.RESULT_OK;
         } catch (Throwable error) {
             evidence.putString("stream", failureDetails(phase, error));
@@ -1266,14 +1266,20 @@ public final class NativeQuoteSmoke extends Instrumentation {
         awaitText(a,"Original debt: PHP 16.00","credit conversion debt");
         trainingClick(a,R.id.cashier_quote_confirm);awaitText(a,"Training quotation · Credit converted","converted link");
         trainingClick(a,R.id.cashier_quote_receipt);awaitText(a,"Recorded training credit receipt","linked receipt");
-        trainingClick(a,R.id.cashier_return_home);awaitText(a,"Shift open · Expected cash: PHP 5.00","cash effect once");
+        trainingClick(a,R.id.cashier_receipt_print);awaitText(a,"Reprint training receipt","credit reprint");
+        awaitText(a,"Original outstanding: PHP 16.00","original debt in reprint");
+        awaitText(a,ReceiptDocument.NOTICE,"non-tax notice");
+        trainingClick(a,R.id.cashier_back);awaitText(a,"Shift open · Expected cash: PHP 5.00","cash effect once");
         newQuotationUI(a,false);
         trainingClick(a,R.id.cashier_quote_convert);awaitText(a,"Convert training quotation","cash conversion");
         trainingField(a,R.id.cashier_cash,"25.00");trainingClick(a,R.id.cashier_quote_review);
         awaitText(a,"Confirm quotation conversion","cash review");
         trainingClick(a,R.id.cashier_quote_confirm);awaitText(a,"Training quotation · Cash converted","cash link");
         trainingClick(a,R.id.cashier_quote_receipt);awaitText(a,"Recorded training receipt","cash receipt");
-        trainingClick(a,R.id.cashier_return_home);awaitText(a,"Shift open · Expected cash: PHP 26.00","cash conversion effect once");
+        trainingClick(a,R.id.cashier_receipt_print);awaitText(a,"Reprint training receipt","cash reprint");
+        awaitText(a,"Change: PHP 4.00","original change in reprint");
+        awaitText(a,"REPRINT - ORIGINAL RECORD","reprint notice");
+        trainingClick(a,R.id.cashier_back);awaitText(a,"Shift open · Expected cash: PHP 26.00","cash conversion effect once");
         trainingClick(a,R.id.cashier_close_shift);awaitText(a,"Close training shift","quote close");
         trainingField(a,R.id.cashier_counted,"26.00");trainingClick(a,R.id.cashier_confirm_close);
         awaitText(a,"Variance: PHP 0.00","quote exact close");

@@ -1349,6 +1349,7 @@ public final class CashierPreviewActivity extends Activity {
             EditText reason=field("Cancellation reason",R.id.cashier_cancel_reason,InputType.TYPE_CLASS_TEXT,160,null);
             button("Cancel unrecorded credit request",R.id.cashier_cancel,()->{String note=text(reason);submit(()->store.cancelAuthorizedFixtureCreditCheckout(session(),r.id,r.fingerprint,note),v->showCreditRecord((CreditCheckoutJournal.Record)v));});
         }else if(r.cancelReason!=null)label("Cancellation: "+r.cancelReason);
+        if(applied)button("Reprint receipt / save PDF",R.id.cashier_receipt_print,()->prepareReceiptPrint(r.id,true));
         button("Return to training cashier",R.id.cashier_return_home,this::refreshDashboard);
     }
     private void showDebtors(String shift,String search,int offset){
@@ -1426,13 +1427,14 @@ public final class CashierPreviewActivity extends Activity {
             catalogPages(offset,rows.size()>8,()->showCollectionHistory(offset-8),()->showCollectionHistory(offset+8));back();
         });
     }
-    private void showCreditHistory(){
-        submit(()->store.recentAuthorizedFixtureCreditReceipts(session(),20),v->{
-            mode="credit-history";screen("Recorded training credit receipts","Your most recent synthetic credit transactions.");
+    private void showCreditHistory(){showCreditHistory(0);}
+    private void showCreditHistory(int offset){
+        submit(()->store.authorizedFixtureCreditReceiptPage(session(),offset),v->{
+            mode="credit-history";screen("Recorded training credit receipts","Your recorded synthetic credit transactions.");
             @SuppressWarnings("unchecked") List<CreditCheckoutJournal.Record> records=(List<CreditCheckoutJournal.Record>)v;
             if(records.isEmpty())label("No recorded training credit receipts");
-            for(CreditCheckoutJournal.Record r:records)button(r.serviceName+" · "+QuoteMath.display(r.total),0,()->submit(()->store.authorizedFixtureCreditCheckout(session(),r.id),x->showCreditRecord((CreditCheckoutJournal.Record)x)));
-            back();
+            for(int i=0;i<Math.min(8,records.size());i++){CreditCheckoutJournal.Record r=records.get(i);button(r.serviceName+" · "+QuoteMath.display(r.total),0,()->submit(()->store.authorizedFixtureCreditCheckout(session(),r.id),x->showCreditRecord((CreditCheckoutJournal.Record)x)));}
+            catalogPages(offset,records.size()>8,()->showCreditHistory(offset-8),()->showCreditHistory(offset+8));back();
         });
     }
     private void showReview(String shift,CheckoutPlan.Proposal plan){showReview(shift,plan,null);}
@@ -1501,17 +1503,42 @@ public final class CashierPreviewActivity extends Activity {
     private void renderReceipt(CheckoutJournal.Record r,CustomerLinkJournal.Selection customer){
         mode="receipt";screen("Recorded training receipt","Historical synthetic record only. No tax receipt or physical printing.");
         label(r.previewReceipt(),18,Color.rgb(27,39,58));checkoutCustomerLabel(customer);
+        button("Reprint receipt / save PDF",R.id.cashier_receipt_print,()->prepareReceiptPrint(r.id,false));
         button("Return to training cashier",R.id.cashier_return_home,this::refreshDashboard);
     }
-    private void showHistory(){
-        submit(()->store.recentAuthorizedFixtureReceipts(session(),20),v->{
-            mode="history";screen("Recorded training receipts","Your most recent recorded synthetic transactions.");
+    private void showHistory(){showHistory(0);}
+    private void showHistory(int offset){
+        submit(()->store.authorizedFixtureReceiptPage(session(),offset),v->{
+            mode="history";screen("Recorded training receipts","Your recorded synthetic transactions.");
             @SuppressWarnings("unchecked") List<CheckoutJournal.Record> records=(List<CheckoutJournal.Record>)v;
             if(records.isEmpty())label("No recorded training receipts");
-            for(CheckoutJournal.Record r:records)button(r.serviceName+" · "+QuoteMath.display(r.total),0,()->
-                submit(()->store.authorizedFixtureCheckout(session(),r.id),x->showReceipt((CheckoutJournal.Record)x)));
-            back();
+            for(int i=0;i<Math.min(8,records.size());i++){CheckoutJournal.Record r=records.get(i);button(r.serviceName+" · "+QuoteMath.display(r.total),0,()->
+                submit(()->store.authorizedFixtureCheckout(session(),r.id),x->showReceipt((CheckoutJournal.Record)x)));}
+            catalogPages(offset,records.size()>8,()->showHistory(offset-8),()->showHistory(offset+8));back();
         });
+    }
+    private void prepareReceiptPrint(String id,boolean credit){
+        submit(()->store.authorizedFixtureReceiptDocument(session(),id,credit),v->showReceiptPrint((ReceiptDocument)v));
+    }
+    private void showReceiptPrint(ReceiptDocument doc){
+        mode="receipt-print";screen("Reprint training receipt","Original synthetic record only. Android controls printer and PDF output; actual printing is not verified.");
+        for(String line:doc.lines(true))label(line);
+        Spinner paper=choices("Paper size",R.id.cashier_receipt_paper,Arrays.asList("58 mm thermal","80 mm thermal","A4","Letter"),1);
+        button("Open Android print dialog",R.id.cashier_receipt_print,()->{
+            android.print.PrintAttributes.MediaSize media;
+            switch(paper.getSelectedItemPosition()){
+                case 0:media=new android.print.PrintAttributes.MediaSize("THERMAL_58","58 mm thermal",2283,5906);break;
+                case 1:media=new android.print.PrintAttributes.MediaSize("THERMAL_80","80 mm thermal",3150,5906);break;
+                case 2:media=android.print.PrintAttributes.MediaSize.ISO_A4;break;
+                default:media=android.print.PrintAttributes.MediaSize.NA_LETTER;
+            }
+            try{
+                android.print.PrintManager manager=(android.print.PrintManager)getSystemService(PRINT_SERVICE);
+                if(manager==null)throw new IllegalStateException("Print service unavailable");
+                manager.print("Synthetic receipt reprint",new ReceiptPrintAdapter(doc),new android.print.PrintAttributes.Builder().setMediaSize(media).setColorMode(android.print.PrintAttributes.COLOR_MODE_MONOCHROME).build());
+            }catch(RuntimeException ex){status.setText("Print dialog unavailable. No printing verified.");}
+        });
+        back();
     }
     private void showClose(Dashboard d){
         mode="close";screen("Close training shift","Expected cash: "+QuoteMath.display(d.expected)+". Pending requests must be resolved.");

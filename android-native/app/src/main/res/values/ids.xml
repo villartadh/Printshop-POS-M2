@@ -200,4 +200,6 @@
     <item name="cashier_quote_cancel" type="id"/>
     <item name="cashier_quote_reload" type="id"/>
     <item name="cashier_quote_confirm" type="id"/>
+    <item name="cashier_receipt_print" type="id"/>
+    <item name="cashier_receipt_paper" type="id"/>
 </resources>
