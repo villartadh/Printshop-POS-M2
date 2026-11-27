@@ -64,6 +64,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "v10 drawer migration"; verifyCheckoutMigration(10);
             phase = "v11 refund migration"; verifyCheckoutMigration(11);
             phase = "v12 recurring migration"; verifyCheckoutMigration(12);
+            phase = "v13 customer migration"; verifyCheckoutMigration(13);
             phase = "durable atomic checkout fixture"; verifyDurableCheckout();
             phase = "cashier authorization and shift fixture"; verifyCashierAuthShift();
             phase = "audited credential lifecycle"; verifyCredentialLifecycle();
@@ -78,7 +79,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "pricing settings and document quote"; verifyPricingScreen(screen);
             phase = "measured quote"; verifyMeasuredQuote(screen);
             phase = "native cashier training UI"; verifyCashierTrainingScreen(screen);
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_RECURRING_UI_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\n");
+            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_RECURRING_UI_PASS\nNATIVE_CUSTOMER_DIRECTORY_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\n");
             result = Activity.RESULT_OK;
         } catch (Throwable error) {
             evidence.putString("stream", failureDetails(phase, error));
@@ -358,6 +359,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             verifyRefundTrainingUI(second,fixtureId,owner,ownerPass);
             verifySalesReportTrainingUI(second,fixtureId,owner,ownerPass);
             verifyRecurringTrainingUI(second,fixtureId,owner,ownerPass);
+            verifyCustomerTrainingUI(second,fixtureId,owner,ownerPass);
             try(CatalogStore ordinary=new CatalogStore(context)){
                 java.util.List<CatalogEntry> after=ordinary.list(true);
                 require(before.size()==after.size(),"ordinary catalog changed");
@@ -835,6 +837,53 @@ public final class NativeQuoteSmoke extends Instrumentation {
         }
     }
 
+    private void verifyCustomerTrainingUI(Activity activity,String fixtureId,String owner,String ownerPass){
+        trainingLogin(activity,owner,ownerPass);awaitText(activity,"No open shift","customer owner login");
+        trainingClick(activity,R.id.cashier_customers);awaitText(activity,"Training customers","customer list");
+        trainingClick(activity,R.id.cashier_customer_new);awaitText(activity,"New training customer","customer editor");
+        trainingField(activity,R.id.cashier_customer_name,"Synthetic Customer Alpha");
+        trainingField(activity,R.id.cashier_customer_contact,"Synthetic contact");
+        trainingClick(activity,R.id.cashier_customer_save);awaitText(activity,"Synthetic customer · Revision 1 · Active","customer create");
+        trainingClick(activity,R.id.cashier_customer_edit);awaitText(activity,"Edit training customer","customer edit");
+        trainingField(activity,R.id.cashier_customer_name,"Synthetic Customer Updated");
+        trainingClick(activity,R.id.cashier_customer_save);awaitText(activity,"Synthetic customer · Revision 2 · Active","customer revision");
+        trainingClick(activity,R.id.cashier_customer_archive);awaitText(activity,"Archive training customer","customer archive review");
+        trainingClick(activity,R.id.cashier_customer_save);awaitText(activity,"Synthetic customer · Revision 3 · Archived","customer archived");
+        trainingClick(activity,R.id.cashier_customers);awaitText(activity,"Synthetic Customer Updated · Archived","archived list");
+        trainingSelect(activity,"Review Synthetic Customer Updated");
+        trainingClick(activity,R.id.cashier_customer_archive);awaitText(activity,"Restore training customer","customer restore");
+        trainingClick(activity,R.id.cashier_customer_save);awaitText(activity,"Synthetic customer · Revision 4 · Active","customer restored");
+        trainingClick(activity,R.id.cashier_customer_history);awaitText(activity,"Training customer revision history","customer history");
+        awaitText(activity,"Revision 1 · Synthetic Customer Alpha · Active","original revision missing");
+        awaitText(activity,"Revision 3 · Synthetic Customer Updated · Archived","archive history missing");
+        trainingClick(activity,R.id.cashier_customer_history);trainingClick(activity,R.id.cashier_customers);
+        awaitText(activity,"Training customers","return list");
+        trainingField(activity,R.id.cashier_customer_search,"missing");trainingClick(activity,R.id.cashier_customer_find);
+        awaitText(activity,"No matching customers","customer search empty");
+        trainingField(activity,R.id.cashier_customer_search,"updated");trainingClick(activity,R.id.cashier_customer_find);
+        awaitText(activity,"Synthetic Customer Updated · Active","customer search match");
+        trainingClick(activity,R.id.cashier_back);awaitText(activity,"No open shift","customer dashboard");
+        trainingClick(activity,R.id.cashier_lock);awaitText(activity,"Training sign in","customer owner logout");
+        trainingLogin(activity,"catalog-cashier","Synthetic-Catalog-Cashier-01");awaitText(activity,"No open shift","customer cashier login");
+        runOnMainChecked(()->require(activity.findViewById(R.id.cashier_customers)==null,"customer owner boundary"));
+        trainingClick(activity,R.id.cashier_lock);awaitText(activity,"Training sign in","customer cashier logout");
+        try(CatalogStore store=CatalogStore.checkoutFixture(getTargetContext(),fixtureId)){
+            require(trainingCount(store,"SELECT COUNT(*) FROM cashier_customer_versions")==4,"customer revision count");
+            char[] pass=ownerPass.toCharArray(),staff="Synthetic-Catalog-Cashier-01".toCharArray();
+            try{
+                String token=store.signInFixture(owner,pass),other=store.signInFixture("catalog-cashier",staff);
+                CustomerJournal.Customer c=store.authorizedFixtureCustomers(token,true,"updated",0,9).get(0);
+                require(c.revision==4&&c.contact.equals("Synthetic contact"),"customer reopen");
+                require(store.saveFixtureCustomer(token,c.id,3,c.name,c.contact,true).revision==4,"exact retry added revision");
+                rejectStock(()->store.saveFixtureCustomer(token,c.id,2,"Stale revision","",true));
+                rejectStock(()->store.authorizedFixtureCustomers(other,true,"",0,9));
+                rejectStock(()->store.saveFixtureCustomer(other,stockId(),0,"Synthetic forbidden","",true));
+                store.signOutFixture(token);store.signOutFixture(other);
+            }finally{java.util.Arrays.fill(pass,'\0');java.util.Arrays.fill(staff,'\0');}
+            require(trainingCount(store,"SELECT COUNT(*) FROM cashier_customer_versions")==4,"unauthorized or replay write");
+        }
+    }
+
     /** Preserve exceptions from the UI thread without terminating instrumentation. */
     private void runOnMainChecked(Runnable operation) {
         java.util.concurrent.atomic.AtomicReference<Throwable> fault = new java.util.concurrent.atomic.AtomicReference<>();
@@ -1047,7 +1096,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 db.setVersion(4);
             }
             try(CatalogStore store=new CatalogStore(context,filename)){
-                require(store.getReadableDatabase().getVersion()==13,"v4-to-v13 migration version wrong");
+                require(store.getReadableDatabase().getVersion()==14,"v4-to-v14 migration version wrong");
                 require(store.stockBalance(material).quantity==1500&&store.stockHistory(material,0,5).size()==1,"v4 stock lost");
                 require(store.recipeBindings(service).get(0).quantityMilli==500&&store.pricing(service).tiers.get(0).rateCentavos==250,"v4 recipe/pricing lost");
                 require(store.pendingStock(material)==null,"unexpected migrated pending request");
@@ -1236,15 +1285,17 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 }
                 if(former>=11)DrawerJournal.upgrade(db);
                 if(former>=12)RefundJournal.upgrade(db);
+                if(former>=13)RecurringJournal.upgrade(db);
                 db.setVersion(former);
             }
             try(CatalogStore store=former>=7?CatalogStore.checkoutFixture(context,fixture):new CatalogStore(context,filename)){
-                require(store.getReadableDatabase().getVersion()==13,"v5/v6/v7/v8/v9/v10/v12 migration failed");
+                require(store.getReadableDatabase().getVersion()==14,"v5-v13 migration failed");
                 require(store.stockBalance(material).quantity==1500&&store.stockHistory(material,0,10).size()==1,"v5 stock changed");
                 require(store.pendingStock(material)!=null&&store.pendingStock(material).id.equals(pending),"v5 pending stock lost");
                 require(store.get(material).centavos==199,"v5 catalog changed");
                 require(trainingCount(store,"SELECT COUNT(*) FROM cashier_admin_events")== (former>=10?1:0),"migration changed administrative audit");
                 require(trainingCount(store,"SELECT COUNT(*) FROM cashier_refund_links")==0,"migration invented refund links");
+                require(trainingCount(store,"SELECT COUNT(*) FROM cashier_customer_versions")==0,"migration invented customers");
                 require(trainingCount(store,"SELECT COUNT(*) FROM cashier_recurring_versions")==0&&trainingCount(store,"SELECT COUNT(*) FROM cashier_recurring_occurrences")==0,"migration invented recurring expenses");
                 require(trainingCount(store,"SELECT COUNT(*) FROM cashier_drawer_requests")==0&&trainingCount(store,"SELECT COUNT(*) FROM cashier_drawer_effects")==0,"migration invented drawer activity");
                 require(trainingCount(store,"SELECT COUNT(*) FROM cashier_drawer_legacy_sales")== (former>=7?1:0),"migration legacy sale provenance wrong");
@@ -2152,7 +2203,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             }
             java.util.List<PricingMath.Tier> tiers=java.util.Arrays.asList(new PricingMath.Tier(2000,200),new PricingMath.Tier(1000,250));
             try(CatalogStore store=new CatalogStore(context,filename)){
-                require(store.getReadableDatabase().getVersion()==13,"v3-to-v13 migration version wrong");
+                require(store.getReadableDatabase().getVersion()==14,"v3-to-v14 migration version wrong");
                 require(store.pricing(service).revision==0&&!store.pricing(service).needsAdvancedQuote(),"legacy default changed");
                 require(store.recipeRevision(service)==1&&store.stockBalance(material).quantity==1500,"migration changed recipe or stock");
                 PricingProfile saved=store.savePricing(service,1,0,PricingMath.Method.PER_PAGE,true,tiers);

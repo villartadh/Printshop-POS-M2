@@ -137,6 +137,8 @@ public final class CashierPreviewActivity extends Activity {
             case "Owner authorization required":return message;
             case "Original receipt changed or amount is invalid; review again":
             case "Authorized original cash receipt unavailable":
+            case "Invalid customer details":
+            case "Customer changed; reload":
             case "Invalid expense date":
             case "Invalid recurring expense":
             case "Recurring expense changed; reload":
@@ -329,6 +331,7 @@ public final class CashierPreviewActivity extends Activity {
         if(d.actor.role==CashierSecurity.Role.OWNER){
             button("Training sale refunds / voids",R.id.cashier_refund_receipts,()->showRefundReceipts(0));
             button("Refund / void history",R.id.cashier_refund_history,()->showRefundHistory(0));
+            button("Training customers",R.id.cashier_customers,()->showCustomers(true,"",0));
             button("Recurring expenses",R.id.cashier_recurring,()->showRecurringDefinitions(0));
             button("Training sales reports",R.id.cashier_sales_report,()->showReportPeriod(ReportMath.Period.DAY));
             button("Create training cashier",R.id.cashier_add_staff,this::showStaff);
@@ -629,6 +632,59 @@ public final class CashierPreviewActivity extends Activity {
             }
             catalogPages(offset,rows.size()>8,()->showRefundHistory(offset-8),()->showRefundHistory(offset+8));
             button("Reload compensation history",R.id.cashier_refund_history,()->showRefundHistory(0));back();
+        });
+    }
+    private void showCustomers(boolean active,String search,int offset){
+        submit(()->store.authorizedFixtureCustomers(session(),active,search,offset,9),v->{
+            @SuppressWarnings("unchecked") List<CustomerJournal.Customer> rows=(List<CustomerJournal.Customer>)v;
+            mode="customers";screen("Training customers","Owner-only synthetic directory. Do not enter real customer information. No balances or credit sales yet.");
+            button(active?"Show archived customers":"Show active customers",R.id.cashier_customer_filter,()->showCustomers(!active,search,0));
+            EditText query=field("Search customer name",R.id.cashier_customer_search,InputType.TYPE_CLASS_TEXT,80,search);
+            button("Search",R.id.cashier_customer_find,()->showCustomers(active,text(query),0));
+            button("New training customer",R.id.cashier_customer_new,()->showCustomerEditor(null,true));
+            if(rows.isEmpty())label("No matching customers");
+            for(int i=0;i<Math.min(8,rows.size());i++){
+                CustomerJournal.Customer c=rows.get(i);
+                label(c.name+" · "+(c.active?"Active":"Archived"));
+                label("Customer ID: "+c.id);
+                button("Review "+c.name,0,()->showCustomerDetail(c));
+            }
+            catalogPages(offset,rows.size()>8,()->showCustomers(active,search,offset-8),()->showCustomers(active,search,offset+8));back();
+        });
+    }
+    private void showCustomerDetail(CustomerJournal.Customer c){
+        mode="customer-detail";screen(c.name,"Synthetic customer · Revision "+c.revision+" · "+(c.active?"Active":"Archived"));
+        label("Customer ID: "+c.id);label("Contact: "+(c.contact.isEmpty()?"Not recorded":c.contact));
+        button("Edit customer",R.id.cashier_customer_edit,()->showCustomerEditor(c,c.active));
+        button(c.active?"Archive customer":"Restore customer",R.id.cashier_customer_archive,()->showCustomerEditor(c,!c.active));
+        button("Customer revision history",R.id.cashier_customer_history,()->showCustomerHistory(c,0));
+        button("Back to customer list",R.id.cashier_customers,()->showCustomers(c.active,"",0));back();
+    }
+    private void showCustomerEditor(CustomerJournal.Customer c,boolean active){
+        boolean stateChange=c!=null&&c.active!=active;
+        mode="customer-editor";screen(c==null?"New training customer":stateChange?(active?"Restore training customer":"Archive training customer"):"Edit training customer","Original revisions are retained. Use synthetic details only.");
+        String id=c==null?UUID.randomUUID().toString():c.id;
+        EditText name=field("Customer name",R.id.cashier_customer_name,InputType.TYPE_CLASS_TEXT,80,c==null?null:c.name);
+        EditText contact=field("Optional synthetic contact",R.id.cashier_customer_contact,InputType.TYPE_CLASS_TEXT,120,c==null?null:c.contact);
+        if(stateChange){name.setEnabled(false);contact.setEnabled(false);}
+        button("Save customer revision",R.id.cashier_customer_save,()->{
+            String n=text(name),contactValue=text(contact);
+            submit(()->store.saveFixtureCustomer(session(),id,c==null?0:c.revision,n,contactValue,active),v->showCustomerDetail((CustomerJournal.Customer)v));
+        });
+        button("Discard unsaved changes",R.id.cashier_customers,()->showCustomers(c==null||c.active,"",0));back();
+    }
+    private void showCustomerHistory(CustomerJournal.Customer c,int offset){
+        submit(()->store.authorizedFixtureCustomerHistory(session(),c.id,offset,9),v->{
+            @SuppressWarnings("unchecked") List<CustomerJournal.Customer> rows=(List<CustomerJournal.Customer>)v;
+            mode="customer-history";screen("Training customer revision history","Owner-only immutable revisions of "+c.id);
+            for(int i=0;i<Math.min(8,rows.size());i++){
+                CustomerJournal.Customer r=rows.get(i);
+                label("Revision "+r.revision+" · "+r.name+" · "+(r.active?"Active":"Archived"));
+                label("Contact: "+(r.contact.isEmpty()?"Not recorded":r.contact));
+                label("Actor: "+r.actorId+" · "+eventDate(r.recordedMs));
+            }
+            catalogPages(offset,rows.size()>8,()->showCustomerHistory(c,offset-8),()->showCustomerHistory(c,offset+8));
+            button("Back to customer",R.id.cashier_customer_history,()->showCustomerDetail(c));back();
         });
     }
     private void showRecurringDefinitions(int offset){

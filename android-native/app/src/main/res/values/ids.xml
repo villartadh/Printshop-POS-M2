@@ -165,4 +165,15 @@
     <item type="id" name="cashier_recurring_apply"/>
     <item type="id" name="cashier_recurring_cancel_reason"/>
     <item type="id" name="cashier_recurring_cancel"/>
+    <item type="id" name="cashier_customers"/>
+    <item type="id" name="cashier_customer_filter"/>
+    <item type="id" name="cashier_customer_search"/>
+    <item type="id" name="cashier_customer_find"/>
+    <item type="id" name="cashier_customer_new"/>
+    <item type="id" name="cashier_customer_edit"/>
+    <item type="id" name="cashier_customer_archive"/>
+    <item type="id" name="cashier_customer_history"/>
+    <item type="id" name="cashier_customer_name"/>
+    <item type="id" name="cashier_customer_contact"/>
+    <item type="id" name="cashier_customer_save"/>
 </resources>

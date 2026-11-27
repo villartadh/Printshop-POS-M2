@@ -135,3 +135,6 @@ Exact next: implement owner-only definition CRUD/archival (new revision, explici
 
 ### Recurring expense UI (v13)
 Owner-only schedule definitions can be created, revised, archived/reactivated; revisions explicitly supersede prior unpaid dates without moving cash. Due occurrences require reviewed category, exact amount, reason and expected drawer cash, then explicit stage and apply/cancel. Pending linked expenses recover from the cashier dashboard; ordinary drawer history excludes linked occurrences. Dedicated paginated history and report detail preserve the original schedule revision/date/name. Installed smoke requires NATIVE_RECURRING_UI_PASS, not yet executed. Host Java and actual SQLite checks passed; no physical or production acceptance.
+
+### Customer directory (v14)
+An owner-only training directory creates, edits, archives and restores synthetic customer identities with immutable revision history and literal name filtering. Additive v14 migration preserves earlier financial data; no customer balances, checkout links or credit sales are fabricated. Installed smoke requires NATIVE_CUSTOMER_DIRECTORY_PASS; host SQLite tests passed but actual Android acceptance remains pending.
