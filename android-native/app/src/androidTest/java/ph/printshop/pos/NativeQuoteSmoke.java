@@ -92,7 +92,8 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "pricing settings and document quote"; verifyPricingScreen(screen);
             phase = "measured quote"; verifyMeasuredQuote(screen);
             phase = "native cashier training UI"; verifyCashierTrainingScreen(screen);
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_RECURRING_UI_PASS\nNATIVE_CUSTOMER_DIRECTORY_PASS\nNATIVE_CUSTOMER_CHECKOUT_PASS\nNATIVE_CREDIT_COLLECTION_API_PASS\nNATIVE_CREDIT_REPORT_PASS\nNATIVE_CREDIT_CHECKOUT_UI_PASS\nNATIVE_CREDIT_COLLECTION_UI_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\nNATIVE_SAVED_QUOTATION_PASS\nNATIVE_QUOTATION_CASH_CONVERSION_PASS\nNATIVE_QUOTATION_CREDIT_CONVERSION_PASS\nNATIVE_QUOTATION_UI_PASS\nNATIVE_PRODUCTION_JOURNAL_PASS\nNATIVE_PRODUCTION_UI_PASS\nNATIVE_PRODUCTION_POLICY_PASS\nNATIVE_QUOTE_PRODUCTION_PASS\nNATIVE_QUOTE_PRODUCTION_UI_PASS\n");
+            phase = "native receipt PDF"; verifyReceiptPdf();
+            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_RECURRING_UI_PASS\nNATIVE_CUSTOMER_DIRECTORY_PASS\nNATIVE_CUSTOMER_CHECKOUT_PASS\nNATIVE_CREDIT_COLLECTION_API_PASS\nNATIVE_CREDIT_REPORT_PASS\nNATIVE_CREDIT_CHECKOUT_UI_PASS\nNATIVE_CREDIT_COLLECTION_UI_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\nNATIVE_SAVED_QUOTATION_PASS\nNATIVE_QUOTATION_CASH_CONVERSION_PASS\nNATIVE_QUOTATION_CREDIT_CONVERSION_PASS\nNATIVE_QUOTATION_UI_PASS\nNATIVE_PRODUCTION_JOURNAL_PASS\nNATIVE_PRODUCTION_UI_PASS\nNATIVE_PRODUCTION_POLICY_PASS\nNATIVE_QUOTE_PRODUCTION_PASS\nNATIVE_QUOTE_PRODUCTION_UI_PASS\nNATIVE_RECEIPT_PDF_PASS\nNATIVE_RECEIPT_REPRINT_PASS\n");
             result = Activity.RESULT_OK;
         } catch (Throwable error) {
             evidence.putString("stream", failureDetails(phase, error));
@@ -1346,13 +1347,23 @@ public final class NativeQuoteSmoke extends Instrumentation {
         trainingClick(a,R.id.cashier_quote_history);awaitText(a,"Saved training quotations","converted quote recovery");
         trainingSelect(a,"Synthetic UI configured · PHP 21.00 · Credit converted");awaitText(a,"Training quotation · Credit converted","credit quote recovered");
         trainingClick(a,R.id.cashier_quote_receipt);awaitText(a,"Recorded training credit receipt","linked receipt");
-        trainingClick(a,R.id.cashier_return_home);awaitText(a,"Shift open · Expected cash: PHP 5.00","cash effect once");
+        trainingClick(a,R.id.cashier_receipt_print);awaitText(a,"Reprint training receipt","credit reprint");
+        awaitText(a,"Original outstanding: PHP 16.00","original debt in reprint");
+        awaitText(a,ReceiptDocument.NOTICE,"non-tax notice");
+        trainingClick(a,R.id.cashier_back);awaitText(a,"Shift open · Expected cash: PHP 5.00","cash effect once");
         newQuotationUI(a,false);
         trainingClick(a,R.id.cashier_quote_convert);awaitText(a,"Convert training quotation","cash conversion");
         trainingField(a,R.id.cashier_cash,"25.00");trainingClick(a,R.id.cashier_quote_review);
         awaitText(a,"Confirm quotation conversion","cash review");
         trainingClick(a,R.id.cashier_quote_confirm);awaitText(a,"Training quotation · Cash converted","cash link");
         trainingClick(a,R.id.cashier_quote_receipt);awaitText(a,"Recorded training receipt","cash receipt");
+        trainingClick(a,R.id.cashier_receipt_print);awaitText(a,"Reprint training receipt","cash reprint");
+        awaitText(a,"Change: PHP 4.00","original change in reprint");
+        awaitText(a,"REPRINT - ORIGINAL RECORD","reprint notice");
+        trainingClick(a,R.id.cashier_back);awaitText(a,"Shift open · Expected cash: PHP 26.00","cash reprint return");
+        trainingClick(a,R.id.cashier_quote_history);awaitText(a,"Saved training quotations","cash quote recovery");
+        trainingSelect(a,"Synthetic UI configured · PHP 21.00 · Cash converted");awaitText(a,"Training quotation · Cash converted","cash quote recovered");
+        trainingClick(a,R.id.cashier_quote_receipt);awaitText(a,"Recorded training receipt","cash receipt recovered");
         trainingClick(a,R.id.cashier_job_receipt);awaitText(a,"Create training production job","create job screen");
         trainingField(a,R.id.cashier_job_note,"Synthetic print instructions");trainingClick(a,R.id.cashier_job_confirm);
         awaitText(a,"Training job · Pending","job created");
@@ -1379,6 +1390,38 @@ public final class NativeQuoteSmoke extends Instrumentation {
             require(trainingCount(f,"SELECT COUNT(*) FROM production_quote_events")==3,"quotation job UI event count");
             require(trainingCount(f,"SELECT COUNT(*) FROM production_quote_current WHERE effective_status='CANCELLED'")==1,"cancelled quote job count");
             require(trainingCount(f,"SELECT COUNT(*) FROM production_quote_current WHERE receipt_id IS NOT NULL")==1,"converted quote job count");
+        }
+    }
+
+    private void verifyReceiptPdf() throws java.io.IOException{
+        ReceiptDocument doc=ReceiptDocument.credit("synthetic-reference-123456789","Synthetic service with a long historical name","Synthetic customer with a long historical name",12500,2500);
+        for(ReceiptDocument.Paper paper:ReceiptDocument.Paper.values()){
+            ReceiptDocument.Geometry geometry=ReceiptDocument.geometry(paper,30,100);
+            java.io.File file=java.io.File.createTempFile("synthetic-receipt-",".pdf",getTargetContext().getCacheDir());
+            try{
+                int pages;
+                try(java.io.FileOutputStream out=new java.io.FileOutputStream(file)){pages=ReceiptPdf.write(doc,true,geometry,out);}
+                require(file.length()>100&&pages>=1,"PDF content missing");
+                try(android.os.ParcelFileDescriptor fd=android.os.ParcelFileDescriptor.open(file,android.os.ParcelFileDescriptor.MODE_READ_ONLY);
+                    android.graphics.pdf.PdfRenderer renderer=new android.graphics.pdf.PdfRenderer(fd)){
+                    require(renderer.getPageCount()==pages,"PDF page count");
+                    for(int n=0;n<pages;n++){
+                        try(android.graphics.pdf.PdfRenderer.Page page=renderer.openPage(n)){
+                            require(Math.abs(page.getWidth()-geometry.widthMm*72/25.4)<1,"PDF physical width");
+                            require(Math.abs(page.getHeight()-geometry.heightMm*72/25.4)<1,"PDF physical height");
+                            android.graphics.Bitmap bitmap=android.graphics.Bitmap.createBitmap(page.getWidth(),page.getHeight(),android.graphics.Bitmap.Config.ARGB_8888);
+                            try{
+                                bitmap.eraseColor(android.graphics.Color.WHITE);
+                                page.render(bitmap,null,null,android.graphics.pdf.PdfRenderer.Page.RENDER_MODE_FOR_PRINT);
+                                boolean visible=false;
+                                for(int y=0;y<bitmap.getHeight()&&!visible;y++)for(int x=0;x<bitmap.getWidth();x++)
+                                    if(android.graphics.Color.red(bitmap.getPixel(x,y))<128){visible=true;break;}
+                                require(visible,"PDF page blank");
+                            }finally{bitmap.recycle();}
+                        }
+                    }
+                }
+            }finally{require(file.delete(),"synthetic PDF cleanup");}
         }
     }
 
