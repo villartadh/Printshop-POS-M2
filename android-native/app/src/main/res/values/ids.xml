@@ -202,4 +202,15 @@
     <item name="cashier_quote_confirm" type="id"/>
     <item name="cashier_receipt_print" type="id"/>
     <item name="cashier_receipt_paper" type="id"/>
+    <item name="cashier_jobs" type="id"/>
+    <item name="cashier_job_receipt" type="id"/>
+    <item name="cashier_job_note" type="id"/>
+    <item name="cashier_job_confirm" type="id"/>
+    <item name="cashier_job_reload" type="id"/>
+    <item name="cashier_job_release" type="id"/>
+    <item name="cashier_job_history" type="id"/>
+    <item type="id" name="cashier_production_policy"/>
+    <item type="id" name="cashier_production_policy_save"/>
+    <item type="id" name="cashier_quote_jobs"/>
+    <item type="id" name="cashier_quote_job"/>
 </resources>

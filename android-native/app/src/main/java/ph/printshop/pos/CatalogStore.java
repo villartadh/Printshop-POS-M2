@@ -14,7 +14,7 @@ public final class CatalogStore extends SQLiteOpenHelper {
     public CatalogStore(Context context) { this(context, "preview-catalog.db"); }
     CatalogStore(Context context, String filename) { this(context,filename,false); }
     private CatalogStore(Context context,String filename,boolean fixtureCheckoutWrites) {
-        super(context,filename,null,19);this.fixtureCheckoutWrites=fixtureCheckoutWrites;
+        super(context,filename,null,22);this.fixtureCheckoutWrites=fixtureCheckoutWrites;
     }
     /** No production/ordinary preview API can record sales or consume stock through checkout.
      * Only a separately identified synthetic fixture database opts in to transaction experiments.
@@ -69,6 +69,9 @@ public final class CatalogStore extends SQLiteOpenHelper {
         QuotationJournal.upgrade(db);
         QuotationJournal.upgradeConversion(db);
         QuotationJournal.upgradeCreditConversion(db);
+        ProductionJournal.upgrade(db);
+        ProductionPolicy.upgrade(db);
+        QuoteProductionJournal.upgrade(db);
     }
     private static void upgradeCreditSchema(SQLiteDatabase db){
         ReceivableJournal.createCandidate(db); CreditCashJournal.createCandidate(db); CreditCheckoutJournal.createCandidate(db);
@@ -92,7 +95,7 @@ public final class CatalogStore extends SQLiteOpenHelper {
         db.execSQL("CREATE TRIGGER stock_request_resolution BEFORE UPDATE ON stock_requests WHEN OLD.state<>'PENDING' OR NEW.state NOT IN ('APPLIED','CANCELLED') OR NEW.request_id IS NOT OLD.request_id OR NEW.material_id IS NOT OLD.material_id OR NEW.catalog_revision IS NOT OLD.catalog_revision OR NEW.expected_stock_revision IS NOT OLD.expected_stock_revision OR NEW.delta IS NOT OLD.delta OR NEW.reason IS NOT OLD.reason OR NEW.created_ms IS NOT OLD.created_ms OR (NEW.state='APPLIED' AND NOT EXISTS (SELECT 1 FROM stock_movements m WHERE m.request_id=OLD.request_id AND m.material_id=OLD.material_id AND m.catalog_revision=OLD.catalog_revision AND m.stock_revision=OLD.expected_stock_revision+1 AND m.delta=OLD.delta AND m.reason=OLD.reason)) OR (NEW.state='CANCELLED' AND EXISTS (SELECT 1 FROM stock_movements m WHERE m.request_id=OLD.request_id)) BEGIN SELECT RAISE(ABORT,'Invalid stock request transition'); END");
     }
     @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-        if (newVersion == 19 && oldVersion >= 1 && oldVersion <= 18) {
+        if (newVersion == 22 && oldVersion >= 1 && oldVersion <= 21) {
             if (oldVersion < 2) createStockLedger(db);
             if (oldVersion < 3) createRecipeSchema(db);
             if (oldVersion < 4) createPricingSchema(db);
@@ -110,7 +113,10 @@ public final class CatalogStore extends SQLiteOpenHelper {
             if(oldVersion<16) upgradeCreditSchema(db);
             if(oldVersion<17)QuotationJournal.upgrade(db);
             if(oldVersion<18)QuotationJournal.upgradeConversion(db);
-            QuotationJournal.upgradeCreditConversion(db); return;
+            if(oldVersion<19)QuotationJournal.upgradeCreditConversion(db);
+            if(oldVersion<20)ProductionJournal.upgrade(db);
+            if(oldVersion<21)ProductionPolicy.upgrade(db);
+            QuoteProductionJournal.upgrade(db); return;
         }
         throw new IllegalStateException("No migration path; existing catalog preserved");
     }
@@ -458,10 +464,11 @@ public final class CatalogStore extends SQLiteOpenHelper {
         final List<RecipeBinding> bindings;
         final List<CatalogEntry> materials;
         final StockMath.Balance stock;
-        CatalogAdminView(CatalogEntry item,PricingProfile profile,long revision,List<RecipeBinding> bindings,List<CatalogEntry> materials,StockMath.Balance stock){
+        final ProductionPolicy.Setting production;
+        CatalogAdminView(CatalogEntry item,PricingProfile profile,long revision,List<RecipeBinding> bindings,List<CatalogEntry> materials,StockMath.Balance stock,ProductionPolicy.Setting production){
             this.item=item;this.profile=profile;recipeRevision=revision;
             this.bindings=java.util.Collections.unmodifiableList(new ArrayList<>(bindings));
-            this.materials=java.util.Collections.unmodifiableList(new ArrayList<>(materials));this.stock=stock;
+            this.materials=java.util.Collections.unmodifiableList(new ArrayList<>(materials));this.stock=stock;this.production=production;
         }
         long usage(String materialId){
             for(RecipeBinding b:bindings)if(b.materialId.equals(materialId))return b.quantityMilli;
@@ -471,12 +478,15 @@ public final class CatalogStore extends SQLiteOpenHelper {
     CatalogAdminView authorizedFixtureCatalogDetail(String token,String id){
         return fixtureTransaction(db->{
             requireFixtureOwner(db,token);CatalogEntry item=read(db,id);
-            if(item.kind==CatalogEntry.Kind.MATERIAL)return new CatalogAdminView(item,null,0,java.util.Collections.emptyList(),java.util.Collections.emptyList(),stockBalance(db,id));
+            if(item.kind==CatalogEntry.Kind.MATERIAL)return new CatalogAdminView(item,null,0,java.util.Collections.emptyList(),java.util.Collections.emptyList(),stockBalance(db,id),null);
             List<RecipeBinding> bindings=readRecipeBindings(db,id);
             List<CatalogEntry> materials=new ArrayList<>();
             for(RecipeBinding b:bindings)materials.add(read(db,b.materialId));
-            return new CatalogAdminView(item,readPricing(db,id),recipeRevision(db,id),bindings,materials,null);
+            return new CatalogAdminView(item,readPricing(db,id),recipeRevision(db,id),bindings,materials,null,ProductionPolicy.read(db,id));
         });
+    }
+    ProductionPolicy.Setting setAuthorizedFixtureProductionPolicy(String token,String service,long catalogRevision,long prior,boolean enabled){
+        return fixtureTransaction(db->ProductionPolicy.set(db,requireFixtureOwner(db,token),service,catalogRevision,prior,enabled,System.currentTimeMillis()));
     }
     static final class CheckoutSelection {
         final CatalogEntry service;final PricingProfile profile;final long recipeRevision;final boolean hasMaterials;
@@ -564,7 +574,9 @@ public final class CatalogStore extends SQLiteOpenHelper {
             CashierJournal.link(db,staged.id,shift);
             CustomerLinkJournal.link(db,actor,staged.id,q.customer==null?null:new CustomerLinkJournal.Selection(q.customer,q.customerName,q.customerRevision));
             CheckoutJournal.Record applied=applyCheckout(db,staged.id,reviewed.fingerprint());
-            QuotationJournal.linkCash(db,actor,q.id,applied.id,now);return applied;
+            QuotationJournal.linkCash(db,actor,q.id,applied.id,now);
+            if(!QuoteProductionJournal.onConversion(db,actor,q.id,applied.id,System.currentTimeMillis()))
+                ProductionPolicy.onNewSale(db,actor,applied.serviceId,applied.id,System.currentTimeMillis());return applied;
         });
     }
     CreditCheckoutPlan prepareAuthorizedFixtureQuotationCredit(String token,String shift,String quoteId,String checkoutId,long paid){
@@ -599,8 +611,38 @@ public final class CatalogStore extends SQLiteOpenHelper {
             reviewed.requireSameReview(current);
             CreditCheckoutJournal.stage(db,actor,shift,current,now);
             CreditCheckoutJournal.Record applied=CreditCheckoutJournal.resolve(db,actor,current.id,true,null,System.currentTimeMillis());
-            QuotationJournal.linkCredit(db,actor,q.id,applied.id,now);return applied;
+            QuotationJournal.linkCredit(db,actor,q.id,applied.id,now);
+            if(!QuoteProductionJournal.onConversion(db,actor,q.id,applied.id,System.currentTimeMillis()))
+                ProductionPolicy.onNewSale(db,actor,applied.serviceId,applied.id,System.currentTimeMillis());return applied;
         });
+    }
+    QuoteProductionJournal.Job authorizedFixtureQuoteJob(String token,String quote){
+        return fixtureTransaction(db->QuoteProductionJournal.read(db,CashierJournal.requireSession(db,token,System.currentTimeMillis()),quote));
+    }
+    List<QuoteProductionJournal.Job> authorizedFixtureQuoteJobs(String token,int offset){
+        return fixtureTransaction(db->QuoteProductionJournal.page(db,CashierJournal.requireSession(db,token,System.currentTimeMillis()),offset));
+    }
+    List<ProductionJournal.Event> authorizedFixtureQuoteJobHistory(String token,String quote,int offset){
+        return fixtureTransaction(db->QuoteProductionJournal.history(db,CashierJournal.requireSession(db,token,System.currentTimeMillis()),quote,offset));
+    }
+    QuoteProductionJournal.Job appendAuthorizedFixtureQuoteJob(String token,String quote,String event,long prior,ProductionWorkflow.Status status,String note){
+        return fixtureTransaction(db->{long now=System.currentTimeMillis();return QuoteProductionJournal.append(db,CashierJournal.requireSession(db,token,now),quote,event,prior,status,note,now);});
+    }
+    ProductionJournal.Job appendAuthorizedFixtureJob(String token,String receipt,String event,long prior,ProductionWorkflow.Status target,String note){
+        return fixtureTransaction(db->{long now=System.currentTimeMillis();return ProductionJournal.append(db,CashierJournal.requireSession(db,token,now),receipt,event,prior,target,note,now);});
+    }
+    List<ProductionJournal.Job> authorizedFixtureJobs(String token,int offset){
+        return fixtureTransaction(db->ProductionJournal.page(db,CashierJournal.requireSession(db,token,System.currentTimeMillis()),offset));
+    }
+    ProductionJournal.Job findAuthorizedFixtureJob(String token,String receipt){
+        return fixtureTransaction(db->{StockMath.validateRequestId(receipt);return ProductionJournal.read(db,CashierJournal.requireSession(db,token,System.currentTimeMillis()),receipt);});
+    }
+    List<ProductionJournal.Event> authorizedFixtureJobHistory(String token,String receipt,int offset){
+        return fixtureTransaction(db->ProductionJournal.history(db,CashierJournal.requireSession(db,token,System.currentTimeMillis()),receipt,offset));
+    }
+    ProductionJournal.Job authorizedFixtureJob(String token,String receipt){
+        return fixtureTransaction(db->{StockMath.validateRequestId(receipt);ProductionJournal.Job job=ProductionJournal.read(db,CashierJournal.requireSession(db,token,System.currentTimeMillis()),receipt);
+            if(job==null)throw new IllegalStateException("Job unavailable");return job;});
     }
     QuotationJournal.Page authorizedFixtureQuotationHistory(String token,int offset){
         return fixtureTransaction(db->QuotationJournal.page(db,CashierJournal.requireSession(db,token,System.currentTimeMillis()),offset));
@@ -698,7 +740,8 @@ public final class CatalogStore extends SQLiteOpenHelper {
             if(!"PENDING".equals(r.state))throw new IllegalStateException("Credit checkout cancelled");
             CreditCheckoutPlan current=readCreditPlan(db,r.id,r.customerId,r.customerRevision,r.serviceId,r.serviceRevision,r.pricingRevision,r.recipeRevision,r.inputs);
             r.requireIdentity(current.fingerprint);
-            return CreditCheckoutJournal.resolve(db,actor,id,true,null,System.currentTimeMillis());
+            CreditCheckoutJournal.Record applied=CreditCheckoutJournal.resolve(db,actor,id,true,null,System.currentTimeMillis());
+            ProductionPolicy.onNewSale(db,actor,applied.serviceId,applied.id,System.currentTimeMillis());return applied;
         });
     }
     CreditCheckoutJournal.Record cancelAuthorizedFixtureCreditCheckout(String token,String id,String fingerprint,String reason){
@@ -1105,7 +1148,9 @@ public final class CatalogStore extends SQLiteOpenHelper {
                 DrawerJournal.requireNoPending(db,shift.id);
                 ShiftMath.addPayment(CashierJournal.expected(db,shift),r.total);
             }
-            return applyCheckout(db,id,fingerprint);
+            CheckoutJournal.Record applied=applyCheckout(db,id,fingerprint);
+            if("PENDING".equals(r.state))ProductionPolicy.onNewSale(db,p,applied.serviceId,applied.id,System.currentTimeMillis());
+            return applied;
         });
     }
     CheckoutJournal.Record cancelAuthorizedFixtureCheckout(String token,String id,String fingerprint,String reason){
