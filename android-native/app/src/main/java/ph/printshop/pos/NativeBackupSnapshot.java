@@ -4,6 +4,9 @@ import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.util.TreeMap;
+import java.util.Map;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -64,6 +67,43 @@ final class NativeBackupSnapshot {
             if(candidate!=null)SQLiteDatabase.deleteDatabase(candidate);
         }
     }
+    static final class Review {
+        final int schema;
+        final long sales, pendingSales, openShifts, creditSources;
+        Review(int schema,long sales,long pendingSales,long openShifts,long creditSources){
+            this.schema=schema;this.sales=sales;this.pendingSales=pendingSales;this.openShifts=openShifts;this.creditSources=creditSources;
+        }
+    }
+    private static Map<String,String> schema(SQLiteDatabase db){
+        Map<String,String> result=new TreeMap<>();
+        try(Cursor c=db.rawQuery("SELECT type,name,sql FROM sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' AND name<>'android_metadata'",null)){
+            while(c.moveToNext())result.put(c.getString(0)+":"+c.getString(1),c.getString(2));
+        }return result;
+    }
+    /** Read-only candidate inspection; never opens candidate in SQLiteOpenHelper or runs migrations. */
+    static Review review(SQLiteDatabase trusted,File privateDirectory,byte[] archive,char[] password){
+        if(!trusted.inTransaction())throw new IllegalStateException("Backup review requires authorized transaction");
+        File file=null;
+        try(BackupEnvelope.Decoded decoded=BackupEnvelope.open(archive,trusted.getVersion(),password)){
+            if(decoded.schema!=trusted.getVersion())throw new IllegalArgumentException("Older native schema requires isolated migration");
+            file=File.createTempFile("native-backup-review-",".db",privateDirectory);
+            try(FileOutputStream out=new FileOutputStream(file)){out.write(decoded.snapshot);out.getFD().sync();}
+            try(SQLiteDatabase candidate=SQLiteDatabase.openDatabase(file.getPath(),null,SQLiteDatabase.OPEN_READONLY)){
+                if(candidate.getVersion()!=decoded.schema||!schema(trusted).equals(schema(candidate)))throw new IllegalArgumentException("Backup schema does not match this app");
+                validate(candidate);
+                return new Review(decoded.schema,count(candidate,"SELECT COUNT(*) FROM checkout_sales"),
+                    count(candidate,"SELECT COUNT(*) FROM checkout_requests WHERE state='PENDING'")+count(candidate,"SELECT COUNT(*) FROM credit_checkout_requests WHERE state='PENDING'"),
+                    count(candidate,"SELECT COUNT(*) FROM cashier_shifts WHERE state='OPEN'"),count(candidate,"SELECT COUNT(*) FROM credit_receivable_sources"));
+            }
+        }catch(IOException|android.database.sqlite.SQLiteException ex){throw new IllegalArgumentException("Backup candidate is not a valid native database",ex);}
+        finally{if(file!=null)SQLiteDatabase.deleteDatabase(file);}
+    }
+    private static long count(SQLiteDatabase db,String sql){
+        try(Cursor c=db.rawQuery(sql,null)){if(!c.moveToFirst())throw new IllegalStateException("Backup query failed");return c.getLong(0);}
+    }
+    private static void requireNoRows(SQLiteDatabase db,String sql){
+        try(Cursor c=db.rawQuery(sql,null)){if(c.moveToFirst())throw new IllegalStateException("Backup ledger consistency check failed");}
+    }
     private static boolean hasSequence(SQLiteDatabase db){
         try(Cursor c=db.rawQuery("SELECT 1 FROM sqlite_master WHERE name='sqlite_sequence'",null)){return c.moveToFirst();}
     }
@@ -93,6 +133,12 @@ final class NativeBackupSnapshot {
         try(Cursor c=db.rawQuery("PRAGMA foreign_key_check",null)){
             if(c.moveToFirst())throw new IllegalStateException("Backup foreign key check failed");
         }
+        requireNoRows(db,"SELECT 1 FROM checkout_requests r LEFT JOIN checkout_sales s ON s.request_id=r.request_id WHERE (r.state='APPLIED')<>(s.request_id IS NOT NULL) LIMIT 1");
+        requireNoRows(db,"SELECT 1 FROM credit_checkout_requests r LEFT JOIN credit_receivable_sources s ON s.id=r.id WHERE (r.state='APPLIED')<>(s.id IS NOT NULL) LIMIT 1");
+        requireNoRows(db,"SELECT 1 FROM credit_receivable_open WHERE remaining<0 OR remaining>total-paid LIMIT 1");
+        requireNoRows(db,"SELECT 1 FROM cashier_refund_totals WHERE compensated<0 OR compensated>original_paid LIMIT 1");
+        requireNoRows(db,"SELECT 1 FROM cashier_cash_effects_v2 e JOIN cashier_drawer_anchors a ON a.shift_id=e.shift_id WHERE e.before_cash<>COALESCE((SELECT p.after_cash FROM cashier_cash_effects_v2 p WHERE p.shift_id=e.shift_id AND p.event_no<e.event_no ORDER BY p.event_no DESC LIMIT 1),a.baseline_cash) LIMIT 1");
+        requireNoRows(db,"SELECT 1 FROM stock_movements m JOIN stock_movements p ON p.material_id=m.material_id AND p.stock_revision=m.stock_revision-1 WHERE m.before_quantity<>p.after_quantity LIMIT 1");
         try(Cursor c=db.rawQuery("SELECT COUNT(*) FROM cashier_sessions",null)){
             if(!c.moveToFirst()||c.getLong(0)!=0)throw new IllegalStateException("Backup must not contain session tokens");
         }

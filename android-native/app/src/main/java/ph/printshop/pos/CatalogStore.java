@@ -399,6 +399,9 @@ public final class CatalogStore extends SQLiteOpenHelper {
     byte[] encryptedFixtureBackup(String token,char[] password){
         return fixtureTransaction(db->{requireFixtureOwner(db,token);return NativeBackupSnapshot.create(db,backupContext.getCacheDir(),password);});
     }
+    NativeBackupSnapshot.Review reviewEncryptedFixtureBackup(String token,byte[] archive,char[] password){
+        return fixtureTransaction(db->{requireFixtureOwner(db,token);return NativeBackupSnapshot.review(db,backupContext.getCacheDir(),archive,password);});
+    }
     boolean fixtureInitialized(){
         return fixtureTransaction(CashierJournal::initialized);
     }

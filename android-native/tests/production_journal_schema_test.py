@@ -75,6 +75,11 @@ with tempfile.TemporaryDirectory() as temp, closing(sqlite3.connect(str(Path(tem
     check(db.execute("SELECT effective_status,status,payment FROM production_job_current WHERE receipt_id='cash2'").fetchone()==("CANCELLED","PENDING","REFUNDED"),"reversal preserves history and blocks advance")
     reject(db,"UPDATE production_job_events SET note='tampered'")
     reject(db,"DELETE FROM production_job_events")
+    # Restore ledger guards use the actual SQL embedded in the native backup validator.
+    guards=re.findall(r'requireNoRows\(db,"([^"]+)"\);',(root/"NativeBackupSnapshot.java").read_text())
+    check(len(guards)==6,"backup guard count")
+    for guard in guards:
+        check(not db.execute(guard).fetchall(),"valid ledger rejected by backup guard: "+guard)
     db.commit()
     with closing(sqlite3.connect(str(Path(temp)/"jobs.db"))) as reopened:
         check(reopened.execute("SELECT COUNT(*) FROM production_job_events").fetchone()==(13,),"durable events")

@@ -1399,7 +1399,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
         char[] pass="Synthetic-Backup-Owner-01".toCharArray(),backup="Synthetic-Archive-Password-01".toCharArray(),staffPass="Synthetic-Backup-Staff-01".toCharArray();
         java.io.File decoded=java.io.File.createTempFile("synthetic-backup-",".db",context.getCacheDir());
         try(CatalogStore store=CatalogStore.checkoutFixture(context,fixture)){
-            store.enableWriteAheadLogging();
+            store.setWriteAheadLoggingEnabled(true);
             store.bootstrapDemoFixtureOwner("backup-owner",pass);String owner=store.signInFixture("backup-owner",pass);
             store.createFixtureCashier(owner,"backup-staff",staffPass);String staff=store.signInFixture("backup-staff",staffPass);
             rejectStock(()->store.encryptedFixtureBackup(staff,backup));
@@ -1410,6 +1410,15 @@ public final class NativeQuoteSmoke extends Instrumentation {
             CheckoutPlan.Proposal pending=store.prepareCheckout(stockId(),service.id,1,0,0,new CheckoutPlan.Inputs(1,1,1,null,null,null,CheckoutPlan.UsageBasis.NONE,500));
             store.stageAuthorizedFixtureCheckout(owner,shift,pending);
             byte[] archive=store.encryptedFixtureBackup(owner,backup);
+            NativeBackupSnapshot.Review review=store.reviewEncryptedFixtureBackup(owner,archive,backup);
+            require(review.schema==22&&review.sales==1&&review.pendingSales==1&&review.openShifts==1,"backup review totals");
+            rejectStock(()->store.reviewEncryptedFixtureBackup(staff,archive,backup));
+            char[] wrong="Synthetic-Wrong-Archive-Password".toCharArray();
+            try{rejectStock(()->store.reviewEncryptedFixtureBackup(owner,archive,wrong));}finally{java.util.Arrays.fill(wrong,'\0');}
+            byte[] bad=archive.clone();bad[bad.length-1]^=1;
+            rejectStock(()->store.reviewEncryptedFixtureBackup(owner,bad,backup));
+            byte[] malformed=BackupEnvelope.seal(new byte[]{1,2,3},22,backup);
+            rejectStock(()->store.reviewEncryptedFixtureBackup(owner,malformed,backup));
             require(store.expectedFixtureCash(owner,shift)==500,"backup changed source cash");
             require(trainingCount(store,"SELECT COUNT(*) FROM cashier_sessions")>=2,"backup removed source sessions");
             try(BackupEnvelope.Decoded opened=BackupEnvelope.open(archive,22,backup)){
