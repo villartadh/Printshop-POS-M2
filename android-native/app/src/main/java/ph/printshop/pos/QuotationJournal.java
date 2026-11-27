@@ -4,6 +4,9 @@ import android.content.ContentValues;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import java.util.Objects;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Collections;
 
 /** Fixture-only append-only saved quotations and audited cancellation. No financial effects. */
 final class QuotationJournal {
@@ -19,15 +22,34 @@ final class QuotationJournal {
         db.execSQL("CREATE TRIGGER saved_quote_cancel_immutable_update BEFORE UPDATE ON saved_quotation_cancellations BEGIN SELECT RAISE(ABORT,'Quotation cancellation immutable'); END");
         db.execSQL("CREATE TRIGGER saved_quote_cancel_immutable_delete BEFORE DELETE ON saved_quotation_cancellations BEGIN SELECT RAISE(ABORT,'Quotation cancellation immutable'); END");
     }
+    /** Additive v18: one successfully applied full-cash sale per quotation. */
+    static void upgradeConversion(SQLiteDatabase db){
+        db.execSQL("CREATE TABLE saved_quotation_cash_conversions (quotation_id TEXT PRIMARY KEY NOT NULL REFERENCES saved_quotations(id), checkout_id TEXT UNIQUE NOT NULL REFERENCES checkout_sales(request_id), actor_id TEXT NOT NULL REFERENCES cashier_accounts(id), actor_revision INTEGER NOT NULL CHECK(typeof(actor_revision)='integer' AND actor_revision>=1), created_ms INTEGER NOT NULL CHECK(typeof(created_ms)='integer' AND created_ms>=0))");
+        db.execSQL("CREATE TRIGGER saved_quote_cash_conversion_guard BEFORE INSERT ON saved_quotation_cash_conversions WHEN EXISTS(SELECT 1 FROM saved_quotation_cash_conversions WHERE quotation_id=NEW.quotation_id OR checkout_id=NEW.checkout_id) OR EXISTS(SELECT 1 FROM saved_quotation_cancellations WHERE quotation_id=NEW.quotation_id) OR NOT EXISTS(SELECT 1 FROM saved_quotations q JOIN checkout_requests r ON r.request_id=NEW.checkout_id JOIN cashier_shift_checkouts l ON l.request_id=r.request_id JOIN cashier_shifts s ON s.id=l.shift_id JOIN cashier_accounts a ON a.id=NEW.actor_id JOIN cashier_checkout_customers c ON c.request_id=r.request_id WHERE q.id=NEW.quotation_id AND q.convertible=1 AND r.state='APPLIED' AND r.service_id=q.service_id AND r.service_revision=q.service_revision AND r.total=q.total_centavos AND l.operator_id=a.id AND s.state='OPEN' AND a.active=1 AND a.revision=NEW.actor_revision AND (a.id=q.actor_id OR a.role='OWNER') AND c.customer_id IS q.customer_id AND c.customer_revision IS q.customer_revision AND NEW.created_ms>=q.created_ms) BEGIN SELECT RAISE(ABORT,'Invalid quotation conversion'); END");
+        db.execSQL("CREATE TRIGGER saved_quote_cash_conversion_immutable_update BEFORE UPDATE ON saved_quotation_cash_conversions BEGIN SELECT RAISE(ABORT,'Quotation conversion immutable'); END");
+        db.execSQL("CREATE TRIGGER saved_quote_cash_conversion_immutable_delete BEFORE DELETE ON saved_quotation_cash_conversions BEGIN SELECT RAISE(ABORT,'Quotation conversion immutable'); END");
+        db.execSQL("CREATE TRIGGER saved_quote_cancel_after_conversion BEFORE INSERT ON saved_quotation_cancellations WHEN EXISTS(SELECT 1 FROM saved_quotation_cash_conversions WHERE quotation_id=NEW.quotation_id) BEGIN SELECT RAISE(ABORT,'Converted quotation cannot be cancelled'); END");
+    }
+    static void linkCash(SQLiteDatabase db,CashierJournal.Principal actor,String quotation,String checkout,long now){
+        ContentValues v=new ContentValues();v.put("quotation_id",quotation);v.put("checkout_id",checkout);
+        v.put("actor_id",actor.id);v.put("actor_revision",actor.revision);v.put("created_ms",now);
+        db.insertOrThrow("saved_quotation_cash_conversions",null,v);
+    }
     static final class Record{
-        final String id,actor,customer,service,snapshot,cancelActor,cancelReason;
+        final String id,actor,customer,service,snapshot,cancelActor,cancelReason,customerName,cashCheckout;
         final long customerRevision,serviceRevision,total,createdMs;
         final boolean cancelled,stockSufficient,stockPending,convertible;
         Record(Cursor c){
             id=c.getString(0);actor=c.getString(1);customer=c.getString(2);customerRevision=c.isNull(3)?0:c.getLong(3);
             service=c.getString(4);serviceRevision=c.getLong(5);total=c.getLong(6);snapshot=c.getString(7);
             createdMs=c.getLong(8);stockSufficient=c.getInt(9)==1;stockPending=c.getInt(10)==1;convertible=c.getInt(11)==1;
-            cancelActor=c.getString(12);cancelReason=c.getString(13);cancelled=cancelActor!=null;
+            cancelActor=c.getString(12);cancelReason=c.getString(13);cancelled=cancelActor!=null;customerName=c.getString(14);cashCheckout=c.getString(15);
+        }
+        SavedQuotation.Historical historical(){
+            SavedQuotation.Historical h=SavedQuotation.decode(snapshot);
+            if(!id.equals(h.id)||!service.equals(h.serviceId)||serviceRevision!=h.serviceRevision||total!=h.total)
+                throw new IllegalStateException("Quotation snapshot mismatch");
+            return h;
         }
         void verifyReplay(CashierJournal.Principal principal,SavedQuotation quote,CustomerLinkJournal.Selection selected){
             if(!actor.equals(principal.id)||!snapshot.equals(quote.commercialSnapshot())||
@@ -35,10 +57,24 @@ final class QuotationJournal {
                 throw new IllegalStateException("Quotation identity already used");
         }
     }
+    private static final String SELECT="SELECT q.id,q.actor_id,q.customer_id,q.customer_revision,q.service_id,q.service_revision,q.total_centavos,q.snapshot,q.created_ms,q.stock_sufficient,q.stock_pending,q.convertible,x.actor_id,x.reason,c.name,v.checkout_id FROM saved_quotations q LEFT JOIN saved_quotation_cancellations x ON x.quotation_id=q.id LEFT JOIN cashier_customer_versions c ON c.id=q.customer_id AND c.revision=q.customer_revision LEFT JOIN saved_quotation_cash_conversions v ON v.quotation_id=q.id";
     static Record read(SQLiteDatabase db,String id){
-        try(Cursor c=db.rawQuery("SELECT q.id,q.actor_id,q.customer_id,q.customer_revision,q.service_id,q.service_revision,q.total_centavos,q.snapshot,q.created_ms,q.stock_sufficient,q.stock_pending,q.convertible,x.actor_id,x.reason FROM saved_quotations q LEFT JOIN saved_quotation_cancellations x ON x.quotation_id=q.id WHERE q.id=?",new String[]{id})){
+        try(Cursor c=db.rawQuery(SELECT+" WHERE q.id=?",new String[]{id})){
             return c.moveToFirst()?new Record(c):null;
         }
+    }
+    static final class Page{
+        final List<Record> rows;final boolean more;
+        Page(List<Record> rows,boolean more){this.rows=Collections.unmodifiableList(new ArrayList<>(rows));this.more=more;}
+    }
+    static Page page(SQLiteDatabase db,CashierJournal.Principal actor,int offset){
+        TrainingForms.validatePageOffset(offset);
+        boolean owner=actor.role==CashierSecurity.Role.OWNER;
+        String limit=Integer.toString(TrainingForms.PAGE_SIZE+1),start=Integer.toString(offset);
+        List<Record> rows=new ArrayList<>();
+        try(Cursor c=db.rawQuery(SELECT+(owner?"":" WHERE q.actor_id=?")+" ORDER BY q.created_ms DESC,q.id LIMIT ? OFFSET ?",
+            owner?new String[]{limit,start}:new String[]{actor.id,limit,start})){while(c.moveToNext())rows.add(new Record(c));}
+        boolean more=rows.size()>TrainingForms.PAGE_SIZE;if(more)rows.remove(rows.size()-1);return new Page(rows,more);
     }
     static Record save(SQLiteDatabase db,CashierJournal.Principal actor,SavedQuotation quote,CustomerLinkJournal.Selection selected,long now){
         ContentValues v=new ContentValues();v.put("id",quote.id);v.put("actor_id",actor.id);v.put("actor_revision",actor.revision);
@@ -53,6 +89,7 @@ final class QuotationJournal {
     static Record cancel(SQLiteDatabase db,CashierJournal.Principal actor,String id,String rawReason,long now){
         Record r=read(db,id);
         if(r==null||(!r.actor.equals(actor.id)&&actor.role!=CashierSecurity.Role.OWNER))throw new IllegalStateException("Quotation unavailable");
+        if(r.cashCheckout!=null)throw new IllegalStateException("Converted quotation cannot be cancelled");
         String reason=CustomerJournal.text(rawReason,160,true);
         if(r.cancelled){if(!actor.id.equals(r.cancelActor)||!reason.equals(r.cancelReason))throw new IllegalStateException("Quotation already cancelled");return r;}
         ContentValues v=new ContentValues();v.put("quotation_id",id);v.put("actor_id",actor.id);v.put("actor_revision",actor.revision);

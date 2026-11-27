@@ -101,6 +101,63 @@ final class SavedQuotation {
         out.writeBoolean(value!=null);if(value!=null)out.writeUTF(value);
     }
 
+    /** Read-only historical terms; never reconstruct a stock or payment authorization from saved bytes. */
+    static final class HistoricalMaterial {
+        final String id,name,unit;
+        final long revision,perUnitMilli,unitCost,requiredHundredthMilli;
+        HistoricalMaterial(java.io.DataInputStream in)throws java.io.IOException{
+            id=in.readUTF();name=in.readUTF();unit=in.readUTF();revision=in.readLong();
+            perUnitMilli=in.readLong();unitCost=in.readLong();requiredHundredthMilli=in.readLong();
+            StockMath.validateRequestId(id);QuoteMath.total(unitCost,1);
+            if(revision<1||perUnitMilli<1||perUnitMilli>StockMath.MAX||requiredHundredthMilli<1||
+                requiredHundredthMilli>StockMath.MAX*100||name.isEmpty()||unit.isEmpty())throw new IllegalArgumentException("Invalid historical material");
+        }
+    }
+    static final class Historical {
+        final String id,serviceId,serviceName,serviceUnit;
+        final long serviceRevision,pricingRevision,recipeRevision,quantityHundredths,baseRate,rate,total,materialCost;
+        final PricingMath.Method method;
+        final CheckoutPlan.Inputs inputs;
+        final List<HistoricalMaterial> materials;
+        Historical(java.io.DataInputStream in)throws java.io.IOException{
+            if(!"SAVED-QUOTATION-V1".equals(in.readUTF()))throw new IllegalArgumentException("Unsupported quotation snapshot");
+            id=in.readUTF();serviceId=in.readUTF();serviceName=in.readUTF();serviceUnit=in.readUTF();
+            StockMath.validateRequestId(id);StockMath.validateRequestId(serviceId);
+            serviceRevision=in.readLong();pricingRevision=in.readLong();recipeRevision=in.readLong();
+            method=PricingMath.Method.valueOf(in.readUTF());quantityHundredths=in.readLong();baseRate=in.readLong();rate=in.readLong();total=in.readLong();materialCost=in.readLong();
+            QuoteMath.total(baseRate,1);QuoteMath.total(rate,1);
+            if(serviceRevision<1||pricingRevision<0||recipeRevision<0||quantityHundredths<1||
+                quantityHundredths>PricingMath.MAX_QUANTITY_HUNDREDTHS||total<0||materialCost<0||
+                serviceName.isEmpty()||serviceUnit.isEmpty())throw new IllegalArgumentException("Invalid historical quotation");
+            long expected=PricingMath.quote(rate,quantityHundredths,Collections.emptyList()).totalCentavos;
+            if(total!=expected)throw new IllegalArgumentException("Historical quotation amount mismatch");
+            int count=in.readInt(),pages=in.readInt(),copies=in.readInt();
+            String width=readNullable(in),height=readNullable(in),dimension=readNullable(in);
+            inputs=new CheckoutPlan.Inputs(count,pages,copies,width,height,dimension==null?null:PricingMath.DimensionUnit.valueOf(dimension),
+                CheckoutPlan.UsageBasis.valueOf(in.readUTF()),0);
+            int n=in.readInt();if(n<0||n>100)throw new IllegalArgumentException("Invalid historical material count");
+            List<HistoricalMaterial> rows=new ArrayList<>();String last=null;
+            for(int i=0;i<n;i++){HistoricalMaterial m=new HistoricalMaterial(in);
+                if(last!=null&&last.compareTo(m.id)>=0)throw new IllegalArgumentException("Invalid historical material ordering");last=m.id;rows.add(m);}
+            if(in.read()!=-1)throw new IllegalArgumentException("Trailing quotation data");
+            materials=Collections.unmodifiableList(rows);
+        }
+        CheckoutPlan.Inputs withTender(long tender){
+            return new CheckoutPlan.Inputs(inputs.count,inputs.pages,inputs.copies,inputs.width,inputs.height,inputs.dimensionUnit,inputs.basis,tender);
+        }
+    }
+    private static String readNullable(java.io.DataInputStream in)throws java.io.IOException{
+        return in.readBoolean()?in.readUTF():null;
+    }
+    static Historical decode(String encoded){
+        if(encoded==null||encoded.isEmpty()||encoded.length()>250000)throw new IllegalArgumentException("Invalid quotation snapshot");
+        try{
+            byte[] bytes=java.util.Base64.getDecoder().decode(encoded);
+            if(!java.util.Base64.getEncoder().encodeToString(bytes).equals(encoded))throw new IllegalArgumentException("Invalid quotation encoding");
+            try(java.io.DataInputStream in=new java.io.DataInputStream(new java.io.ByteArrayInputStream(bytes))){return new Historical(in);}
+        }catch(java.io.IOException ex){throw new IllegalArgumentException("Invalid quotation snapshot",ex);}
+    }
+
     /** Stock availability/tender may change. Commercial inputs and provenance must not.
      * The checkout writer must independently revalidate its own current full snapshot.
      */

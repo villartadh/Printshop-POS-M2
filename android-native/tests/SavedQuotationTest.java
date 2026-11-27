@@ -42,6 +42,17 @@ public final class SavedQuotationTest {
         SavedQuotation free=SavedQuotation.review(Q,S.edit("Free sample","sq ft","0"),P,0,inputs("2","6",0,CheckoutPlan.UsageBasis.NONE),Collections.emptyList());
         check(free.totalCentavos==0);check(!free.representableForCheckout);
         try{q.materials.clear();throw new AssertionError("mutable");}catch(UnsupportedOperationException expected){checks++;}
+        SavedQuotation.Historical h=SavedQuotation.decode(q.commercialSnapshot());
+        check(h.id.equals(Q)&&h.serviceId.equals(S.id)&&h.total==30000&&h.quantityHundredths==1200);
+        check(h.materials.size()==1&&h.materials.get(0).requiredHundredthMilli==1200000);
+        check(h.withTender(35000).receivedCentavos==35000&&h.inputs.receivedCentavos==0);
+        check(q.commercialSnapshot().equals(pending.commercialSnapshot()));
+        refuse(()->SavedQuotation.decode("not base64"));
+        refuse(()->SavedQuotation.decode(q.commercialSnapshot().substring(0,12)));
+        refuse(()->SavedQuotation.decode(""));
+        byte[] raw=java.util.Base64.getDecoder().decode(q.commercialSnapshot());
+        byte[] trailing=java.util.Arrays.copyOf(raw,raw.length+1);
+        refuse(()->SavedQuotation.decode(java.util.Base64.getEncoder().encodeToString(trailing)));
         System.out.println("SavedQuotation: "+checks+" checks PASS");
     }
 }

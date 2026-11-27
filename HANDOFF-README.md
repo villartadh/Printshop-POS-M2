@@ -189,3 +189,6 @@ PRs #10–#12 are merged to develop after successful exact hosted Windows/Linux/
 
 ## Current continuation — saved quotations v17
 Checkout PR #13 integrated with verified hosted gates. Draft PR #15 is the next critical feature: native immutable saved quotations and conversion. See android-native/QUOTATION_ACCEPTANCE.md and latest DEVELOPMENT_QUEUE.md. Native v17 save/cancel foundation has no financial or inventory effects, not yet usable from UI; implement authenticated history and dedicated atomic conversion linkage before exposure. Tracker #14 covers remaining scope. No production claims.
+
+## Latest quotation continuation — schema v18
+PR #15 now includes historical decode, role-scoped quotation history and atomic full-cash receipt conversion plus unique immutable audit link. Credit conversion and native quotation UI remain missing. Read last DEVELOPMENT_QUEUE.md entry and android-native/QUOTATION_ACCEPTANCE.md; require actual gates before integration. No production promotion.

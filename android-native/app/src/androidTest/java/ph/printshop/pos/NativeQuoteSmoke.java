@@ -68,7 +68,9 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "v14 checkout-customer migration"; verifyCheckoutMigration(14);
             phase = "v15 credit migration"; verifyCheckoutMigration(15);
             phase = "v16 quotation migration"; verifyCheckoutMigration(16);
+            phase = "v17 conversion migration"; verifyCheckoutMigration(17);
             phase = "saved quotation journal"; verifySavedQuotation();
+            phase = "saved quotation cash conversion"; verifyQuotationCashConversion();
             phase = "credit checkout fixture"; verifyCreditCheckout();
             phase = "customer checkout fixture"; verifyCustomerCheckoutLink();
             phase = "durable atomic checkout fixture"; verifyDurableCheckout();
@@ -85,7 +87,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "pricing settings and document quote"; verifyPricingScreen(screen);
             phase = "measured quote"; verifyMeasuredQuote(screen);
             phase = "native cashier training UI"; verifyCashierTrainingScreen(screen);
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_RECURRING_UI_PASS\nNATIVE_CUSTOMER_DIRECTORY_PASS\nNATIVE_CUSTOMER_CHECKOUT_PASS\nNATIVE_CREDIT_COLLECTION_API_PASS\nNATIVE_CREDIT_REPORT_PASS\nNATIVE_CREDIT_CHECKOUT_UI_PASS\nNATIVE_CREDIT_COLLECTION_UI_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\nNATIVE_SAVED_QUOTATION_PASS\n");
+            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_RECURRING_UI_PASS\nNATIVE_CUSTOMER_DIRECTORY_PASS\nNATIVE_CUSTOMER_CHECKOUT_PASS\nNATIVE_CREDIT_COLLECTION_API_PASS\nNATIVE_CREDIT_REPORT_PASS\nNATIVE_CREDIT_CHECKOUT_UI_PASS\nNATIVE_CREDIT_COLLECTION_UI_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\nNATIVE_SAVED_QUOTATION_PASS\nNATIVE_QUOTATION_CASH_CONVERSION_PASS\n");
             result = Activity.RESULT_OK;
         } catch (Throwable error) {
             evidence.putString("stream", failureDetails(phase, error));
@@ -1006,6 +1008,33 @@ public final class NativeQuoteSmoke extends Instrumentation {
             }
         }finally{java.util.Arrays.fill(ownerPass,'\0');java.util.Arrays.fill(staffPass,'\0');context.deleteDatabase(filename);}
     }
+    private void verifyQuotationCashConversion(){
+        android.content.Context context=getTargetContext();String fixture=stockId(),filename="checkout-fixture-"+fixture+".db";
+        char[] pass="Synthetic-Cash-Quote-Owner-01".toCharArray();
+        try(CatalogStore store=CatalogStore.checkoutFixture(context,fixture)){
+            store.bootstrapDemoFixtureOwner("conversion-owner",pass);String owner=store.signInFixture("conversion-owner",pass),shift=stockId();
+            CatalogEntry service=store.createAuthorizedFixtureCatalog(owner,CatalogEntry.Kind.SERVICE,"Synthetic conversion","page","5.00");
+            CatalogStore.CheckoutSelection selection=store.authorizedFixtureCheckoutSelection(owner,service.id,service.revision);
+            SavedQuotation quote=store.prepareAuthorizedFixtureQuotation(owner,stockId(),selection,new CheckoutPlan.Inputs(2,1,1,null,null,null,CheckoutPlan.UsageBasis.NONE,0));
+            store.saveAuthorizedFixtureQuotation(owner,selection,quote,null);
+            require(store.authorizedFixtureQuotationHistory(owner,0).rows.size()==1,"quote history unavailable");
+            require(store.authorizedFixtureQuotation(owner,quote.id).historical().total==1000,"historical decode incorrect");
+            for(int i=0;i<8;i++){SavedQuotation more=store.prepareAuthorizedFixtureQuotation(owner,stockId(),selection,quote.inputs);store.saveAuthorizedFixtureQuotation(owner,selection,more,null);}
+            require(store.authorizedFixtureQuotationHistory(owner,0).rows.size()==8&&store.authorizedFixtureQuotationHistory(owner,0).more,"quote page missing lookahead");
+            require(store.authorizedFixtureQuotationHistory(owner,8).rows.size()==1&&!store.authorizedFixtureQuotationHistory(owner,8).more,"quote last page incorrect");
+            store.openFixtureShift(owner,shift,0);
+            CheckoutPlan.Proposal sale=store.prepareAuthorizedFixtureQuotationCash(owner,shift,quote.id,stockId(),1200);
+            require(sale.totalCentavos==1000&&sale.changeCentavos==200,"conversion cash review wrong");
+            require(store.expectedFixtureCash(owner,shift)==0,"quote review changed cash");
+            store.convertAuthorizedFixtureQuotationCash(owner,shift,quote.id,sale);
+            store.convertAuthorizedFixtureQuotationCash(owner,shift,quote.id,sale);
+            require(store.expectedFixtureCash(owner,shift)==1000&&trainingCount(store,"SELECT COUNT(*) FROM checkout_sales")==1,"conversion replay duplicated sale");
+            require(store.authorizedFixtureQuotation(owner,quote.id).cashCheckout.equals(sale.requestId),"conversion link missing");
+            rejectStock(()->store.cancelAuthorizedFixtureQuotation(owner,quote.id,"already converted"));
+            rejectStock(()->store.prepareAuthorizedFixtureQuotationCash(owner,shift,quote.id,stockId(),1200));
+            require(trainingCount(store,"SELECT COUNT(*) FROM saved_quotation_cash_conversions")==1,"conversion link duplicated");
+        }finally{java.util.Arrays.fill(pass,'\0');context.deleteDatabase(filename);}
+    }
     private void verifyCustomerCheckoutLink(){
         android.content.Context context=getTargetContext();String fixture=stockId(),filename="checkout-fixture-"+fixture+".db";
         char[] ownerPass="Synthetic-Link-Owner-01".toCharArray(),staffPass="Synthetic-Link-Staff-01".toCharArray();
@@ -1369,7 +1398,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 db.setVersion(4);
             }
             try(CatalogStore store=new CatalogStore(context,filename)){
-                require(store.getReadableDatabase().getVersion()==17,"v4-to-v17 migration version wrong");
+                require(store.getReadableDatabase().getVersion()==18,"v4-to-v18 migration version wrong");
                 require(store.stockBalance(material).quantity==1500&&store.stockHistory(material,0,5).size()==1,"v4 stock lost");
                 require(store.recipeBindings(service).get(0).quantityMilli==500&&store.pricing(service).tiers.get(0).rateCentavos==250,"v4 recipe/pricing lost");
                 require(store.pendingStock(material)==null,"unexpected migrated pending request");
@@ -1562,10 +1591,11 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 if(former>=14)CustomerJournal.upgrade(db);
                 if(former>=15)CustomerLinkJournal.upgrade(db);
                 if(former>=16){ReceivableJournal.createCandidate(db);CreditCashJournal.createCandidate(db);CreditCheckoutJournal.createCandidate(db);}
+                if(former>=17)QuotationJournal.upgrade(db);
                 db.setVersion(former);
             }
             try(CatalogStore store=former>=7?CatalogStore.checkoutFixture(context,fixture):new CatalogStore(context,filename)){
-                require(store.getReadableDatabase().getVersion()==17,"v5-v17 migration failed");
+                require(store.getReadableDatabase().getVersion()==18,"v5-v18 migration failed");
                 require(store.stockBalance(material).quantity==1500&&store.stockHistory(material,0,10).size()==1,"v5 stock changed");
                 require(store.pendingStock(material)!=null&&store.pendingStock(material).id.equals(pending),"v5 pending stock lost");
                 require(store.get(material).centavos==199,"v5 catalog changed");
@@ -2481,7 +2511,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             }
             java.util.List<PricingMath.Tier> tiers=java.util.Arrays.asList(new PricingMath.Tier(2000,200),new PricingMath.Tier(1000,250));
             try(CatalogStore store=new CatalogStore(context,filename)){
-                require(store.getReadableDatabase().getVersion()==17,"v3-to-v17 migration version wrong");
+                require(store.getReadableDatabase().getVersion()==18,"v3-to-v18 migration version wrong");
                 require(store.pricing(service).revision==0&&!store.pricing(service).needsAdvancedQuote(),"legacy default changed");
                 require(store.recipeRevision(service)==1&&store.stockBalance(material).quantity==1500,"migration changed recipe or stock");
                 PricingProfile saved=store.savePricing(service,1,0,PricingMath.Method.PER_PAGE,true,tiers);

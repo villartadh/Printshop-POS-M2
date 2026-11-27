@@ -14,7 +14,7 @@ public final class CatalogStore extends SQLiteOpenHelper {
     public CatalogStore(Context context) { this(context, "preview-catalog.db"); }
     CatalogStore(Context context, String filename) { this(context,filename,false); }
     private CatalogStore(Context context,String filename,boolean fixtureCheckoutWrites) {
-        super(context,filename,null,17);this.fixtureCheckoutWrites=fixtureCheckoutWrites;
+        super(context,filename,null,18);this.fixtureCheckoutWrites=fixtureCheckoutWrites;
     }
     /** No production/ordinary preview API can record sales or consume stock through checkout.
      * Only a separately identified synthetic fixture database opts in to transaction experiments.
@@ -67,6 +67,7 @@ public final class CatalogStore extends SQLiteOpenHelper {
         CustomerLinkJournal.upgrade(db);
         upgradeCreditSchema(db);
         QuotationJournal.upgrade(db);
+        QuotationJournal.upgradeConversion(db);
     }
     private static void upgradeCreditSchema(SQLiteDatabase db){
         ReceivableJournal.createCandidate(db); CreditCashJournal.createCandidate(db); CreditCheckoutJournal.createCandidate(db);
@@ -90,7 +91,7 @@ public final class CatalogStore extends SQLiteOpenHelper {
         db.execSQL("CREATE TRIGGER stock_request_resolution BEFORE UPDATE ON stock_requests WHEN OLD.state<>'PENDING' OR NEW.state NOT IN ('APPLIED','CANCELLED') OR NEW.request_id IS NOT OLD.request_id OR NEW.material_id IS NOT OLD.material_id OR NEW.catalog_revision IS NOT OLD.catalog_revision OR NEW.expected_stock_revision IS NOT OLD.expected_stock_revision OR NEW.delta IS NOT OLD.delta OR NEW.reason IS NOT OLD.reason OR NEW.created_ms IS NOT OLD.created_ms OR (NEW.state='APPLIED' AND NOT EXISTS (SELECT 1 FROM stock_movements m WHERE m.request_id=OLD.request_id AND m.material_id=OLD.material_id AND m.catalog_revision=OLD.catalog_revision AND m.stock_revision=OLD.expected_stock_revision+1 AND m.delta=OLD.delta AND m.reason=OLD.reason)) OR (NEW.state='CANCELLED' AND EXISTS (SELECT 1 FROM stock_movements m WHERE m.request_id=OLD.request_id)) BEGIN SELECT RAISE(ABORT,'Invalid stock request transition'); END");
     }
     @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-        if (newVersion == 17 && oldVersion >= 1 && oldVersion <= 16) {
+        if (newVersion == 18 && oldVersion >= 1 && oldVersion <= 17) {
             if (oldVersion < 2) createStockLedger(db);
             if (oldVersion < 3) createRecipeSchema(db);
             if (oldVersion < 4) createPricingSchema(db);
@@ -106,7 +107,8 @@ public final class CatalogStore extends SQLiteOpenHelper {
             if(oldVersion<14) CustomerJournal.upgrade(db);
             if(oldVersion<15) CustomerLinkJournal.upgrade(db);
             if(oldVersion<16) upgradeCreditSchema(db);
-            QuotationJournal.upgrade(db); return;
+            if(oldVersion<17)QuotationJournal.upgrade(db);
+            QuotationJournal.upgradeConversion(db); return;
         }
         throw new IllegalStateException("No migration path; existing catalog preserved");
     }
@@ -509,6 +511,66 @@ public final class CatalogStore extends SQLiteOpenHelper {
             if(!reviewed.commercialSnapshot().equals(current.commercialSnapshot()))throw new IllegalStateException("Quotation changed; review again");
             return QuotationJournal.save(db,actor,current,customer,now);
         });
+    }
+    private static QuotationJournal.Record requireQuotation(SQLiteDatabase db,CashierJournal.Principal actor,String quoteId){
+        StockMath.validateRequestId(quoteId);QuotationJournal.Record q=QuotationJournal.read(db,quoteId);
+        if(q==null||(!actor.id.equals(q.actor)&&actor.role!=CashierSecurity.Role.OWNER))throw new IllegalStateException("Quotation unavailable");
+        return q;
+    }
+    private static SavedQuotation currentQuotationForConversion(SQLiteDatabase db,QuotationJournal.Record q){
+        if(q.cancelled||q.cashCheckout!=null||!q.convertible)throw new IllegalStateException("Quotation cannot be converted");
+        SavedQuotation.Historical h=q.historical();
+        CatalogEntry service=read(db,h.serviceId);PricingProfile profile=readPricing(db,h.serviceId);long recipe=recipeRevision(db,h.serviceId);
+        SavedQuotation current=SavedQuotation.review(q.id,service,profile,recipe,h.inputs,readCheckoutMaterials(db,h.serviceId));
+        if(!q.snapshot.equals(current.commercialSnapshot()))throw new IllegalStateException("Quotation terms changed; save a new quotation");
+        if(q.customer!=null){
+            CustomerJournal.Customer c=CustomerJournal.current(db,q.customer);
+            if(c==null||!c.active||c.revision!=q.customerRevision)throw new IllegalStateException("Quotation customer changed; save a new quotation");
+        }
+        return current;
+    }
+    CheckoutPlan.Proposal prepareAuthorizedFixtureQuotationCash(String token,String shiftId,String quoteId,String checkoutId,long received){
+        return fixtureTransaction(db->{
+            CashierJournal.Principal actor=CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            CashierJournal.requireShift(db,actor,shiftId,true);DrawerJournal.requireNoPending(db,shiftId);
+            QuotationJournal.Record q=requireQuotation(db,actor,quoteId);SavedQuotation current=currentQuotationForConversion(db,q);
+            CheckoutPlan.Proposal sale=readCheckoutPlan(db,checkoutId,current.serviceId,current.serviceRevision,current.pricingRevision,current.recipeRevision,q.historical().withTender(received));
+            current.requireSameCommercialTerms(sale);return sale;
+        });
+    }
+    /** A quotation conversion has no externally visible pending phase: all sale, stock, drawer
+     * and unique conversion-link writes share the existing writer transaction. */
+    CheckoutJournal.Record convertAuthorizedFixtureQuotationCash(String token,String shiftId,String quoteId,CheckoutPlan.Proposal reviewed){
+        return fixtureTransaction(db->{
+            long now=System.currentTimeMillis();CashierJournal.Principal actor=CashierJournal.requireSession(db,token,now);
+            if(reviewed==null)throw new IllegalArgumentException("Review quotation conversion first");
+            QuotationJournal.Record q=requireQuotation(db,actor,quoteId);
+            if(q.cashCheckout!=null){
+                if(!q.cashCheckout.equals(reviewed.requestId))throw new IllegalStateException("Quotation already converted");
+                CheckoutJournal.Record prior=CheckoutJournal.read(db,q.cashCheckout);
+                if(prior==null||!"APPLIED".equals(prior.state))throw new IllegalStateException("Quotation receipt unavailable");
+                CashierJournal.Shift link=CashierJournal.requireCheckoutLink(db,actor,prior.id,false);
+                if(!link.id.equals(shiftId))throw new IllegalStateException("Quotation checkout assigned to another shift");
+                prior.verifyFingerprint(reviewed.fingerprint());return prior;
+            }
+            SavedQuotation current=currentQuotationForConversion(db,q);current.requireSameCommercialTerms(reviewed);
+            if(CheckoutJournal.read(db,reviewed.requestId)!=null||CreditCheckoutJournal.read(db,reviewed.requestId)!=null)
+                throw new IllegalStateException("Checkout identity already used");
+            CashierJournal.Shift shift=CashierJournal.requireShift(db,actor,shiftId,true);DrawerJournal.requireNoPending(db,shift.id);
+            ShiftMath.addPayment(CashierJournal.expected(db,shift),reviewed.totalCentavos);
+            CheckoutJournal.Record staged=stageCheckout(db,reviewed);
+            CashierJournal.link(db,staged.id,shift);
+            CustomerLinkJournal.link(db,actor,staged.id,q.customer==null?null:new CustomerLinkJournal.Selection(q.customer,q.customerName,q.customerRevision));
+            CheckoutJournal.Record applied=applyCheckout(db,staged.id,reviewed.fingerprint());
+            QuotationJournal.linkCash(db,actor,q.id,applied.id,now);return applied;
+        });
+    }
+    QuotationJournal.Page authorizedFixtureQuotationHistory(String token,int offset){
+        return fixtureTransaction(db->QuotationJournal.page(db,CashierJournal.requireSession(db,token,System.currentTimeMillis()),offset));
+    }
+    List<CustomerLinkJournal.Selection> authorizedFixtureQuotationCustomers(String token,String search,int offset,int limit){
+        return fixtureTransaction(db->{CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            return CustomerLinkJournal.list(db,search,offset,limit);});
     }
     QuotationJournal.Record authorizedFixtureQuotation(String token,String id){
         return fixtureTransaction(db->{CashierJournal.Principal actor=CashierJournal.requireSession(db,token,System.currentTimeMillis());
