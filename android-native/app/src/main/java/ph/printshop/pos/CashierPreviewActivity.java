@@ -138,6 +138,9 @@ public final class CashierPreviewActivity extends Activity {
             case "Original receipt changed or amount is invalid; review again":
             case "Authorized original cash receipt unavailable":
             case "Invalid customer details":
+            case "Payment mode and cash amount do not match":return "Partial cash needs a positive amount; unpaid needs PHP 0.00.";
+            case "Partial payment requires customer and positive tender below total":return "Partial cash must be greater than zero and less than the sale total.";
+            case "Credit checkout changed; review again":return "Credit checkout changed. Cancel the saved request or review a new checkout.";
             case "Checkout customer selection changed":
             case "Customer changed; reload":
             case "Invalid expense date":
@@ -291,7 +294,10 @@ public final class CashierPreviewActivity extends Activity {
         final int pending;
         final DrawerJournal.Request pendingDrawer;
         final boolean pendingRefund,pendingRecurring;
-        Dashboard(CashierJournal.Principal a,CashierJournal.Shift s,long e,int p,DrawerJournal.Request drawer,boolean refund,boolean recurring){actor=a;shift=s;expected=e;pending=p;pendingDrawer=drawer;pendingRefund=refund;pendingRecurring=recurring;}
+        final CreditCheckoutJournal.Record pendingCredit;
+        final ReceivableJournal.Record pendingCollection;
+        boolean clear(){return pending==0&&pendingDrawer==null&&pendingCredit==null&&pendingCollection==null;}
+        Dashboard(CashierJournal.Principal a,CashierJournal.Shift s,long e,int p,DrawerJournal.Request drawer,boolean refund,boolean recurring,CreditCheckoutJournal.Record credit,ReceivableJournal.Record collection){actor=a;shift=s;expected=e;pending=p;pendingDrawer=drawer;pendingRefund=refund;pendingRecurring=recurring;pendingCredit=credit;pendingCollection=collection;}
     }
     private Dashboard dashboard(){
         String token=session();CashierJournal.Principal actor=store.fixturePrincipal(token);
@@ -299,7 +305,7 @@ public final class CashierPreviewActivity extends Activity {
         long expected=shift==null?0:store.expectedFixtureCash(token,shift.id);
         int pending=shift==null?0:store.pendingAuthorizedFixtureCheckouts(token,shift.id,50).size();
         DrawerJournal.Request drawer=shift==null?null:store.pendingFixtureDrawer(token,shift.id);
-        return new Dashboard(actor,shift,expected,pending,drawer,drawer!=null&&store.isFixtureRefund(token,drawer.id),drawer!=null&&store.isFixtureRecurring(token,drawer.id));
+        return new Dashboard(actor,shift,expected,pending,drawer,drawer!=null&&store.isFixtureRefund(token,drawer.id),drawer!=null&&store.isFixtureRecurring(token,drawer.id),shift==null?null:store.pendingAuthorizedFixtureCreditCheckout(token,shift.id),shift==null?null:store.pendingAuthorizedFixtureCollection(token,shift.id));
     }
     private void refreshDashboard(){
         submit(this::dashboard,v->showDashboard((Dashboard)v));
@@ -317,16 +323,19 @@ public final class CashierPreviewActivity extends Activity {
             label("Shift open · Expected cash: "+QuoteMath.display(d.expected),18,Color.rgb(27,39,58));
             label(d.pending==0?"No pending training checkouts":"Unresolved training requests: "+d.pending+(d.pending==50?"+":""));
             Button next=button("New training checkout",R.id.cashier_new_checkout,()->showCheckoutChoices(d.shift.id,0));
-            next.setEnabled(d.pending==0&&d.pendingDrawer==null);
+            next.setEnabled(d.clear());
+            if(d.pendingCredit!=null)button("Recover pending credit checkout",R.id.cashier_credit_pending,()->showCreditRecord(d.pendingCredit));
+            if(d.pendingCollection!=null)label("Unresolved training debt collection");
             button("Recover pending checkouts",R.id.cashier_pending,()->showPendingList(d.shift.id));
             if(d.pendingDrawer!=null)label(d.pendingRefund?"Unresolved training refund/void":d.pendingRecurring?"Unresolved training recurring expense":"Unresolved training drawer activity");
             Button drawer=button(d.pendingDrawer==null?"Training drawer activity":d.pendingRefund?"Recover pending refund/void":d.pendingRecurring?"Recover pending recurring expense":"Recover pending drawer activity",R.id.cashier_drawer,()->{
                 if(d.pendingDrawer==null)showDrawerOptions(d);else if(d.pendingRefund)openRefundRecord(d.pendingDrawer.id);else if(d.pendingRecurring)openRecurringRecord(d.pendingDrawer.id);else openDrawerRequest(d.pendingDrawer.id);
             });
-            drawer.setEnabled(d.pending==0);
-            Button close=button("Close training shift",R.id.cashier_close_shift,()->showClose(d));close.setEnabled(d.pending==0&&d.pendingDrawer==null);
+            drawer.setEnabled(d.pending==0&&d.pendingCredit==null&&d.pendingCollection==null);
+            Button close=button("Close training shift",R.id.cashier_close_shift,()->showClose(d));close.setEnabled(d.clear());
         }
         button("Recorded training receipts",R.id.cashier_history,this::showHistory);
+        button("Recorded training credit receipts",R.id.cashier_credit_history,this::showCreditHistory);
         button("Training drawer history",R.id.cashier_drawer_history,()->showDrawerHistory(0));
         button("Change my training passphrase",R.id.cashier_change_pass,()->showCredentialChange(false));
         if(d.actor.role==CashierSecurity.Role.OWNER){
@@ -568,7 +577,7 @@ public final class CashierPreviewActivity extends Activity {
             label("Original paid: "+QuoteMath.display(review.originalPaid));
             label("Previously compensated: "+QuoteMath.display(review.compensated));
             label("Remaining: "+QuoteMath.display(review.remaining()));
-            boolean available=d.shift!=null&&d.pending==0&&d.pendingDrawer==null&&review.remaining()>0;
+            boolean available=d.shift!=null&&d.clear()&&review.remaining()>0;
             if(!available)label("Open your own training shift and resolve pending activity before compensation.");
             if(d.shift!=null)label("Expected current drawer cash: "+QuoteMath.display(d.expected));
             button("Prepare cash refund",R.id.cashier_refund_new,()->showRefundEntry(d,review,RefundJournal.Kind.REFUND)).setEnabled(available);
@@ -719,7 +728,7 @@ public final class CashierPreviewActivity extends Activity {
             label(d.category+" · "+QuoteMath.display(d.amount)+" · "+d.cadence);
             label("First due: "+d.firstDue+" · Next due: "+(d.nextDue==null?"Unavailable":d.nextDue));
             boolean due=d.active&&d.nextDue!=null&&d.nextDue.compareTo(RecurringMath.today(System.currentTimeMillis()))<=0;
-            boolean ready=due&&h.shift!=null&&h.pending==0&&h.pendingDrawer==null;
+            boolean ready=due&&h.shift!=null&&h.clear();
             if(due&&!ready)label("Open your own shift and resolve all pending activity first.");
             button("Prepare due expense",R.id.cashier_recurring_due,()->showRecurringEntry(h,d)).setEnabled(ready);
             button(d.active?"Edit schedule":"Reactivate schedule",R.id.cashier_recurring_edit,()->showRecurringEditor(d,false));
@@ -1114,15 +1123,75 @@ public final class CashierPreviewActivity extends Activity {
             Arrays.asList("Choose usage basis","Per billable unit","Per produced item"),0):null;
         if(selected.hasMaterials&&!profile.needsAdvancedQuote())label("Material usage: per billable unit");
         if(!selected.hasMaterials)label("No material recipe configured");
+        Spinner payment=choices("Payment mode",R.id.cashier_payment_mode,Arrays.asList("Full cash","Partial cash (customer credit)","Unpaid (customer credit)"),0);
+        label("For unpaid credit, enter 0.00; for partial credit, enter only actual cash paid.");
         EditText cash=cashField("Training cash tendered (PHP)",R.id.cashier_cash,null);
         button("Review training checkout",R.id.cashier_review,()->{
             String quantity=text(count),p=text(pages),c=text(copies),w=text(width),h=text(height),amount=text(cash),id=UUID.randomUUID().toString();
             PricingMath.DimensionUnit unit=units==null?null:PricingMath.DimensionUnit.values()[units.getSelectedItemPosition()];
             CheckoutPlan.UsageBasis usage=basis==null?null:CheckoutPlan.UsageBasis.values()[basis.getSelectedItemPosition()];
-            submit(()->store.prepareAuthorizedFixtureCheckout(session(),shift,id,selected,
-                TrainingForms.checkout(profile,selected.hasMaterials,quantity,p,c,w,h,unit,usage,amount)),v->showReview(shift,(CheckoutPlan.Proposal)v));
+            int paymentMode=payment.getSelectedItemPosition();
+            submit(()->{
+                CheckoutPlan.Inputs inputs=TrainingForms.checkout(profile,selected.hasMaterials,quantity,p,c,w,h,unit,usage,amount);
+                if(paymentMode==0)return store.prepareAuthorizedFixtureCheckout(session(),shift,id,selected,inputs);
+                if((paymentMode==1&&inputs.receivedCentavos<=0)||(paymentMode==2&&inputs.receivedCentavos!=0))
+                    throw new IllegalArgumentException("Payment mode and cash amount do not match");
+                return inputs;
+            },v->{if(v instanceof CheckoutPlan.Proposal)showReview(shift,(CheckoutPlan.Proposal)v);
+                else showCreditCustomerSelection(shift,id,selected,(CheckoutPlan.Inputs)v,"",0);});
         });
         button("Reload service selection",R.id.cashier_checkout_choose,()->showCheckoutChoices(shift,0));back();
+    }
+    private void showCreditCustomerSelection(String shift,String id,CatalogStore.CheckoutSelection selected,CheckoutPlan.Inputs inputs,String search,int offset){
+        submit(()->store.authorizedFixtureCheckoutCustomers(session(),shift,search,offset,9),v->{
+            @SuppressWarnings("unchecked") List<CustomerLinkJournal.Selection> rows=(List<CustomerLinkJournal.Selection>)v;
+            mode="credit-customer";screen("Select training credit customer","Credit requires an active named customer. No contact details are displayed.");
+            EditText query=field("Search customer name",R.id.cashier_customer_search,InputType.TYPE_CLASS_TEXT,80,search);
+            button("Search",R.id.cashier_customer_find,()->showCreditCustomerSelection(shift,id,selected,inputs,text(query),0));
+            if(rows.isEmpty())label("No matching active customers");
+            for(int i=0;i<Math.min(8,rows.size());i++){
+                CustomerLinkJournal.Selection c=rows.get(i);
+                label(c.id);button("Select "+c.name,0,()->submit(()->store.prepareAuthorizedFixtureCreditCheckout(session(),shift,id,selected,c,inputs),x->showCreditReview(shift,selected,c,(CreditCheckoutPlan)x)));
+            }
+            catalogPages(offset,rows.size()>8,()->showCreditCustomerSelection(shift,id,selected,inputs,search,offset-8),()->showCreditCustomerSelection(shift,id,selected,inputs,search,offset+8));
+            button("Back to checkout",R.id.cashier_checkout_choose,()->showCheckout(shift,selected));back();
+        });
+    }
+    private void creditAmounts(long total,long paid){
+        label(paid==0?"Payment mode: Unpaid":"Payment mode: Partial cash");
+        label("Total: "+QuoteMath.display(total),20,Color.rgb(27,39,58));
+        label("Cash paid: "+QuoteMath.display(paid));label("Original debt: "+QuoteMath.display(total-paid));label("Change: PHP 0.00");
+    }
+    private void showCreditReview(String shift,CatalogStore.CheckoutSelection selected,CustomerLinkJournal.Selection customer,CreditCheckoutPlan plan){
+        mode="credit-review";screen("Review training credit checkout","No sale, debt, cash or inventory change has been recorded.");
+        label(selected.service.name+" · "+PricingMath.displayQuantity(plan.billableHundredths)+" billable units");checkoutCustomerLabel(customer);
+        creditAmounts(plan.total,plan.paid);
+        for(CheckoutPlan.Consumption m:plan.materials)label("Proposed use: "+StockMath.display(m.quantityMilli)+" "+m.unit+" ("+m.name+")");
+        button("Change customer",R.id.cashier_checkout_customer,()->showCreditCustomerSelection(shift,plan.id,selected,plan.actualInputs,"",0));
+        button("Save pending credit request",R.id.cashier_credit_stage,()->submit(()->store.stageAuthorizedFixtureCreditCheckout(session(),shift,plan),v->showCreditRecord((CreditCheckoutJournal.Record)v)));back();
+    }
+    private void showCreditRecord(CreditCheckoutJournal.Record r){
+        boolean pending="PENDING".equals(r.state),applied="APPLIED".equals(r.state);
+        mode="credit-record";screen(pending?"Pending training credit checkout":applied?"Recorded training credit receipt":"Cancelled training credit checkout",
+            pending?"Review the saved request. Record once or cancel with no financial effect.":"Historical synthetic record only. No tax receipt or physical printing.");
+        label(r.serviceName);label("Customer: "+r.customerName);label("Customer ID: "+r.customerId+" · Revision "+r.customerRevision);
+        creditAmounts(r.total,r.paid);label("Request: "+r.id);
+        for(String material:r.materialDetails)label((applied?"Recorded use: ":"Proposed use: ")+material);
+        if(pending){
+            button("Record synthetic credit checkout",R.id.cashier_credit_record,()->submit(()->store.applyAuthorizedFixtureCreditCheckout(session(),r.id,r.fingerprint),v->showCreditRecord((CreditCheckoutJournal.Record)v)));
+            EditText reason=field("Cancellation reason",R.id.cashier_cancel_reason,InputType.TYPE_CLASS_TEXT,160,null);
+            button("Cancel unrecorded credit request",R.id.cashier_cancel,()->{String note=text(reason);submit(()->store.cancelAuthorizedFixtureCreditCheckout(session(),r.id,r.fingerprint,note),v->showCreditRecord((CreditCheckoutJournal.Record)v));});
+        }else if(r.cancelReason!=null)label("Cancellation: "+r.cancelReason);
+        button("Return to training cashier",R.id.cashier_return_home,this::refreshDashboard);
+    }
+    private void showCreditHistory(){
+        submit(()->store.recentAuthorizedFixtureCreditReceipts(session(),20),v->{
+            mode="credit-history";screen("Recorded training credit receipts","Your most recent synthetic credit transactions.");
+            @SuppressWarnings("unchecked") List<CreditCheckoutJournal.Record> records=(List<CreditCheckoutJournal.Record>)v;
+            if(records.isEmpty())label("No recorded training credit receipts");
+            for(CreditCheckoutJournal.Record r:records)button(r.serviceName+" · "+QuoteMath.display(r.total),0,()->submit(()->store.authorizedFixtureCreditCheckout(session(),r.id),x->showCreditRecord((CreditCheckoutJournal.Record)x)));
+            back();
+        });
     }
     private void showReview(String shift,CheckoutPlan.Proposal plan){showReview(shift,plan,null);}
     private void showReview(String shift,CheckoutPlan.Proposal plan,CustomerLinkJournal.Selection customer){

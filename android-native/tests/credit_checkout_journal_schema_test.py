@@ -119,6 +119,14 @@ with sqlite3.connect(":memory:") as db:
     pages=[db.execute(all_events+order,(0,21)*4+(2,offset)).fetchall() for offset in (0,2,4)]
     check([r for page in pages for r in page]==sorted(rows,key=lambda r:(-r[4],r[0],r[5])),"mixed stable pages")
     check(cash(db,"open")==1700,"report does not alter drawer")
+    # The native recovered receipt uses the historical service/customer/material records.
+    journal_source=(root/"CreditCheckoutJournal.java").read_text()
+    detail_sql=re.search(r'db.rawQuery\("(SELECT r.id,r.customer_id[^"]+)"',journal_source).group(1)
+    material_sql=re.search(r'db.rawQuery\("(SELECT COALESCE\(h.name,m.material_id\)[^"]+)"',journal_source).group(1)
+    receipt=db.execute(detail_sql,("partial",)).fetchone()
+    check(receipt[21:23]==("Synthetic customer","Synthetic print"),"recovered historical customer and service names")
+    check(receipt[10:13]==(500,200,"APPLIED"),"recovered financial snapshot")
+    check(db.execute(material_sql,("partial",)).fetchall()==[("paper",1000,"sheet")],"material snapshot survives lookup")
     close(db,"open",1700,1700)
     check(not db.execute("PRAGMA foreign_key_check").fetchall(),"foreign key integrity")
 print(f"Credit checkout candidate SQLite: {prior.checks-start} checks PASS")

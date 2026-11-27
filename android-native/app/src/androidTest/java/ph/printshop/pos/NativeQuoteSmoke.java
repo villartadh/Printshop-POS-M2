@@ -83,7 +83,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "pricing settings and document quote"; verifyPricingScreen(screen);
             phase = "measured quote"; verifyMeasuredQuote(screen);
             phase = "native cashier training UI"; verifyCashierTrainingScreen(screen);
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_RECURRING_UI_PASS\nNATIVE_CUSTOMER_DIRECTORY_PASS\nNATIVE_CUSTOMER_CHECKOUT_PASS\nNATIVE_CREDIT_COLLECTION_API_PASS\nNATIVE_CREDIT_REPORT_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\n");
+            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_RECURRING_UI_PASS\nNATIVE_CUSTOMER_DIRECTORY_PASS\nNATIVE_CUSTOMER_CHECKOUT_PASS\nNATIVE_CREDIT_COLLECTION_API_PASS\nNATIVE_CREDIT_REPORT_PASS\nNATIVE_CREDIT_CHECKOUT_UI_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\n");
             result = Activity.RESULT_OK;
         } catch (Throwable error) {
             evidence.putString("stream", failureDetails(phase, error));
@@ -365,6 +365,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             verifyRecurringTrainingUI(second,fixtureId,owner,ownerPass);
             verifyCustomerTrainingUI(second,fixtureId,owner,ownerPass);
             verifyCustomerCheckoutUI(second);
+            verifyCreditCheckoutUI(second,fixtureId);
             try(CatalogStore ordinary=new CatalogStore(context)){
                 java.util.List<CatalogEntry> after=ordinary.list(true);
                 require(before.size()==after.size(),"ordinary catalog changed");
@@ -1010,6 +1011,53 @@ public final class NativeQuoteSmoke extends Instrumentation {
         awaitText(activity,"Variance: PHP 0.00","named close variance");
         trainingClick(activity,R.id.cashier_return_home);awaitText(activity,"No open shift","named shift closed");
         trainingClick(activity,R.id.cashier_lock);awaitText(activity,"Training sign in","named cashier signout");
+    }
+
+    private void verifyCreditCheckoutUI(Activity activity,String fixtureId){
+        trainingLogin(activity,"catalog-cashier","Synthetic-Catalog-Cashier-01");awaitText(activity,"No open shift","credit cashier login");
+        trainingField(activity,R.id.cashier_opening,"0.00");trainingClick(activity,R.id.cashier_open_shift);
+        awaitText(activity,"Shift open · Expected cash: PHP 0.00","credit shift");
+        trainingClick(activity,R.id.cashier_new_checkout);awaitText(activity,"Choose training service","credit service");
+        trainingSelect(activity,"Choose Synthetic UI configured");awaitText(activity,"New training checkout","credit checkout");
+        trainingField(activity,R.id.cashier_checkout_pages,"3");trainingField(activity,R.id.cashier_checkout_copies,"2");
+        trainingSpinner(activity,R.id.cashier_checkout_basis,CheckoutPlan.UsageBasis.PRODUCED_ITEM.ordinal());
+        trainingSpinner(activity,R.id.cashier_payment_mode,1);trainingField(activity,R.id.cashier_cash,"5.00");
+        trainingClick(activity,R.id.cashier_review);awaitText(activity,"Select training credit customer","credit picker");
+        trainingSelect(activity,"Select Synthetic Customer Updated");awaitText(activity,"Review training credit checkout","credit review");
+        awaitText(activity,"Original debt: PHP 16.00","credit review debt");
+        trainingClick(activity,R.id.cashier_credit_stage);awaitText(activity,"Pending training credit checkout","credit stage");
+        trainingClick(activity,R.id.cashier_return_home);awaitText(activity,"Recover pending credit checkout","credit recovery entry");
+        trainingClick(activity,R.id.cashier_lock);awaitText(activity,"Training sign in","credit lock");
+        trainingLogin(activity,"catalog-cashier","Synthetic-Catalog-Cashier-01");awaitText(activity,"Recover pending credit checkout","credit recovery login");
+        trainingClick(activity,R.id.cashier_credit_pending);awaitText(activity,"Pending training credit checkout","credit recovered");
+        awaitText(activity,"Customer: Synthetic Customer Updated","credit attribution recovered");
+        trainingClick(activity,R.id.cashier_credit_record);awaitText(activity,"Recorded training credit receipt","credit receipt");
+        awaitText(activity,"Cash paid: PHP 5.00","credit receipt cash");
+        trainingClick(activity,R.id.cashier_return_home);awaitText(activity,"Shift open · Expected cash: PHP 5.00","credit cash only");
+        trainingClick(activity,R.id.cashier_new_checkout);awaitText(activity,"Choose training service","unpaid service");
+        trainingSelect(activity,"Choose Synthetic UI configured");awaitText(activity,"New training checkout","unpaid form");
+        trainingField(activity,R.id.cashier_checkout_pages,"3");trainingField(activity,R.id.cashier_checkout_copies,"2");
+        trainingSpinner(activity,R.id.cashier_checkout_basis,CheckoutPlan.UsageBasis.PRODUCED_ITEM.ordinal());
+        trainingSpinner(activity,R.id.cashier_payment_mode,2);trainingField(activity,R.id.cashier_cash,"0.00");
+        trainingClick(activity,R.id.cashier_review);awaitText(activity,"Select training credit customer","unpaid picker");
+        trainingSelect(activity,"Select Synthetic Customer Updated");awaitText(activity,"Review training credit checkout","unpaid review");
+        awaitText(activity,"Original debt: PHP 21.00","unpaid debt");
+        trainingClick(activity,R.id.cashier_credit_stage);awaitText(activity,"Pending training credit checkout","unpaid pending");
+        trainingField(activity,R.id.cashier_cancel_reason,"Synthetic unpaid cancel");trainingClick(activity,R.id.cashier_cancel);
+        awaitText(activity,"Cancelled training credit checkout","unpaid cancelled");
+        trainingClick(activity,R.id.cashier_return_home);awaitText(activity,"Shift open · Expected cash: PHP 5.00","cancel cash unchanged");
+        trainingClick(activity,R.id.cashier_credit_history);awaitText(activity,"Recorded training credit receipts","credit history");
+        trainingSelect(activity,"Synthetic UI configured · PHP 21.00");awaitText(activity,"Recorded training credit receipt","credit history receipt");
+        trainingClick(activity,R.id.cashier_return_home);awaitText(activity,"Shift open · Expected cash: PHP 5.00","return from history");
+        trainingClick(activity,R.id.cashier_close_shift);awaitText(activity,"Close training shift","credit close");
+        trainingField(activity,R.id.cashier_counted,"5.00");trainingClick(activity,R.id.cashier_confirm_close);
+        awaitText(activity,"Variance: PHP 0.00","credit exact close");
+        trainingClick(activity,R.id.cashier_return_home);awaitText(activity,"No open shift","credit closed");
+        trainingClick(activity,R.id.cashier_lock);awaitText(activity,"Training sign in","credit signout");
+        try(CatalogStore fixture=CatalogStore.checkoutFixture(getTargetContext(),fixtureId)){
+            require(trainingCount(fixture,"SELECT COUNT(*) FROM credit_receivable_sources WHERE total=2100 AND paid=500")==1,"credit UI source");
+            require(trainingCount(fixture,"SELECT COUNT(*) FROM credit_checkout_requests WHERE state='CANCELLED' AND paid=0")==1,"unpaid UI cancel");
+        }
     }
 
     /** Preserve exceptions from the UI thread without terminating instrumentation. */

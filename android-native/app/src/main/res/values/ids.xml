@@ -178,4 +178,9 @@
     <item type="id" name="cashier_customer_save"/>
     <item type="id" name="cashier_checkout_customer"/>
     <item type="id" name="cashier_checkout_customer_clear"/>
+    <item type="id" name="cashier_payment_mode"/>
+    <item type="id" name="cashier_credit_pending"/>
+    <item type="id" name="cashier_credit_history"/>
+    <item type="id" name="cashier_credit_stage"/>
+    <item type="id" name="cashier_credit_record"/>
 </resources>

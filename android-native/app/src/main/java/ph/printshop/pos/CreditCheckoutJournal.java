@@ -37,20 +37,26 @@ final class CreditCheckoutJournal {
         db.execSQL("CREATE TRIGGER credit_pending_blocks_close BEFORE UPDATE ON cashier_shifts WHEN NEW.state='CLOSED' AND EXISTS(SELECT 1 FROM credit_checkout_requests r WHERE r.shift_id=OLD.id AND r.state='PENDING') BEGIN SELECT RAISE(ABORT,'Resolve pending credit checkout first'); END");
     }
     static final class Record {
-        final String id,customerId,shiftId,operatorId,serviceId,fingerprint,state,cancelReason;
+        final String id,customerId,shiftId,operatorId,serviceId,fingerprint,state,cancelReason,customerName,serviceName;
+        final java.util.List<String> materialDetails;
         final long customerRevision,serviceRevision,pricingRevision,recipeRevision,paid,total;
         final CheckoutPlan.Inputs inputs;
-        Record(Cursor c){
+        Record(Cursor c,java.util.List<String> details){
             id=c.getString(0);customerId=c.getString(1);customerRevision=c.getLong(2);shiftId=c.getString(3);operatorId=c.getString(4);
             fingerprint=c.getString(5);serviceId=c.getString(6);serviceRevision=c.getLong(7);pricingRevision=c.getLong(8);recipeRevision=c.getLong(9);
             total=c.getLong(10);paid=c.getLong(11);state=c.getString(12);cancelReason=c.getString(13);String unit=c.getString(19);
+            customerName=c.getString(21);serviceName=c.getString(22);materialDetails=java.util.Collections.unmodifiableList(new java.util.ArrayList<>(details));
             inputs=new CheckoutPlan.Inputs(c.getInt(14),c.getInt(15),c.getInt(16),c.getString(17),c.getString(18),unit==null?null:PricingMath.DimensionUnit.valueOf(unit),CheckoutPlan.UsageBasis.valueOf(c.getString(20)),paid);
         }
         void requireIdentity(String fingerprint){if(!this.fingerprint.equals(fingerprint))throw new IllegalStateException("Credit checkout identity changed");}
     }
     static Record read(SQLiteDatabase db,String id){
-        try(Cursor c=db.rawQuery("SELECT r.id,r.customer_id,r.customer_revision,r.shift_id,r.operator_id,r.fingerprint,r.service_id,r.service_revision,r.pricing_revision,r.recipe_revision,r.total,r.paid,r.state,r.cancel_reason,i.input_count,i.pages,i.copies,i.width,i.height,i.dimension_unit,i.basis FROM credit_checkout_requests r JOIN credit_checkout_inputs i ON i.request_id=r.id WHERE r.id=?",new String[]{id})){
-            return c.moveToFirst()?new Record(c):null;
+        java.util.List<String> details=new java.util.ArrayList<>();
+        try(Cursor c=db.rawQuery("SELECT COALESCE(h.name,m.material_id),m.quantity_milli,m.unit FROM credit_checkout_materials m LEFT JOIN catalog_history h ON h.id=m.material_id AND h.revision=m.catalog_revision WHERE m.request_id=? ORDER BY m.material_id",new String[]{id})){
+            while(c.moveToNext())details.add(StockMath.display(c.getLong(1))+" "+c.getString(2)+" ("+c.getString(0)+")");
+        }
+        try(Cursor c=db.rawQuery("SELECT r.id,r.customer_id,r.customer_revision,r.shift_id,r.operator_id,r.fingerprint,r.service_id,r.service_revision,r.pricing_revision,r.recipe_revision,r.total,r.paid,r.state,r.cancel_reason,i.input_count,i.pages,i.copies,i.width,i.height,i.dimension_unit,i.basis,v.name,COALESCE(h.name,r.service_id) FROM credit_checkout_requests r JOIN credit_checkout_inputs i ON i.request_id=r.id JOIN cashier_customer_versions v ON v.id=r.customer_id AND v.revision=r.customer_revision LEFT JOIN catalog_history h ON h.id=r.service_id AND h.revision=r.service_revision WHERE r.id=?",new String[]{id})){
+            return c.moveToFirst()?new Record(c,details):null;
         }
     }
     static void stage(SQLiteDatabase db,CashierJournal.Principal actor,String shift,CreditCheckoutPlan plan,long now){

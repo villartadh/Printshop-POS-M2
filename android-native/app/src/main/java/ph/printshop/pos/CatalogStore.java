@@ -536,6 +536,17 @@ public final class CatalogStore extends SQLiteOpenHelper {
     CreditCheckoutJournal.Record authorizedFixtureCreditCheckout(String token,String id){
         return fixtureTransaction(db->requireCreditRecord(db,CashierJournal.requireSession(db,token,System.currentTimeMillis()),id));
     }
+    List<CreditCheckoutJournal.Record> recentAuthorizedFixtureCreditReceipts(String token,int limit){
+        return fixtureTransaction(db->{
+            if(limit<1||limit>50)throw new IllegalArgumentException("Invalid receipt limit");
+            CashierJournal.Principal actor=CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            List<CreditCheckoutJournal.Record> records=new ArrayList<>();
+            try(Cursor c=db.rawQuery("SELECT id FROM credit_checkout_requests WHERE operator_id=? AND state='APPLIED' ORDER BY resolved_ms DESC,id LIMIT ?",new String[]{actor.id,Integer.toString(limit)})){
+                while(c.moveToNext())records.add(requireCreditRecord(db,actor,c.getString(0)));
+            }
+            return records;
+        });
+    }
     CreditCheckoutJournal.Record pendingAuthorizedFixtureCreditCheckout(String token,String shift){
         return fixtureTransaction(db->{
             CashierJournal.Principal actor=CashierJournal.requireSession(db,token,System.currentTimeMillis());
