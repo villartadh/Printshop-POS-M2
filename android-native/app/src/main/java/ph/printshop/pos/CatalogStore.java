@@ -8,10 +8,42 @@ import android.database.sqlite.SQLiteOpenHelper;
 import java.util.ArrayList;
 import java.util.List;
 
-/** App-private preview catalog. No cross-platform import or sales. */
+/** App-private preview catalog. Checkout writes are isolated to explicit synthetic fixtures. */
 public final class CatalogStore extends SQLiteOpenHelper {
+    private final boolean fixtureCheckoutWrites;
     public CatalogStore(Context context) { this(context, "preview-catalog.db"); }
-    CatalogStore(Context context, String filename) { super(context, filename, null, 5); }
+    CatalogStore(Context context, String filename) { this(context,filename,false); }
+    private CatalogStore(Context context,String filename,boolean fixtureCheckoutWrites) {
+        super(context,filename,null,16);this.fixtureCheckoutWrites=fixtureCheckoutWrites;
+    }
+    /** No production/ordinary preview API can record sales or consume stock through checkout.
+     * Only a separately identified synthetic fixture database opts in to transaction experiments.
+     */
+    static CatalogStore checkoutFixture(Context context,String fixtureId) {
+        StockMath.validateRequestId(fixtureId);
+        return new CatalogStore(context,"checkout-fixture-"+fixtureId+".db",true);
+    }
+    private void requireCheckoutFixture(){
+        if(!fixtureCheckoutWrites)throw new IllegalStateException("Checkout recording disabled until native authentication and shift acceptance");
+    }
+    /** Called inside the write transaction, so session revocation/initialization cannot race a write. */
+    private CashierJournal.Principal authorizeCatalogWrite(SQLiteDatabase db,String token){
+        if(token!=null)return requireFixtureOwner(db,token);
+        if(CashierJournal.initialized(db))
+            throw new IllegalStateException("Use owner-authorized training administration");
+        return null;
+    }
+    private CashierJournal.Principal requireFixtureOwner(SQLiteDatabase db,String token){
+        requireCheckoutFixture();
+        if(token==null)throw new IllegalStateException("Sign in required");
+        CashierJournal.Principal actor=CashierJournal.requireSession(db,token,System.currentTimeMillis());
+        CashierSecurity.requireOwner(actor.role);return actor;
+    }
+    private String ownerToken(String token){
+        requireCheckoutFixture();
+        if(token==null)throw new IllegalStateException("Sign in required");
+        return token;
+    }
     @Override public void onConfigure(SQLiteDatabase db) {
         super.onConfigure(db);
         db.setForeignKeyConstraintsEnabled(true);
@@ -23,6 +55,20 @@ public final class CatalogStore extends SQLiteOpenHelper {
         createRecipeSchema(db);
         createPricingSchema(db);
         createStockRequests(db);
+        CheckoutJournal.create(db);
+        CashierJournal.create(db);
+        CredentialJournal.upgrade(db);
+        StaffJournal.upgrade(db);
+        AdminJournal.upgrade(db);
+        DrawerJournal.upgrade(db);
+        RefundJournal.upgrade(db);
+        RecurringJournal.upgrade(db);
+        CustomerJournal.upgrade(db);
+        CustomerLinkJournal.upgrade(db);
+        upgradeCreditSchema(db);
+    }
+    private static void upgradeCreditSchema(SQLiteDatabase db){
+        ReceivableJournal.createCandidate(db); CreditCashJournal.createCandidate(db); CreditCheckoutJournal.createCandidate(db);
     }
     private static void createStockLedger(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE stock_movements (request_id TEXT PRIMARY KEY NOT NULL, material_id TEXT NOT NULL REFERENCES catalog(id), catalog_revision INTEGER NOT NULL CHECK(catalog_revision>=1), stock_revision INTEGER NOT NULL CHECK(stock_revision>=1), unit TEXT NOT NULL, reason TEXT NOT NULL, delta INTEGER NOT NULL CHECK(delta BETWEEN -999999999999 AND 999999999999 AND delta<>0), before_quantity INTEGER NOT NULL CHECK(before_quantity BETWEEN 0 AND 999999999999), after_quantity INTEGER NOT NULL CHECK(after_quantity BETWEEN 0 AND 999999999999 AND after_quantity=before_quantity+delta), created_ms INTEGER NOT NULL, UNIQUE(material_id,stock_revision))");
@@ -43,11 +89,22 @@ public final class CatalogStore extends SQLiteOpenHelper {
         db.execSQL("CREATE TRIGGER stock_request_resolution BEFORE UPDATE ON stock_requests WHEN OLD.state<>'PENDING' OR NEW.state NOT IN ('APPLIED','CANCELLED') OR NEW.request_id IS NOT OLD.request_id OR NEW.material_id IS NOT OLD.material_id OR NEW.catalog_revision IS NOT OLD.catalog_revision OR NEW.expected_stock_revision IS NOT OLD.expected_stock_revision OR NEW.delta IS NOT OLD.delta OR NEW.reason IS NOT OLD.reason OR NEW.created_ms IS NOT OLD.created_ms OR (NEW.state='APPLIED' AND NOT EXISTS (SELECT 1 FROM stock_movements m WHERE m.request_id=OLD.request_id AND m.material_id=OLD.material_id AND m.catalog_revision=OLD.catalog_revision AND m.stock_revision=OLD.expected_stock_revision+1 AND m.delta=OLD.delta AND m.reason=OLD.reason)) OR (NEW.state='CANCELLED' AND EXISTS (SELECT 1 FROM stock_movements m WHERE m.request_id=OLD.request_id)) BEGIN SELECT RAISE(ABORT,'Invalid stock request transition'); END");
     }
     @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-        if (newVersion == 5 && oldVersion >= 1 && oldVersion <= 4) {
+        if (newVersion == 16 && oldVersion >= 1 && oldVersion <= 15) {
             if (oldVersion < 2) createStockLedger(db);
             if (oldVersion < 3) createRecipeSchema(db);
             if (oldVersion < 4) createPricingSchema(db);
-            createStockRequests(db); return;
+            if(oldVersion < 5) createStockRequests(db);
+            if(oldVersion<6) CheckoutJournal.create(db);
+            if(oldVersion<7) CashierJournal.create(db);
+            if(oldVersion<8) CredentialJournal.upgrade(db);
+            if(oldVersion<9) StaffJournal.upgrade(db);
+            if(oldVersion<10) AdminJournal.upgrade(db);
+            if(oldVersion<11) DrawerJournal.upgrade(db);
+            if(oldVersion<12) RefundJournal.upgrade(db);
+            if(oldVersion<13) RecurringJournal.upgrade(db);
+            if(oldVersion<14) CustomerJournal.upgrade(db);
+            if(oldVersion<15) CustomerLinkJournal.upgrade(db);
+            upgradeCreditSchema(db); return;
         }
         throw new IllegalStateException("No migration path; existing catalog preserved");
     }
@@ -73,11 +130,20 @@ public final class CatalogStore extends SQLiteOpenHelper {
     }
     public PricingProfile savePricing(String serviceId,long serviceRevision,long expectedPricingRevision,
                                       PricingMath.Method method,boolean pagesAndCopies,List<PricingMath.Tier> tiers) {
+        return savePricing(null,serviceId,serviceRevision,expectedPricingRevision,method,pagesAndCopies,tiers);
+    }
+    PricingProfile saveAuthorizedFixturePricing(String token,String serviceId,long serviceRevision,long expectedPricingRevision,
+                                      PricingMath.Method method,boolean pagesAndCopies,List<PricingMath.Tier> tiers) {
+        return savePricing(ownerToken(token),serviceId,serviceRevision,expectedPricingRevision,method,pagesAndCopies,tiers);
+    }
+    private PricingProfile savePricing(String token,String serviceId,long serviceRevision,long expectedPricingRevision,
+                                      PricingMath.Method method,boolean pagesAndCopies,List<PricingMath.Tier> tiers) {
         PricingProfile next=new PricingProfile(Math.addExact(expectedPricingRevision,1),method,pagesAndCopies,tiers);
         if(expectedPricingRevision<0)throw new IllegalArgumentException("Invalid expected pricing revision");
         SQLiteDatabase db=getWritableDatabase();
         db.beginTransaction();
         try {
+            CashierJournal.Principal actor=authorizeCatalogWrite(db,token);
             CatalogEntry service=read(db,serviceId);
             if(service.kind!=CatalogEntry.Kind.SERVICE||service.archived)throw new IllegalStateException("Select an active service");
             PricingProfile prior=readPricing(db,serviceId);
@@ -96,31 +162,66 @@ public final class CatalogStore extends SQLiteOpenHelper {
                 row.put("threshold_hundredths",tier.minQuantityHundredths);row.put("rate_centavos",tier.rateCentavos);
                 db.insertOrThrow("pricing_tier_versions",null,row);
             }
+            AdminJournal.append(db,actor,"PRICING_SAVE",serviceId,next.revision,null);
             db.setTransactionSuccessful();return next;
         } finally {db.endTransaction();}
     }
     public CatalogEntry create(CatalogEntry.Kind kind, String name, String unit, String price) {
-        CatalogEntry entry = CatalogEntry.create(kind, name, unit, price);
+        return create(null,kind,name,unit,price);
+    }
+    CatalogEntry createAuthorizedFixtureCatalog(String token,CatalogEntry.Kind kind, String name, String unit, String price) {
+        return create(ownerToken(token),kind,name,unit,price);
+    }
+    private CatalogEntry create(String token,CatalogEntry.Kind kind, String name, String unit, String price) {
+        return create(token,CatalogEntry.create(kind,name,unit,price),false);
+    }
+    /** One stable identity per native creation form; exact replay never creates a second item. */
+    CatalogEntry createAuthorizedFixtureCatalog(String token,String id,CatalogEntry.Kind kind,String name,String unit,String price){
+        return create(ownerToken(token),new CatalogEntry(id,kind,name,unit,QuoteMath.parseCentavos(price),1,false),true);
+    }
+    private CatalogEntry create(String token,CatalogEntry entry,boolean replay){
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
         try {
+            CashierJournal.Principal actor=authorizeCatalogWrite(db,token);
+            if(replay){
+                try(Cursor c=db.query("catalog",null,"id=?",new String[]{entry.id},null,null,null)){
+                    if(c.moveToFirst()){
+                        CatalogEntry existing=entry(c);
+                        boolean exact=existing.revision==1&&!existing.archived&&existing.kind==entry.kind&&
+                            existing.name.equals(entry.name)&&existing.unit.equals(entry.unit)&&existing.centavos==entry.centavos;
+                        try(Cursor audit=db.rawQuery("SELECT 1 FROM cashier_admin_events WHERE action='CATALOG_CREATE' AND subject_id=? AND revision=1 AND actor_id=?",new String[]{entry.id,actor.id})){
+                            if(!exact||!audit.moveToFirst())throw new IllegalStateException("Creation already recorded or changed; reload catalog");
+                        }
+                        db.setTransactionSuccessful();return existing;
+                    }
+                }
+            }
             db.insertOrThrow("catalog", null, values(entry));
             history(db, entry, "CREATE");
+            AdminJournal.append(db,actor,"CATALOG_CREATE",entry.id,entry.revision,null);
             db.setTransactionSuccessful();
             return entry;
         } finally { db.endTransaction(); }
     }
     public CatalogEntry edit(String id, long expectedRevision, String name, String unit, String price) {
-        return mutate(id, expectedRevision, current -> current.edit(name, unit, price), "EDIT");
+        return mutate(null,id, expectedRevision, current -> current.edit(name, unit, price), "EDIT");
+    }
+    CatalogEntry editAuthorizedFixtureCatalog(String token,String id,long expectedRevision,String name,String unit,String price){
+        return mutate(ownerToken(token),id,expectedRevision,current->current.edit(name,unit,price),"EDIT");
     }
     public CatalogEntry archive(String id, long expectedRevision, boolean archived) {
-        return mutate(id, expectedRevision, current -> current.archive(archived), archived ? "ARCHIVE" : "RESTORE");
+        return mutate(null,id, expectedRevision, current -> current.archive(archived), archived ? "ARCHIVE" : "RESTORE");
+    }
+    CatalogEntry archiveAuthorizedFixtureCatalog(String token,String id,long expectedRevision,boolean archived){
+        return mutate(ownerToken(token),id,expectedRevision,current->current.archive(archived),archived?"ARCHIVE":"RESTORE");
     }
     private interface Change { CatalogEntry apply(CatalogEntry current); }
-    private CatalogEntry mutate(String id, long expectedRevision, Change change, String action) {
+    private CatalogEntry mutate(String token,String id, long expectedRevision, Change change, String action) {
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
         try {
+            CashierJournal.Principal actor=authorizeCatalogWrite(db,token);
             CatalogEntry current = read(db, id);
             if (current.revision != expectedRevision) throw new IllegalStateException("Catalog entry changed; reload before editing");
             CatalogEntry next = change.apply(current);
@@ -138,6 +239,7 @@ public final class CatalogStore extends SQLiteOpenHelper {
             int rows = db.update("catalog", values(next), "id=? AND revision=?", new String[]{id, Long.toString(expectedRevision)});
             if (rows != 1) throw new IllegalStateException("Catalog entry changed; reload before editing");
             history(db, next, action);
+            AdminJournal.append(db,actor,"CATALOG_"+action,next.id,next.revision,null);
             db.setTransactionSuccessful();
             return next;
         } finally { db.endTransaction(); }
@@ -157,10 +259,17 @@ public final class CatalogStore extends SQLiteOpenHelper {
         return recipeRevision(db,serviceId);
     }
     public long setMaterialUsage(String serviceId,long serviceRevision,String materialId,long materialRevision,long expectedRecipeRevision,long quantityMilli) {
+        return setMaterialUsage(null,serviceId,serviceRevision,materialId,materialRevision,expectedRecipeRevision,quantityMilli);
+    }
+    long setAuthorizedFixtureMaterialUsage(String token,String serviceId,long serviceRevision,String materialId,long materialRevision,long expectedRecipeRevision,long quantityMilli) {
+        return setMaterialUsage(ownerToken(token),serviceId,serviceRevision,materialId,materialRevision,expectedRecipeRevision,quantityMilli);
+    }
+    private long setMaterialUsage(String token,String serviceId,long serviceRevision,String materialId,long materialRevision,long expectedRecipeRevision,long quantityMilli) {
         if(quantityMilli<0||quantityMilli>StockMath.MAX)throw new IllegalArgumentException("Invalid recipe quantity");
         SQLiteDatabase db=getWritableDatabase();
         db.beginTransaction();
         try {
+            CashierJournal.Principal actor=authorizeCatalogWrite(db,token);
             CatalogEntry service=read(db,serviceId), material=read(db,materialId);
             if(service.kind!=CatalogEntry.Kind.SERVICE||material.kind!=CatalogEntry.Kind.MATERIAL||service.archived||material.archived)
                 throw new IllegalStateException("Only active services and materials may be linked");
@@ -190,6 +299,7 @@ public final class CatalogStore extends SQLiteOpenHelper {
             log.put("service_id",serviceId);log.put("material_id",materialId);log.put("revision",revision);log.put("quantity_milli",quantityMilli);log.put("unit",material.unit);
             log.put("material_revision",materialRevision);log.put("service_revision",serviceRevision);log.put("created_ms",System.currentTimeMillis());
             db.insertOrThrow("recipe_history",null,log);
+            AdminJournal.append(db,actor,"RECIPE_SAVE",serviceId,revision,null);
             db.setTransactionSuccessful();return revision;
         } finally {db.endTransaction();}
     }
@@ -201,6 +311,9 @@ public final class CatalogStore extends SQLiteOpenHelper {
     public List<RecipeBinding> recipeBindings(String serviceId) {
         SQLiteDatabase db=getReadableDatabase();
         if(read(db,serviceId).kind!=CatalogEntry.Kind.SERVICE)throw new IllegalArgumentException("Not a service");
+        return readRecipeBindings(db,serviceId);
+    }
+    private static List<RecipeBinding> readRecipeBindings(SQLiteDatabase db,String serviceId){
         List<RecipeBinding> result=new ArrayList<>();
         try(Cursor c=db.query("service_materials",new String[]{"material_id","unit","quantity_milli"},"service_id=?",new String[]{serviceId},null,null,"material_id")){
             while(c.moveToNext())result.add(new RecipeBinding(c.getString(0),c.getString(1),c.getLong(2)));
@@ -230,6 +343,655 @@ public final class CatalogStore extends SQLiteOpenHelper {
             db.setTransactionSuccessful();return result;
         } finally {db.endTransaction();}
     }
+    /** Read-only confirmation plan from one consistent database snapshot. */
+    public CheckoutPlan.Proposal prepareCheckout(String requestId,String serviceId,long expectedServiceRevision,
+                                                  long expectedPricingRevision,long expectedRecipeRevision,
+                                                  CheckoutPlan.Inputs inputs) {
+        SQLiteDatabase db=getWritableDatabase();
+        db.beginTransactionNonExclusive();
+        try {
+            CheckoutPlan.Proposal p=readCheckoutPlan(db,requestId,serviceId,expectedServiceRevision,expectedPricingRevision,expectedRecipeRevision,inputs);
+            db.setTransactionSuccessful();return p;
+        }finally{db.endTransaction();}
+    }
+    private static CheckoutPlan.Proposal readCheckoutPlan(SQLiteDatabase db,String requestId,String serviceId,
+                             long expectedServiceRevision,long expectedPricingRevision,long expectedRecipeRevision,CheckoutPlan.Inputs inputs){
+        CatalogEntry service=read(db,serviceId);
+        if(service.kind!=CatalogEntry.Kind.SERVICE||service.archived)throw new IllegalArgumentException("Select an active service");
+        PricingProfile profile=readPricing(db,serviceId);
+        long recipe=recipeRevision(db,serviceId);
+        if(service.revision!=expectedServiceRevision||profile.revision!=expectedPricingRevision||recipe!=expectedRecipeRevision)
+            throw new IllegalStateException("Service, pricing or recipe changed; review a fresh quotation");
+        return CheckoutPlan.prepare(requestId,service,profile,recipe,inputs,readCheckoutMaterials(db,serviceId));
+    }
+    private static List<CheckoutPlan.Material> readCheckoutMaterials(SQLiteDatabase db,String serviceId){
+        List<CheckoutPlan.Material> materials=new ArrayList<>();
+        try(Cursor c=db.query("service_materials",new String[]{"material_id","quantity_milli","unit"},
+                              "service_id=?",new String[]{serviceId},null,null,"material_id")){
+            while(c.moveToNext()){
+                CatalogEntry material=read(db,c.getString(0));
+                if(!material.unit.equals(c.getString(2)))throw new IllegalStateException("Recipe unit changed; review before checkout");
+                StockMath.Balance balance=stockBalance(db,material.id);
+                materials.add(new CheckoutPlan.Material(material,c.getLong(1),balance.revision,balance.quantity,pendingStock(db,material.id)!=null));
+            }
+        }
+        return materials;
+    }
+    private interface FixtureAction<T>{T run(SQLiteDatabase db);}
+    private <T> T fixtureTransaction(FixtureAction<T> action){
+        requireCheckoutFixture();SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
+        try{T result=action.run(db);db.setTransactionSuccessful();return result;}
+        finally{db.endTransaction();}
+    }
+    boolean fixtureInitialized(){
+        return fixtureTransaction(CashierJournal::initialized);
+    }
+    /** UI training setup: create the owner and deterministic-scope demonstration records together.
+     * The fixture database must be empty; never import or overwrite ordinary preview catalog data.
+     */
+    void bootstrapDemoFixtureOwner(String username,char[] password){
+        fixtureTransaction(db->{
+            try(Cursor c=db.rawQuery("SELECT COUNT(*) FROM catalog",null)){
+                if(!c.moveToFirst()||c.getLong(0)!=0)throw new IllegalStateException("Training catalog must be empty");
+            }
+            CashierJournal.bootstrap(db,username,password,System.currentTimeMillis());
+            CatalogEntry service=CatalogEntry.create(CatalogEntry.Kind.SERVICE,"Training document print","page","2.50");
+            CatalogEntry paper=CatalogEntry.create(CatalogEntry.Kind.MATERIAL,"Training paper","sheet","1.00");
+            db.insertOrThrow("catalog",null,values(service));history(db,service,"CREATE");
+            db.insertOrThrow("catalog",null,values(paper));history(db,paper,"CREATE");
+            appendMovement(db,java.util.UUID.randomUUID().toString(),paper.id,1,0,50000,"Synthetic training initial stock");
+            ContentValues binding=new ContentValues();binding.put("service_id",service.id);binding.put("material_id",paper.id);
+            binding.put("quantity_milli",1000L);binding.put("unit",paper.unit);db.insertOrThrow("service_materials",null,binding);
+            ContentValues audit=new ContentValues();audit.put("service_id",service.id);audit.put("revision",1L);audit.put("material_id",paper.id);
+            audit.put("quantity_milli",1000L);audit.put("unit",paper.unit);audit.put("material_revision",1L);audit.put("service_revision",1L);
+            audit.put("created_ms",System.currentTimeMillis());db.insertOrThrow("recipe_history",null,audit);
+            return null;
+        });
+    }
+    private static CatalogEntry demoService(SQLiteDatabase db){
+        try(Cursor c=db.query("catalog",null,"kind='SERVICE' AND archived=0 AND name='Training document print'",null,null,null,"id")){
+            if(!c.moveToFirst())throw new IllegalStateException("Training service unavailable");
+            CatalogEntry service=entry(c);
+            if(c.moveToNext())throw new IllegalStateException("Training service ambiguous");
+            return service;
+        }
+    }
+    /** Bounded, deterministic catalog browsing; no unrestricted catalog reads from training UI. */
+    static final class CatalogPage {
+        final List<CatalogEntry> entries;
+        final boolean more;
+        CatalogPage(List<CatalogEntry> entries,boolean more){
+            this.entries=java.util.Collections.unmodifiableList(new ArrayList<>(entries));this.more=more;
+        }
+    }
+    private static CatalogPage catalogPage(SQLiteDatabase db,CatalogEntry.Kind kind,boolean archived,int offset){
+        TrainingForms.validatePageOffset(offset);
+        if(kind==null)throw new IllegalArgumentException("Select a catalog kind");
+        List<CatalogEntry> entries=new ArrayList<>();
+        try(Cursor c=db.rawQuery("SELECT * FROM catalog WHERE kind=? AND archived=? ORDER BY name COLLATE NOCASE,id LIMIT ? OFFSET ?",
+            new String[]{kind.name(),archived?"1":"0",Integer.toString(TrainingForms.PAGE_SIZE+1),Integer.toString(offset)})){
+            while(c.moveToNext())entries.add(entry(c));
+        }
+        boolean more=entries.size()>TrainingForms.PAGE_SIZE;
+        if(more)entries.remove(entries.size()-1);
+        return new CatalogPage(entries,more);
+    }
+    CatalogPage authorizedFixtureOwnerCatalog(String token,CatalogEntry.Kind kind,boolean archived,int offset){
+        return fixtureTransaction(db->{requireFixtureOwner(db,token);return catalogPage(db,kind,archived,offset);});
+    }
+    CatalogPage authorizedFixtureCheckoutServices(String token,int offset){
+        return fixtureTransaction(db->{
+            CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            return catalogPage(db,CatalogEntry.Kind.SERVICE,false,offset);
+        });
+    }
+    static final class CatalogAdminView {
+        final CatalogEntry item;
+        final PricingProfile profile;
+        final long recipeRevision;
+        final List<RecipeBinding> bindings;
+        final List<CatalogEntry> materials;
+        final StockMath.Balance stock;
+        CatalogAdminView(CatalogEntry item,PricingProfile profile,long revision,List<RecipeBinding> bindings,List<CatalogEntry> materials,StockMath.Balance stock){
+            this.item=item;this.profile=profile;recipeRevision=revision;
+            this.bindings=java.util.Collections.unmodifiableList(new ArrayList<>(bindings));
+            this.materials=java.util.Collections.unmodifiableList(new ArrayList<>(materials));this.stock=stock;
+        }
+        long usage(String materialId){
+            for(RecipeBinding b:bindings)if(b.materialId.equals(materialId))return b.quantityMilli;
+            return 0;
+        }
+    }
+    CatalogAdminView authorizedFixtureCatalogDetail(String token,String id){
+        return fixtureTransaction(db->{
+            requireFixtureOwner(db,token);CatalogEntry item=read(db,id);
+            if(item.kind==CatalogEntry.Kind.MATERIAL)return new CatalogAdminView(item,null,0,java.util.Collections.emptyList(),java.util.Collections.emptyList(),stockBalance(db,id));
+            List<RecipeBinding> bindings=readRecipeBindings(db,id);
+            List<CatalogEntry> materials=new ArrayList<>();
+            for(RecipeBinding b:bindings)materials.add(read(db,b.materialId));
+            return new CatalogAdminView(item,readPricing(db,id),recipeRevision(db,id),bindings,materials,null);
+        });
+    }
+    static final class CheckoutSelection {
+        final CatalogEntry service;final PricingProfile profile;final long recipeRevision;final boolean hasMaterials;
+        CheckoutSelection(CatalogEntry service,PricingProfile profile,long revision,boolean hasMaterials){
+            this.service=service;this.profile=profile;recipeRevision=revision;this.hasMaterials=hasMaterials;
+        }
+    }
+    CheckoutSelection authorizedFixtureCheckoutSelection(String token,String id,long expectedRevision){
+        return fixtureTransaction(db->{
+            CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            CatalogEntry service=read(db,id);
+            if(service.kind!=CatalogEntry.Kind.SERVICE||service.archived||service.revision!=expectedRevision)
+                throw new IllegalStateException("Service changed; reload and select again");
+            return new CheckoutSelection(service,readPricing(db,id),recipeRevision(db,id),!readRecipeBindings(db,id).isEmpty());
+        });
+    }
+    CheckoutPlan.Proposal prepareAuthorizedFixtureCheckout(String token,String shiftId,String requestId,CheckoutSelection selected,CheckoutPlan.Inputs inputs){
+        return fixtureTransaction(db->{
+            CashierJournal.Principal actor=CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            CashierJournal.requireShift(db,actor,shiftId,true);
+            DrawerJournal.requireNoPending(db,shiftId);
+            if(selected==null)throw new IllegalArgumentException("Select an active service");
+            return readCheckoutPlan(db,requestId,selected.service.id,selected.service.revision,selected.profile.revision,selected.recipeRevision,inputs);
+        });
+    }
+    private static CreditCheckoutPlan readCreditPlan(SQLiteDatabase db,String id,String customerId,long customerRevision,String serviceId,long serviceRevision,long pricingRevision,long expectedRecipe,CheckoutPlan.Inputs inputs){
+        CustomerJournal.Customer customer=CustomerJournal.current(db,customerId);
+        if(customer==null||!customer.active||customer.revision!=customerRevision)throw new IllegalStateException("Customer changed; review again");
+        CatalogEntry service=read(db,serviceId);PricingProfile profile=readPricing(db,serviceId);long recipe=recipeRevision(db,serviceId);
+        if(service.kind!=CatalogEntry.Kind.SERVICE||service.archived||service.revision!=serviceRevision||profile.revision!=pricingRevision||recipe!=expectedRecipe)
+            throw new IllegalStateException("Service changed; review again");
+        return CreditCheckoutPlan.prepare(id,customerId,customerRevision,inputs.receivedCentavos==0?ReceivableMath.Mode.UNPAID:ReceivableMath.Mode.PARTIAL_CASH,service,profile,recipe,inputs,readCheckoutMaterials(db,serviceId));
+    }
+    CreditCheckoutPlan prepareAuthorizedFixtureCreditCheckout(String token,String shift,String id,CheckoutSelection selected,CustomerLinkJournal.Selection customer,CheckoutPlan.Inputs inputs){
+        return fixtureTransaction(db->{
+            CashierJournal.Principal actor=CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            CashierJournal.requireShift(db,actor,shift,true);DrawerJournal.requireNoPending(db,shift);
+            if(selected==null||customer==null||inputs==null)throw new IllegalArgumentException("Select service and customer");
+            return readCreditPlan(db,id,customer.id,customer.revision,selected.service.id,selected.service.revision,selected.profile.revision,selected.recipeRevision,inputs).bind(actor.id,actor.revision,shift);
+        });
+    }
+    private static CreditCheckoutJournal.Record requireCreditRecord(SQLiteDatabase db,CashierJournal.Principal actor,String id){
+        CreditCheckoutJournal.Record r=CreditCheckoutJournal.read(db,id);
+        if(r==null||!actor.id.equals(r.operatorId))throw new IllegalStateException("Credit checkout unavailable");
+        CashierJournal.requireShift(db,actor,r.shiftId,"PENDING".equals(r.state));return r;
+    }
+    CreditCheckoutJournal.Record stageAuthorizedFixtureCreditCheckout(String token,String shift,CreditCheckoutPlan reviewed){
+        return fixtureTransaction(db->{
+            CashierJournal.Principal actor=CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            if(reviewed==null)throw new IllegalArgumentException("Review credit checkout first");
+            reviewed.requireAuthorization(actor.id,shift);
+            CreditCheckoutJournal.Record existing=CreditCheckoutJournal.read(db,reviewed.id);
+            if(existing!=null){
+                existing=requireCreditRecord(db,actor,reviewed.id);
+                if(!existing.shiftId.equals(shift))throw new IllegalStateException("Credit shift changed");
+                existing.requireIdentity(reviewed.fingerprint);return existing;
+            }
+            reviewed.requireFreshAuthorization(actor.id,actor.revision,shift);
+            CashierJournal.requireShift(db,actor,shift,true);DrawerJournal.requireNoPending(db,shift);
+            CreditCheckoutPlan current=readCreditPlan(db,reviewed.id,reviewed.customerId,reviewed.customerRevision,reviewed.serviceId,reviewed.serviceRevision,reviewed.pricingRevision,reviewed.recipeRevision,reviewed.actualInputs);
+            reviewed.requireSameReview(current);CreditCheckoutJournal.stage(db,actor,shift,current,System.currentTimeMillis());
+            return requireCreditRecord(db,actor,current.id);
+        });
+    }
+    CreditCheckoutJournal.Record authorizedFixtureCreditCheckout(String token,String id){
+        return fixtureTransaction(db->requireCreditRecord(db,CashierJournal.requireSession(db,token,System.currentTimeMillis()),id));
+    }
+    List<CreditCheckoutJournal.Record> recentAuthorizedFixtureCreditReceipts(String token,int limit){
+        return fixtureTransaction(db->{
+            if(limit<1||limit>50)throw new IllegalArgumentException("Invalid receipt limit");
+            CashierJournal.Principal actor=CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            List<CreditCheckoutJournal.Record> records=new ArrayList<>();
+            try(Cursor c=db.rawQuery("SELECT id FROM credit_checkout_requests WHERE operator_id=? AND state='APPLIED' ORDER BY resolved_ms DESC,id LIMIT ?",new String[]{actor.id,Integer.toString(limit)})){
+                while(c.moveToNext())records.add(requireCreditRecord(db,actor,c.getString(0)));
+            }
+            return records;
+        });
+    }
+    CreditCheckoutJournal.Record pendingAuthorizedFixtureCreditCheckout(String token,String shift){
+        return fixtureTransaction(db->{
+            CashierJournal.Principal actor=CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            CashierJournal.requireShift(db,actor,shift,false);
+            try(Cursor c=db.rawQuery("SELECT id FROM credit_checkout_requests WHERE shift_id=? AND state='PENDING'",new String[]{shift})){
+                return c.moveToFirst()?requireCreditRecord(db,actor,c.getString(0)):null;
+            }
+        });
+    }
+    CreditCheckoutJournal.Record applyAuthorizedFixtureCreditCheckout(String token,String id,String fingerprint){
+        return fixtureTransaction(db->{
+            CashierJournal.Principal actor=CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            CreditCheckoutJournal.Record r=requireCreditRecord(db,actor,id);r.requireIdentity(fingerprint);
+            if("APPLIED".equals(r.state))return r;
+            if(!"PENDING".equals(r.state))throw new IllegalStateException("Credit checkout cancelled");
+            CreditCheckoutPlan current=readCreditPlan(db,r.id,r.customerId,r.customerRevision,r.serviceId,r.serviceRevision,r.pricingRevision,r.recipeRevision,r.inputs);
+            r.requireIdentity(current.fingerprint);
+            return CreditCheckoutJournal.resolve(db,actor,id,true,null,System.currentTimeMillis());
+        });
+    }
+    CreditCheckoutJournal.Record cancelAuthorizedFixtureCreditCheckout(String token,String id,String fingerprint,String reason){
+        final String clean=CustomerJournal.text(reason,160,true);
+        return fixtureTransaction(db->{
+            CashierJournal.Principal actor=CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            CreditCheckoutJournal.Record r=requireCreditRecord(db,actor,id);r.requireIdentity(fingerprint);
+            if("CANCELLED".equals(r.state)&&clean.equals(r.cancelReason))return r;
+            if(!"PENDING".equals(r.state))throw new IllegalStateException("Credit checkout already resolved");
+            return CreditCheckoutJournal.resolve(db,actor,id,false,clean,System.currentTimeMillis());
+        });
+    }
+    private static ReceivableJournal.Review readCollectionReview(SQLiteDatabase db,CashierJournal.Principal actor,String shift,String id,String customer,long revision,long amount){
+        CashierJournal.requireShift(db,actor,shift,true);DrawerJournal.requireNoPending(db,shift);
+        CustomerJournal.Customer current=CustomerJournal.current(db,customer);
+        if(current==null||current.revision!=revision)throw new IllegalStateException("Customer changed; review again");
+        return new ReceivableJournal.Review(id,customer,revision,shift,actor.id,ReceivableMath.collect(customer,amount,DrawerJournal.expected(db,shift),ReceivableJournal.debts(db,customer)));
+    }
+    List<ReceivableJournal.Debtor> authorizedFixtureDebtors(String token,String shift,String search,int offset,int limit){
+        return fixtureTransaction(db->{
+            CashierJournal.requireShift(db,CashierJournal.requireSession(db,token,System.currentTimeMillis()),shift,true);
+            return ReceivableJournal.debtors(db,search,offset,limit);
+        });
+    }
+    List<ReceivableJournal.Record> authorizedFixtureCollectionHistory(String token,int offset,int limit){
+        return fixtureTransaction(db->{
+            if(offset<0||limit<1||limit>51)throw new IllegalArgumentException("Invalid collection history page");
+            CashierJournal.Principal actor=CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            List<ReceivableJournal.Record> rows=new ArrayList<>();
+            try(Cursor c=db.rawQuery(ReceivableJournal.HISTORY_PAGE,new String[]{actor.id,Integer.toString(limit),Integer.toString(offset)})){
+                while(c.moveToNext())rows.add(requireCollectionRecord(db,actor,c.getString(0)));
+            }
+            return rows;
+        });
+    }
+    ReceivableJournal.Review prepareAuthorizedFixtureCollection(String token,String shift,String id,String customer,long revision,long amount){
+        return fixtureTransaction(db->readCollectionReview(db,CashierJournal.requireSession(db,token,System.currentTimeMillis()),shift,id,customer,revision,amount));
+    }
+    java.math.BigInteger authorizedFixtureOutstanding(String token,String shift,String customer){
+        return fixtureTransaction(db->{
+            CashierJournal.requireShift(db,CashierJournal.requireSession(db,token,System.currentTimeMillis()),shift,true);
+            if(CustomerJournal.current(db,customer)==null)throw new IllegalStateException("Customer unavailable");
+            return ReceivableJournal.outstanding(db,customer);
+        });
+    }
+    private static ReceivableJournal.Record requireCollectionRecord(SQLiteDatabase db,CashierJournal.Principal actor,String id){
+        ReceivableJournal.Record r=ReceivableJournal.read(db,id);
+        if(r==null||!actor.id.equals(r.operator))throw new IllegalStateException("Collection unavailable");
+        CashierJournal.requireShift(db,actor,r.shift,"PENDING".equals(r.state));return r;
+    }
+    ReceivableJournal.Record stageAuthorizedFixtureCollection(String token,ReceivableJournal.Review reviewed){
+        return fixtureTransaction(db->{
+            CashierJournal.Principal actor=CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            if(reviewed==null||!actor.id.equals(reviewed.operator))throw new IllegalStateException("Collection review unavailable");
+            ReceivableJournal.Record prior=ReceivableJournal.read(db,reviewed.id);
+            if(prior!=null){prior=requireCollectionRecord(db,actor,reviewed.id);prior.requireIdentity(reviewed.fingerprint);return prior;}
+            ReceivableJournal.Review current=readCollectionReview(db,actor,reviewed.shift,reviewed.id,reviewed.customer,reviewed.customerRevision,reviewed.collection.amount);
+            reviewed.collection.requireSameReview(current.collection);
+            if(!reviewed.fingerprint.equals(current.fingerprint))throw new IllegalStateException("Collection identity changed");
+            ReceivableJournal.stage(db,actor,current,System.currentTimeMillis());
+            return requireCollectionRecord(db,actor,current.id);
+        });
+    }
+    ReceivableJournal.Record authorizedFixtureCollection(String token,String id){
+        return fixtureTransaction(db->requireCollectionRecord(db,CashierJournal.requireSession(db,token,System.currentTimeMillis()),id));
+    }
+    ReceivableJournal.Record pendingAuthorizedFixtureCollection(String token,String shift){
+        return fixtureTransaction(db->{
+            CashierJournal.Principal actor=CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            CashierJournal.requireShift(db,actor,shift,false);
+            try(Cursor c=db.rawQuery("SELECT id FROM credit_collection_requests WHERE shift_id=? AND state='PENDING'",new String[]{shift})){
+                return c.moveToFirst()?requireCollectionRecord(db,actor,c.getString(0)):null;
+            }
+        });
+    }
+    ReceivableJournal.Record applyAuthorizedFixtureCollection(String token,String id,String fingerprint){
+        return fixtureTransaction(db->{
+            CashierJournal.Principal actor=CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            ReceivableJournal.Record r=requireCollectionRecord(db,actor,id);r.requireIdentity(fingerprint);
+            if("APPLIED".equals(r.state))return r;
+            if(!"PENDING".equals(r.state))throw new IllegalStateException("Collection cancelled");
+            r.requireCurrent(ReceivableMath.collect(r.customer,r.amount,DrawerJournal.expected(db,r.shift),ReceivableJournal.debts(db,r.customer)));
+            return ReceivableJournal.resolve(db,actor,id,true,null,System.currentTimeMillis());
+        });
+    }
+    ReceivableJournal.Record cancelAuthorizedFixtureCollection(String token,String id,String fingerprint,String reason){
+        final String clean=CustomerJournal.text(reason,160,true);
+        return fixtureTransaction(db->{
+            CashierJournal.Principal actor=CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            ReceivableJournal.Record r=requireCollectionRecord(db,actor,id);r.requireIdentity(fingerprint);
+            if("CANCELLED".equals(r.state)&&clean.equals(r.reason))return r;
+            if(!"PENDING".equals(r.state))throw new IllegalStateException("Collection already resolved");
+            return ReceivableJournal.resolve(db,actor,id,false,clean,System.currentTimeMillis());
+        });
+    }
+    CatalogEntry authorizedDemoService(String token){
+        return fixtureTransaction(db->{CashierJournal.requireSession(db,token,System.currentTimeMillis());return demoService(db);});
+    }
+    CheckoutPlan.Proposal prepareDemoFixtureCheckout(String token,String shiftId,String requestId,int count,long cash){
+        return fixtureTransaction(db->{
+            CashierJournal.Principal actor=CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            CashierJournal.requireShift(db,actor,shiftId,true);
+            DrawerJournal.requireNoPending(db,shiftId);
+            CatalogEntry service=demoService(db);PricingProfile profile=readPricing(db,service.id);
+            if(profile.method!=PricingMath.Method.PER_UNIT||profile.pagesAndCopies||!profile.tiers.isEmpty())
+                throw new IllegalStateException("Training service pricing unexpectedly changed");
+            long revision=recipeRevision(db,service.id);
+            CheckoutPlan.Inputs input=new CheckoutPlan.Inputs(count,1,1,null,null,null,CheckoutPlan.UsageBasis.BILLABLE_UNIT,cash);
+            return readCheckoutPlan(db,requestId,service.id,service.revision,profile.revision,revision,input);
+        });
+    }
+    List<CheckoutJournal.Record> recentAuthorizedFixtureReceipts(String token,int limit){
+        return fixtureTransaction(db->{
+            if(limit<1||limit>50)throw new IllegalArgumentException("Invalid receipt limit");
+            CashierJournal.Principal actor=CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            List<CheckoutJournal.Record> records=new ArrayList<>();
+            try(Cursor c=db.rawQuery("SELECT r.request_id FROM cashier_shift_checkouts l JOIN checkout_requests r ON l.request_id=r.request_id WHERE l.operator_id=? AND r.state='APPLIED' ORDER BY r.resolved_ms DESC,r.request_id LIMIT ?",new String[]{actor.id,Integer.toString(limit)})){
+                while(c.moveToNext())records.add(CheckoutJournal.read(db,c.getString(0)));
+            }
+            return records;
+        });
+    }
+
+    // Explicit synthetic setup only. No default credentials or real UI path.
+    CashierJournal.Principal bootstrapFixtureOwner(String username,char[] password){
+        return fixtureTransaction(db->CashierJournal.bootstrap(db,username,password,System.currentTimeMillis()));
+    }
+    String signInFixture(String username,char[] password){
+        String token=fixtureTransaction(db->CashierJournal.signIn(db,username,password,System.currentTimeMillis()));
+        if(token==null)throw new IllegalStateException("Sign in denied");
+        return token;
+    }
+    CashierJournal.Principal fixturePrincipal(String token){
+        return fixtureTransaction(db->CashierJournal.requireSession(db,token,System.currentTimeMillis()));
+    }
+    void signOutFixture(String token){
+        fixtureTransaction(db->{CashierJournal.signOut(db,token,System.currentTimeMillis());return null;});
+    }
+    CashierJournal.Principal createFixtureCashier(String token,String username,char[] password){
+        return fixtureTransaction(db->CashierJournal.createCashier(db,CashierJournal.requireSession(db,token,System.currentTimeMillis()),username,password,System.currentTimeMillis()));
+    }
+
+    void changeFixturePassphrase(String token,char[] current,char[] replacement){
+        boolean changed=fixtureTransaction(db->{
+            long now=System.currentTimeMillis();
+            return CashierJournal.changeOwnCredential(db,CashierJournal.requireSession(db,token,now),current,replacement,now);
+        });
+        if(!changed)throw new IllegalStateException("Credential confirmation denied");
+    }
+    void resetFixtureCashierPassphrase(String token,char[] current,String username,char[] replacement){
+        boolean changed=fixtureTransaction(db->{
+            long now=System.currentTimeMillis();
+            return CashierJournal.resetCashierCredential(db,CashierJournal.requireSession(db,token,now),current,username,replacement,now);
+        });
+        if(!changed)throw new IllegalStateException("Credential confirmation denied");
+    }
+    List<AdminJournal.Entry> authorizedFixtureAdminHistory(String token,long before,int limit){
+        return fixtureTransaction(db->{requireFixtureOwner(db,token);return AdminJournal.list(db,before,limit);});
+    }
+    List<CashierJournal.StaffSummary> authorizedFixtureStaff(String token){
+        return fixtureTransaction(db->CashierJournal.staff(db,CashierJournal.requireSession(db,token,System.currentTimeMillis())));
+    }
+    void disableFixtureCashier(String token,String id,long expectedRevision,char[] current,String reason){
+        boolean disabled=fixtureTransaction(db->{
+            long now=System.currentTimeMillis();
+            return CashierJournal.disableCashier(db,CashierJournal.requireSession(db,token,now),id,expectedRevision,current,reason,now);
+        });
+        if(!disabled)throw new IllegalStateException("Credential confirmation denied");
+    }
+    CashierJournal.Shift openFixtureShift(String token,String id,long opening){
+        return fixtureTransaction(db->CashierJournal.openShift(db,CashierJournal.requireSession(db,token,System.currentTimeMillis()),id,opening,System.currentTimeMillis()));
+    }
+    CashierJournal.Shift activeFixtureShift(String token){
+        return fixtureTransaction(db->CashierJournal.activeShift(db,CashierJournal.requireSession(db,token,System.currentTimeMillis())));
+    }
+    DrawerJournal.Request pendingFixtureDrawer(String token,String shiftId){
+        return fixtureTransaction(db->{
+            CashierJournal.Principal actor=CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            CashierJournal.requireShift(db,actor,shiftId,false);return DrawerJournal.pending(db,shiftId);
+        });
+    }
+    DrawerJournal.Request stageFixtureDrawer(String token,String shiftId,String id,ShiftMath.DrawerKind kind,long amount,String category,String reason,long before){
+        return fixtureTransaction(db->{
+            long now=System.currentTimeMillis();CashierJournal.Principal actor=CashierJournal.requireSession(db,token,now);
+            return DrawerJournal.stage(db,actor,shiftId,id,kind,amount,category,reason,before,now);
+        });
+    }
+    DrawerJournal.Request resolveFixtureDrawer(String token,String id,boolean apply,String cancelReason){
+        return fixtureTransaction(db->{
+            long now=System.currentTimeMillis();CashierJournal.Principal actor=CashierJournal.requireSession(db,token,now);
+            return DrawerJournal.resolve(db,actor,id,apply,cancelReason,now);
+        });
+    }
+    DrawerJournal.Request authorizedFixtureDrawer(String token,String id){
+        return fixtureTransaction(db->{
+            CashierJournal.Principal actor=CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            if(RefundJournal.linked(db,id))throw new IllegalStateException("Use receipt compensation review");
+            if(RecurringJournal.linked(db,id))throw new IllegalStateException("Use recurring expense review");
+            return DrawerJournal.requireRequest(db,actor,id);
+        });
+    }
+    List<DrawerJournal.Request> authorizedFixtureDrawerHistory(String token,int offset,int limit){
+        return fixtureTransaction(db->DrawerJournal.history(db,CashierJournal.requireSession(db,token,System.currentTimeMillis()),offset,limit));
+    }
+    boolean isFixtureRecurring(String token,String id){
+        return fixtureTransaction(db->{
+            CashierJournal.Principal actor=CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            DrawerJournal.requireRequest(db,actor,id);
+            return RecurringJournal.linked(db,id);
+        });
+    }
+    List<CustomerJournal.Customer> authorizedFixtureCustomers(String token,boolean active,String search,int offset,int limit){
+        return fixtureTransaction(db->CustomerJournal.list(db,requireFixtureOwner(db,token),active,search,offset,limit));
+    }
+    List<CustomerJournal.Customer> authorizedFixtureCustomerHistory(String token,String id,int offset,int limit){
+        return fixtureTransaction(db->CustomerJournal.history(db,requireFixtureOwner(db,token),id,offset,limit));
+    }
+    CustomerJournal.Customer saveFixtureCustomer(String token,String id,long revision,String name,String contact,boolean active){
+        return fixtureTransaction(db->CustomerJournal.save(db,requireFixtureOwner(db,token),id,revision,name,contact,active,System.currentTimeMillis()));
+    }
+    List<RecurringJournal.Definition> authorizedFixtureRecurringDefinitions(String token,int offset,int limit){
+        return fixtureTransaction(db->RecurringJournal.list(db,requireFixtureOwner(db,token),offset,limit));
+    }
+    List<RecurringJournal.Occurrence> authorizedFixtureRecurringHistory(String token,int offset,int limit){
+        return fixtureTransaction(db->RecurringJournal.history(db,requireFixtureOwner(db,token),offset,limit));
+    }
+    RecurringJournal.Definition saveFixtureRecurringDefinition(String token,String id,long revision,String name,String category,long amount,RecurringMath.Cadence cadence,String firstDue,boolean active){
+        return fixtureTransaction(db->RecurringJournal.save(db,requireFixtureOwner(db,token),id,revision,name,category,amount,cadence,firstDue,active,System.currentTimeMillis()));
+    }
+    RecurringJournal.Occurrence stageFixtureRecurringExpense(String token,String shift,String id,String schedule,long revision,long index,String date,long amount,String category,String reason,long before){
+        return fixtureTransaction(db->RecurringJournal.stage(db,requireFixtureOwner(db,token),shift,id,schedule,revision,index,date,amount,category,reason,before,System.currentTimeMillis()));
+    }
+    RecurringJournal.Occurrence authorizedFixtureRecurringExpense(String token,String id){
+        return fixtureTransaction(db->RecurringJournal.read(db,requireFixtureOwner(db,token),id));
+    }
+    RecurringJournal.Occurrence resolveFixtureRecurringExpense(String token,String id,boolean apply,String reason){
+        return fixtureTransaction(db->RecurringJournal.resolve(db,requireFixtureOwner(db,token),id,apply,reason,System.currentTimeMillis()));
+    }
+    ReportJournal.Report authorizedFixtureSalesReport(String token,ReportMath.Range range){
+        return fixtureTransaction(db->ReportJournal.read(db,requireFixtureOwner(db,token),range));
+    }
+    ReportJournal.Report authorizedFixtureSalesReport(String token,ReportMath.Period period){
+        return fixtureTransaction(db->ReportJournal.read(db,requireFixtureOwner(db,token),ReportMath.range(period,System.currentTimeMillis()),period));
+    }
+    List<ReportJournal.Event> authorizedFixtureReportEvents(String token,ReportMath.Range range,int offset,int limit){
+        return fixtureTransaction(db->ReportJournal.events(db,requireFixtureOwner(db,token),range,offset,limit));
+    }
+    List<RefundJournal.Receipt> authorizedFixtureRefundReceipts(String token,int offset,int limit){
+        return fixtureTransaction(db->RefundJournal.receipts(db,requireFixtureOwner(db,token),offset,limit));
+    }
+    List<RefundJournal.Request> authorizedFixtureRefundHistory(String token,int offset,int limit){
+        return fixtureTransaction(db->RefundJournal.history(db,requireFixtureOwner(db,token),offset,limit));
+    }
+    boolean isFixtureRefund(String token,String id){
+        return fixtureTransaction(db->{
+            CashierJournal.Principal actor=CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            DrawerJournal.requireRequest(db,actor,id);
+            return RefundJournal.linked(db,id);
+        });
+    }
+    RefundJournal.Review reviewFixtureRefund(String token,String checkoutId){
+        return fixtureTransaction(db->RefundJournal.review(db,requireFixtureOwner(db,token),checkoutId));
+    }
+    RefundJournal.Request stageFixtureRefund(String token,String shiftId,String id,String checkoutId,RefundJournal.Kind kind,long originalPaid,long priorPaid,long amount,String reason,long before){
+        return fixtureTransaction(db->RefundJournal.stage(db,requireFixtureOwner(db,token),shiftId,id,checkoutId,kind,originalPaid,priorPaid,amount,reason,before,System.currentTimeMillis()));
+    }
+    RefundJournal.Request authorizedFixtureRefund(String token,String id){
+        return fixtureTransaction(db->RefundJournal.read(db,requireFixtureOwner(db,token),id));
+    }
+    RefundJournal.Request resolveFixtureRefund(String token,String id,boolean apply,String cancelReason){
+        return fixtureTransaction(db->RefundJournal.resolve(db,requireFixtureOwner(db,token),id,apply,cancelReason,System.currentTimeMillis()));
+    }
+    long expectedFixtureCash(String token,String shiftId){
+        return fixtureTransaction(db->CashierJournal.expected(db,CashierJournal.requireShift(db,CashierJournal.requireSession(db,token,System.currentTimeMillis()),shiftId,false)));
+    }
+    CashierJournal.Shift closeFixtureShift(String token,String shiftId,long counted){
+        return fixtureTransaction(db->CashierJournal.closeShift(db,CashierJournal.requireSession(db,token,System.currentTimeMillis()),shiftId,counted,System.currentTimeMillis()));
+    }
+
+    /** Native reconciliation must confirm the exact balance displayed to the operator. */
+    CashierJournal.Shift closeFixtureShift(String token,String shiftId,long counted,long reviewedExpected){
+        return fixtureTransaction(db->{
+            long now=System.currentTimeMillis();CashierJournal.Principal actor=CashierJournal.requireSession(db,token,now);
+            CashierJournal.Shift shift=CashierJournal.requireShift(db,actor,shiftId,false);
+            if(CashierJournal.expected(db,shift)!=ShiftMath.money(reviewedExpected))
+                throw new IllegalStateException("Drawer changed; reload and review again");
+            return CashierJournal.closeShift(db,actor,shiftId,counted,now);
+        });
+    }
+
+    /** v6 compatibility experiment only: disabled the moment an account is initialized.
+     * This preserves prior synthetic fixture tests, not a real checkout authorization path.
+     */
+    CheckoutJournal.Record stageFixtureCheckout(CheckoutPlan.Proposal reviewed) {
+        return fixtureTransaction(db->{CashierJournal.requireLegacyFixture(db);return stageCheckout(db,reviewed);});
+    }
+    CheckoutJournal.Record fixtureCheckout(String id){
+        return fixtureTransaction(db->{CashierJournal.requireLegacyFixture(db);StockMath.validateRequestId(id);return CheckoutJournal.read(db,id);});
+    }
+    List<CheckoutJournal.Record> pendingFixtureCheckouts(int limit){
+        return fixtureTransaction(db->{CashierJournal.requireLegacyFixture(db);return CheckoutJournal.pending(db,limit);});
+    }
+    CheckoutJournal.Record applyFixtureCheckout(String id,String fingerprint){
+        return fixtureTransaction(db->{CashierJournal.requireLegacyFixture(db);return applyCheckout(db,id,fingerprint);});
+    }
+    CheckoutJournal.Record cancelFixtureCheckout(String id,String fingerprint,String reason){
+        return fixtureTransaction(db->{CashierJournal.requireLegacyFixture(db);return cancelCheckout(db,id,fingerprint,reason);});
+    }
+
+    /** Each authorized request is linked atomically to the operator's reviewed open shift. */
+    CheckoutJournal.Record stageAuthorizedFixtureCheckout(String token,String shiftId,CheckoutPlan.Proposal reviewed){
+        return stageAuthorizedFixtureCheckout(token,shiftId,reviewed,null);
+    }
+    List<CustomerLinkJournal.Selection> authorizedFixtureCheckoutCustomers(String token,String shiftId,String search,int offset,int limit){
+        return fixtureTransaction(db->{
+            CashierJournal.Principal p=CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            CashierJournal.requireShift(db,p,shiftId,true);
+            return CustomerLinkJournal.list(db,search,offset,limit);
+        });
+    }
+    CustomerLinkJournal.Selection authorizedFixtureCheckoutCustomer(String token,String id){
+        return fixtureTransaction(db->{
+            CashierJournal.Principal p=CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            CashierJournal.requireCheckoutLink(db,p,id,false);return CustomerLinkJournal.read(db,id);
+        });
+    }
+    CheckoutJournal.Record stageAuthorizedFixtureCheckout(String token,String shiftId,CheckoutPlan.Proposal reviewed,CustomerLinkJournal.Selection customer){
+        return fixtureTransaction(db->{
+            CashierJournal.Principal p=CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            if(reviewed==null)throw new IllegalArgumentException("Checkout proposal required");
+            CheckoutJournal.Record prior=CheckoutJournal.read(db,reviewed.requestId);
+            if(prior!=null){
+                CashierJournal.Shift linked=CashierJournal.requireCheckoutLink(db,p,prior.id,"PENDING".equals(prior.state));
+                if(!linked.id.equals(shiftId))throw new IllegalStateException("Checkout assigned to another shift");
+                prior.verifyFingerprint(reviewed.fingerprint());CustomerLinkJournal.verify(db,prior.id,customer);return prior;
+            }
+            CashierJournal.Shift shift=CashierJournal.requireShift(db,p,shiftId,true);
+            DrawerJournal.requireNoPending(db,shift.id);
+            CheckoutJournal.Record staged=stageCheckout(db,reviewed);
+            CashierJournal.link(db,staged.id,shift);CustomerLinkJournal.link(db,p,staged.id,customer);return staged;
+        });
+    }
+    CheckoutJournal.Record authorizedFixtureCheckout(String token,String id){
+        return fixtureTransaction(db->{
+            StockMath.validateRequestId(id);
+            CashierJournal.Principal p=CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            CashierJournal.requireCheckoutLink(db,p,id,false);
+            return CheckoutJournal.read(db,id);
+        });
+    }
+    List<CheckoutJournal.Record> pendingAuthorizedFixtureCheckouts(String token,String shiftId,int limit){
+        return fixtureTransaction(db->{
+            if(limit<1||limit>50)throw new IllegalArgumentException("Invalid checkout limit");
+            CashierJournal.Principal p=CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            CashierJournal.requireShift(db,p,shiftId,false);List<CheckoutJournal.Record> result=new ArrayList<>();
+            try(Cursor c=db.rawQuery("SELECT r.request_id FROM cashier_shift_checkouts l JOIN checkout_requests r ON l.request_id=r.request_id WHERE l.shift_id=? AND r.state='PENDING' ORDER BY r.created_ms,r.request_id LIMIT ?",new String[]{shiftId,Integer.toString(limit)})){
+                while(c.moveToNext())result.add(CheckoutJournal.read(db,c.getString(0)));
+            }
+            return result;
+        });
+    }
+    CheckoutJournal.Record applyAuthorizedFixtureCheckout(String token,String id,String fingerprint){
+        return fixtureTransaction(db->{
+            StockMath.validateRequestId(id);CashierJournal.Principal p=CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            CheckoutJournal.Record r=CheckoutJournal.read(db,id);if(r==null)throw new IllegalStateException("Unknown checkout request");
+            CashierJournal.Shift shift=CashierJournal.requireCheckoutLink(db,p,id,"PENDING".equals(r.state));
+            if("PENDING".equals(r.state)){
+                DrawerJournal.requireNoPending(db,shift.id);
+                ShiftMath.addPayment(CashierJournal.expected(db,shift),r.total);
+            }
+            return applyCheckout(db,id,fingerprint);
+        });
+    }
+    CheckoutJournal.Record cancelAuthorizedFixtureCheckout(String token,String id,String fingerprint,String reason){
+        return fixtureTransaction(db->{
+            StockMath.validateRequestId(id);CashierJournal.Principal p=CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            CheckoutJournal.Record r=CheckoutJournal.read(db,id);if(r==null)throw new IllegalStateException("Unknown checkout request");
+            CashierJournal.requireCheckoutLink(db,p,id,"PENDING".equals(r.state));
+            return cancelCheckout(db,id,fingerprint,reason);
+        });
+    }
+    private static CheckoutJournal.Record stageCheckout(SQLiteDatabase db,CheckoutPlan.Proposal reviewed){
+        if(reviewed==null)throw new IllegalArgumentException("Checkout proposal required");
+        CheckoutJournal.Record prior=CheckoutJournal.read(db,reviewed.requestId);
+        if(prior!=null){prior.verifyFingerprint(reviewed.fingerprint());return prior;}
+        CheckoutPlan.Proposal current=readCheckoutPlan(db,reviewed.requestId,reviewed.serviceId,reviewed.serviceRevision,reviewed.pricingRevision,reviewed.recipeRevision,reviewed.inputs);
+        reviewed.requireSameSnapshot(current);CheckoutJournal.stage(db,current);
+        CheckoutJournal.Record result=CheckoutJournal.read(db,current.requestId);
+        if(result==null)throw new IllegalStateException("Staged checkout unavailable");return result;
+    }
+    private static CheckoutJournal.Record applyCheckout(SQLiteDatabase db,String id,String fingerprint){
+        StockMath.validateRequestId(id);
+        CheckoutJournal.Record r=CheckoutJournal.read(db,id);
+        if(r==null)throw new IllegalStateException("Unknown checkout request");
+        r.verifyFingerprint(fingerprint);
+        if("CANCELLED".equals(r.state))throw new IllegalStateException("Cancelled checkout cannot be applied");
+        if("APPLIED".equals(r.state))return r;
+        CheckoutPlan.Proposal current=readCheckoutPlan(db,id,r.serviceId,r.serviceRevision,r.pricingRevision,r.recipeRevision,r.inputs);
+        r.verifyFingerprint(current.fingerprint());CheckoutJournal.saleAndCash(db,r);
+        for(CheckoutPlan.Consumption m:current.materials){
+            String movementId=java.util.UUID.randomUUID().toString();
+            if(readRequest(db,"request_id=?",movementId)!=null)throw new IllegalStateException("Stock operation ID collision");
+            StockMath.Balance result=appendMovement(db,movementId,m.materialId,m.catalogRevision,m.stockRevision,-m.quantityMilli,"Preview checkout "+id);
+            if(result.quantity!=m.afterMilli||result.revision!=m.stockRevision+1)throw new IllegalStateException("Stock result differs from confirmed snapshot");
+            CheckoutJournal.link(db,id,m.materialId,movementId);
+        }
+        CheckoutJournal.resolve(db,id,"APPLIED",null);
+        CheckoutJournal.Record applied=CheckoutJournal.read(db,id);
+        if(applied==null||!"APPLIED".equals(applied.state))throw new IllegalStateException("Checkout result unavailable");
+        return applied;
+    }
+    private static CheckoutJournal.Record cancelCheckout(SQLiteDatabase db,String id,String fingerprint,String reason){
+        StockMath.validateRequestId(id);String note=StockMath.reason(reason);
+        CheckoutJournal.Record r=CheckoutJournal.read(db,id);
+        if(r==null)throw new IllegalStateException("Unknown checkout request");
+        r.verifyFingerprint(fingerprint);
+        if("APPLIED".equals(r.state))throw new IllegalStateException("Recorded checkout cannot be cancelled");
+        if("CANCELLED".equals(r.state)){
+            if(!note.equals(r.cancelReason))throw new IllegalStateException("Cancellation reason differs from audit");return r;
+        }
+        CheckoutJournal.resolve(db,id,"CANCELLED",note);
+        CheckoutJournal.Record cancelled=CheckoutJournal.read(db,id);
+        if(cancelled==null||!"CANCELLED".equals(cancelled.state))throw new IllegalStateException("Cancellation confirmation unavailable");
+        return cancelled;
+    }
     public StockMath.Balance stockBalance(String id) {
         SQLiteDatabase db = getReadableDatabase();
         if (read(db,id).kind != CatalogEntry.Kind.MATERIAL) throw new IllegalArgumentException("Stock is available only for materials");
@@ -252,6 +1014,25 @@ public final class CatalogStore extends SQLiteOpenHelper {
             if(!materialId.equals(material)||catalogRevision!=catalog||stockRevision!=stock||delta!=amount||!reason.equals(note))
                 throw new IllegalStateException("Movement identity already used for different request");
         }
+    }
+    static final class InventoryItem {
+        final CatalogEntry material;
+        final StockMath.Balance balance;
+        final StockRequest pending;
+        InventoryItem(CatalogEntry m,StockMath.Balance b,StockRequest p){material=m;balance=b;pending=p;}
+    }
+    List<InventoryItem> authorizedFixtureInventory(String token){
+        return fixtureTransaction(db->{
+            requireFixtureOwner(db,token);
+            List<InventoryItem> result=new ArrayList<>();
+            try(Cursor c=db.query("catalog",null,"kind='MATERIAL' AND archived=0",null,null,null,"name COLLATE NOCASE,id")){
+                while(c.moveToNext()){
+                    CatalogEntry item=entry(c);
+                    result.add(new InventoryItem(item,stockBalance(db,item.id),pendingStock(db,item.id)));
+                }
+            }
+            return result;
+        });
     }
     private static StockRequest readRequest(SQLiteDatabase db,String where,String value) {
         try(Cursor c=db.query("stock_requests",new String[]{"request_id","material_id","catalog_revision","expected_stock_revision","delta","reason","state"},where,new String[]{value},null,null,null,"1")) {
@@ -292,10 +1073,17 @@ public final class CatalogStore extends SQLiteOpenHelper {
     }
     /** Commit the identity and exact payload before attempting any stock adjustment. */
     public StockRequest stageStock(String requestId,String id,long catalogRevision,long expectedStockRevision,long delta,String note) {
+        return stageStock(null,requestId,id,catalogRevision,expectedStockRevision,delta,note);
+    }
+    StockRequest stageAuthorizedFixtureStock(String token,String requestId,String id,long catalogRevision,long expectedStockRevision,long delta,String note) {
+        return stageStock(ownerToken(token),requestId,id,catalogRevision,expectedStockRevision,delta,note);
+    }
+    private StockRequest stageStock(String token,String requestId,String id,long catalogRevision,long expectedStockRevision,long delta,String note) {
         validateMovement(requestId,catalogRevision,expectedStockRevision);
         String reason=StockMath.reason(note);
         SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
         try {
+            CashierJournal.Principal actor=authorizeCatalogWrite(db,token);
             StockRequest prior=readRequest(db,"request_id=?",requestId);
             if(prior!=null){
                 prior.verify(id,catalogRevision,expectedStockRevision,delta,reason);
@@ -312,6 +1100,7 @@ public final class CatalogStore extends SQLiteOpenHelper {
             db.insertOrThrow("stock_requests",null,row);
             StockRequest staged=readRequest(db,"request_id=?",requestId);
             if(staged==null)throw new IllegalStateException("Staged movement unavailable");
+            AdminJournal.append(db,actor,"STOCK_STAGE",id,expectedStockRevision,requestId);
             db.setTransactionSuccessful();return staged;
         }finally{db.endTransaction();}
     }
@@ -333,9 +1122,16 @@ public final class CatalogStore extends SQLiteOpenHelper {
     }
     /** Ledger insert and APPLIED state commit together, or neither commits. Repeat returns original result. */
     public StockMath.Balance applyStagedStock(String requestId) {
+        return applyStagedStock(null,requestId);
+    }
+    StockMath.Balance applyAuthorizedFixtureStock(String token,String requestId) {
+        return applyStagedStock(ownerToken(token),requestId);
+    }
+    private StockMath.Balance applyStagedStock(String token,String requestId) {
         StockMath.validateRequestId(requestId);
         SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
         try {
+            CashierJournal.Principal actor=authorizeCatalogWrite(db,token);
             StockRequest r=readRequest(db,"request_id=?",requestId);
             if(r==null||"CANCELLED".equals(r.state))throw new IllegalStateException("No applicable staged movement");
             StockMath.Balance prior=previousMovement(db,r.id,r.materialId,r.catalogRevision,r.stockRevision,r.delta,r.reason);
@@ -346,19 +1142,30 @@ public final class CatalogStore extends SQLiteOpenHelper {
             if(prior!=null)throw new IllegalStateException("Pending request already has a ledger row; review required");
             StockMath.Balance applied=appendMovement(db,r.id,r.materialId,r.catalogRevision,r.stockRevision,r.delta,r.reason);
             resolveRequest(db,requestId,"APPLIED");
+            AdminJournal.append(db,actor,"STOCK_APPLY",r.materialId,applied.revision,r.id);
             db.setTransactionSuccessful();return applied;
         }finally{db.endTransaction();}
     }
     /** Explicit cancellation is allowed only if the movement has not been recorded. Keep the audit record. */
     public void cancelStagedStock(String requestId) {
+        cancelStagedStock(null,requestId);
+    }
+    void cancelAuthorizedFixtureStock(String token,String requestId) {
+        cancelStagedStock(ownerToken(token),requestId);
+    }
+    private void cancelStagedStock(String token,String requestId) {
         StockMath.validateRequestId(requestId);
         SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
         try {
+            CashierJournal.Principal actor=authorizeCatalogWrite(db,token);
             StockRequest r=readRequest(db,"request_id=?",requestId);
             if(r==null||"APPLIED".equals(r.state))throw new IllegalStateException("Applied or unknown movement cannot be cancelled");
             if(previousMovement(db,r.id,r.materialId,r.catalogRevision,r.stockRevision,r.delta,r.reason)!=null)
                 throw new IllegalStateException("Recorded movement cannot be cancelled");
-            if("PENDING".equals(r.state))resolveRequest(db,requestId,"CANCELLED");
+            if("PENDING".equals(r.state)){
+                resolveRequest(db,requestId,"CANCELLED");
+                AdminJournal.append(db,actor,"STOCK_CANCEL",r.materialId,r.stockRevision,r.id);
+            }
             db.setTransactionSuccessful();
         }finally{db.endTransaction();}
     }
@@ -368,6 +1175,7 @@ public final class CatalogStore extends SQLiteOpenHelper {
         String reason=StockMath.reason(note);
         SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
         try {
+            authorizeCatalogWrite(db,null);
             if(readRequest(db,"request_id=?",requestId)!=null)throw new IllegalStateException("Use staged movement recovery for this identity");
             StockMath.Balance prior=previousMovement(db,requestId,id,catalogRevision,expectedStockRevision,delta,reason);
             if(prior!=null){db.setTransactionSuccessful();return prior;}
@@ -426,3 +1234,4 @@ public final class CatalogStore extends SQLiteOpenHelper {
         db.insertOrThrow("catalog_history", null, record);
     }
 }
+
