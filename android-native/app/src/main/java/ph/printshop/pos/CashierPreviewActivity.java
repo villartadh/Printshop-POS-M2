@@ -40,7 +40,8 @@ public final class CashierPreviewActivity extends Activity {
     private CatalogStore store;
     // Worker confined, never serialized, never placed in a View or preferences.
     private String workerToken;
-    private static final int BACKUP_EXPORT=7101;
+    private static final int BACKUP_EXPORT=7101,BACKUP_IMPORT=7102;
+    private android.net.Uri pendingBackupImport;
     // Only authenticated ciphertext crosses the external document-picker lifecycle.
     private byte[] pendingBackupExport;
     private LinearLayout page;
@@ -77,7 +78,7 @@ public final class CashierPreviewActivity extends Activity {
         else screen("Training unavailable","The isolated fixture could not be opened. No replacement or reset was attempted.");
     }
     @Override protected void onStop(){
-        active=false;epoch++;busy=false;signedIn=false;handler.removeCallbacks(expiry);
+        active=false;epoch++;busy=false;signedIn=false;pendingBackupImport=null;handler.removeCallbacks(expiry);
         // Do not keep credentials, pending proposal or receipt Views visible while backgrounded.
         page.removeAllViews();
         if(store!=null)worker.execute(this::logoutWorker);
@@ -85,7 +86,7 @@ public final class CashierPreviewActivity extends Activity {
     }
     @Override protected void onDestroy(){
         handler.removeCallbacks(expiry);
-        clearBackupExport();
+        clearBackupExport();pendingBackupImport=null;
         if(store!=null)worker.execute(()->{logoutWorker();store.close();});
         worker.shutdown();super.onDestroy();
     }
@@ -309,7 +310,7 @@ public final class CashierPreviewActivity extends Activity {
     }
     private void lockAndReload(){
         if(!active||store==null)return;
-        epoch++;busy=false;signedIn=false;handler.removeCallbacks(expiry);
+        epoch++;busy=false;signedIn=false;pendingBackupImport=null;handler.removeCallbacks(expiry);
         screen("Training locked","Signing out…");
         worker.execute(this::logoutWorker);loadEntry();
     }
@@ -370,7 +371,13 @@ public final class CashierPreviewActivity extends Activity {
         button("Training collection history",R.id.cashier_collection_history,()->showCollectionHistory(0));
         button("Training drawer history",R.id.cashier_drawer_history,()->showDrawerHistory(0));
         button("Change my training passphrase",R.id.cashier_change_pass,()->showCredentialChange(false));
+        if(d.actor.role!=CashierSecurity.Role.OWNER)pendingBackupImport=null;
         if(d.actor.role==CashierSecurity.Role.OWNER){
+            button("Review encrypted training backup",R.id.cashier_backup_import,this::showBackupImport);
+            if(pendingBackupImport!=null){
+                button("Validate selected backup",R.id.cashier_backup_validate,this::showBackupValidation);
+                button("Discard selected backup",0,()->{pendingBackupImport=null;refreshDashboard();});
+            }
             button("Encrypted training backup",R.id.cashier_backup,this::showBackupExport);
             button("Training sale refunds / voids",R.id.cashier_refund_receipts,()->showRefundReceipts(0));
             button("Refund / void history",R.id.cashier_refund_history,()->showRefundHistory(0));
@@ -411,8 +418,54 @@ public final class CashierPreviewActivity extends Activity {
         try{startActivityForResult(picker,BACKUP_EXPORT);}
         catch(RuntimeException e){clearBackupExport();status.setText("Unable to open backup destination. No archive exported.");}
     }
+    private void showBackupImport(){
+        pendingBackupImport=null;mode="backup-import";
+        screen("Review encrypted backup","Training only. Select an encrypted archive. Sign in again as owner before reading it. Review never replaces the current database.");
+        button("Choose backup file",R.id.cashier_backup_choose,()->{
+            Intent picker=new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("application/octet-stream");
+            try{startActivityForResult(picker,BACKUP_IMPORT);}
+            catch(RuntimeException e){status.setText("Unable to open backup source.");}
+        });
+        back();
+    }
+    private void showBackupValidation(){
+        if(pendingBackupImport==null){refreshDashboard();return;}
+        mode="backup-validation";screen("Validate selected backup","Enter the separate archive passphrase. No data will be restored or changed.");
+        EditText password=credentialField("Backup passphrase",R.id.cashier_backup_password);
+        button("Validate read-only backup",R.id.cashier_backup_review,()->{
+            android.net.Uri source=pendingBackupImport;
+            if(source==null){refreshDashboard();return;}
+            char[] secret=takePassword(password);pendingBackupImport=null;
+            boolean queued=submit(()->{
+                byte[] archive=null;
+                try{
+                    String token=session();
+                    if(store.fixturePrincipal(token).role!=CashierSecurity.Role.OWNER)throw new IllegalStateException("Owner authorization required");
+                    try(java.io.InputStream in=getContentResolver().openInputStream(source)){archive=BackupFileTransfer.read(in);}
+                    catch(java.io.IOException e){throw new IllegalArgumentException("Backup file cannot be read",e);}
+                    return store.reviewEncryptedFixtureBackup(token,archive,secret);
+                }finally{Arrays.fill(secret,'\0');if(archive!=null)Arrays.fill(archive,(byte)0);}
+            },v->showBackupReview((NativeBackupSnapshot.Review)v));
+            if(!queued)Arrays.fill(secret,'\0');
+        });
+        button("Discard selected backup",R.id.cashier_back,()->{pendingBackupImport=null;refreshDashboard();});
+    }
+    private void showBackupReview(NativeBackupSnapshot.Review review){
+        mode="backup-reviewed";screen("Backup validated","Read-only candidate passed integrity checks. The current training database was not changed.");
+        label("Schema version: "+review.schema);
+        label("Recorded cash sales: "+review.sales);
+        label("Pending sales requests: "+review.pendingSales);
+        label("Open shifts: "+review.openShifts);
+        label("Credit sources: "+review.creditSources);
+        label("Restore is not available yet.");back();
+    }
     @Override protected void onActivityResult(int request,int result,Intent data){
         super.onActivityResult(request,result,data);
+        if(request==BACKUP_IMPORT){
+            if(active)lockAndReload();
+            pendingBackupImport=result==RESULT_OK&&data!=null?data.getData():null;
+            return;
+        }
         if(request!=BACKUP_EXPORT)return;
         byte[] archive=pendingBackupExport;pendingBackupExport=null;
         if(result!=RESULT_OK||data==null||data.getData()==null||archive==null){if(archive!=null)Arrays.fill(archive,(byte)0);return;}

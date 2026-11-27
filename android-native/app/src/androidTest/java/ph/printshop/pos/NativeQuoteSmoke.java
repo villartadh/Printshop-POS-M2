@@ -94,7 +94,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "native cashier training UI"; verifyCashierTrainingScreen(screen);
             phase = "native receipt PDF"; verifyReceiptPdf();
             phase = "native encrypted backup snapshot"; verifyNativeBackupSnapshot();
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_RECURRING_UI_PASS\nNATIVE_CUSTOMER_DIRECTORY_PASS\nNATIVE_CUSTOMER_CHECKOUT_PASS\nNATIVE_CREDIT_COLLECTION_API_PASS\nNATIVE_CREDIT_REPORT_PASS\nNATIVE_CREDIT_CHECKOUT_UI_PASS\nNATIVE_CREDIT_COLLECTION_UI_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\nNATIVE_SAVED_QUOTATION_PASS\nNATIVE_QUOTATION_CASH_CONVERSION_PASS\nNATIVE_QUOTATION_CREDIT_CONVERSION_PASS\nNATIVE_QUOTATION_UI_PASS\nNATIVE_PRODUCTION_JOURNAL_PASS\nNATIVE_PRODUCTION_UI_PASS\nNATIVE_PRODUCTION_POLICY_PASS\nNATIVE_QUOTE_PRODUCTION_PASS\nNATIVE_QUOTE_PRODUCTION_UI_PASS\nNATIVE_RECEIPT_PDF_PASS\nNATIVE_RECEIPT_REPRINT_PASS\nNATIVE_BACKUP_SNAPSHOT_PASS\n");
+            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_RECURRING_UI_PASS\nNATIVE_CUSTOMER_DIRECTORY_PASS\nNATIVE_CUSTOMER_CHECKOUT_PASS\nNATIVE_CREDIT_COLLECTION_API_PASS\nNATIVE_CREDIT_REPORT_PASS\nNATIVE_CREDIT_CHECKOUT_UI_PASS\nNATIVE_CREDIT_COLLECTION_UI_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\nNATIVE_SAVED_QUOTATION_PASS\nNATIVE_QUOTATION_CASH_CONVERSION_PASS\nNATIVE_QUOTATION_CREDIT_CONVERSION_PASS\nNATIVE_QUOTATION_UI_PASS\nNATIVE_PRODUCTION_JOURNAL_PASS\nNATIVE_PRODUCTION_UI_PASS\nNATIVE_PRODUCTION_POLICY_PASS\nNATIVE_QUOTE_PRODUCTION_PASS\nNATIVE_QUOTE_PRODUCTION_UI_PASS\nNATIVE_RECEIPT_PDF_PASS\nNATIVE_RECEIPT_REPRINT_PASS\nNATIVE_BACKUP_SNAPSHOT_PASS\nNATIVE_BACKUP_IMPORT_UI_PASS\n");
             result = Activity.RESULT_OK;
         } catch (Throwable error) {
             evidence.putString("stream", failureDetails(phase, error));
@@ -220,6 +220,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             awaitText(first,"No open shift","cashier login failed");
             runOnMainChecked(()->{
                 require(setup.findViewById(R.id.cashier_add_staff)==null,"cashier visible owner-only action");
+                require(setup.findViewById(R.id.cashier_backup_import)==null&&setup.findViewById(R.id.cashier_backup_validate)==null,"cashier visible owner backup review");
                 require(setup.findViewById(R.id.cashier_inventory)==null,"cashier visible owner-only inventory");
                 require(setup.findViewById(R.id.cashier_manage_staff)==null,"cashier visible owner-only staff management");
                 require(setup.findViewById(R.id.cashier_admin_history)==null,"cashier visible owner-only audit");
@@ -409,6 +410,42 @@ public final class NativeQuoteSmoke extends Instrumentation {
         // Earlier UI workflow has completed and its original financial invariants were checked.
         trainingLogin(activity,owner,ownerPass);
         awaitText(activity,"No open shift","owner login for catalog failed");
+        trainingClick(activity,R.id.cashier_backup_import);
+        awaitText(activity,"Review encrypted backup","owner backup import screen missing");
+        runOnMainChecked(()->require(activity.findViewById(R.id.cashier_backup_choose)!=null,"backup picker action missing"));
+        // Stub only the external picker result; the real activity, resolver, owner login,
+        // archive authentication, SQLite review and returned summary all run installed.
+        java.io.File archiveFile=null;char[] ownerSecret=ownerPass.toCharArray();
+        char[] archiveSecret="Synthetic-import-archive-01".toCharArray();
+        try{
+            archiveFile=java.io.File.createTempFile("synthetic-import-",".psposbackup",getTargetContext().getCacheDir());
+            try(CatalogStore store=CatalogStore.checkoutFixture(getTargetContext(),fixtureId)){
+                String token=store.signInFixture(owner,ownerSecret);
+                byte[] archive=store.encryptedFixtureBackup(token,archiveSecret);
+                try(java.io.FileOutputStream out=new java.io.FileOutputStream(archiveFile)){BackupFileTransfer.write(out,archive);}
+                finally{java.util.Arrays.fill(archive,(byte)0);store.signOutFixture(token);}
+            }
+            android.content.IntentFilter filter=new android.content.IntentFilter(Intent.ACTION_OPEN_DOCUMENT);
+            filter.addCategory(Intent.CATEGORY_OPENABLE);filter.addDataType("application/octet-stream");
+            Intent result=new Intent().setData(android.net.Uri.fromFile(archiveFile));
+            ActivityMonitor monitor=addMonitor(filter,new ActivityResult(Activity.RESULT_OK,result),true);
+            try{
+                trainingClick(activity,R.id.cashier_backup_choose);
+                awaitText(activity,"Training sign in","backup picker must require owner reauthentication");
+                require(monitor.getHits()==1,"backup document intent not observed");
+            }finally{removeMonitor(monitor);}
+            trainingLogin(activity,owner,ownerPass);
+            awaitText(activity,"Validate selected backup","selected archive not available after owner sign in");
+            trainingClick(activity,R.id.cashier_backup_validate);
+            trainingField(activity,R.id.cashier_backup_password,"Synthetic-import-archive-01");
+            trainingClick(activity,R.id.cashier_backup_review);
+            awaitText(activity,"Backup validated","read-only imported archive failed validation");
+            awaitText(activity,"Restore is not available yet.","restore unexpectedly enabled");
+            trainingClick(activity,R.id.cashier_back);
+            awaitText(activity,"No open shift","backup review return failed");
+            runOnMainChecked(()->require(activity.findViewById(R.id.cashier_backup_validate)==null,"selected archive retained after review"));
+        }catch(java.io.IOException|android.content.IntentFilter.MalformedMimeTypeException e){throw new AssertionError("synthetic picker fixture failed",e);}
+        finally{java.util.Arrays.fill(ownerSecret,'\0');java.util.Arrays.fill(archiveSecret,'\0');if(archiveFile!=null)archiveFile.delete();}
         trainingClick(activity,R.id.cashier_backup);
         awaitText(activity,"Encrypted backup export","owner backup screen missing");
         trainingField(activity,R.id.cashier_backup_password,"Synthetic-export-password-01");

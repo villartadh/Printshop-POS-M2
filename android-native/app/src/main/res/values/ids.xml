@@ -217,4 +217,8 @@
     <item type="id" name="cashier_backup_password"/>
     <item type="id" name="cashier_backup_confirm"/>
     <item type="id" name="cashier_backup_create"/>
+    <item type="id" name="cashier_backup_import"/>
+    <item type="id" name="cashier_backup_choose"/>
+    <item type="id" name="cashier_backup_validate"/>
+    <item type="id" name="cashier_backup_review"/>
 </resources>
