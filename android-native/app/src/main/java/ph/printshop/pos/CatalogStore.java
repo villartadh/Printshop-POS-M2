@@ -610,6 +610,12 @@ public final class CatalogStore extends SQLiteOpenHelper {
     List<ProductionJournal.Job> authorizedFixtureJobs(String token,int offset){
         return fixtureTransaction(db->ProductionJournal.page(db,CashierJournal.requireSession(db,token,System.currentTimeMillis()),offset));
     }
+    ProductionJournal.Job findAuthorizedFixtureJob(String token,String receipt){
+        return fixtureTransaction(db->{StockMath.validateRequestId(receipt);return ProductionJournal.read(db,CashierJournal.requireSession(db,token,System.currentTimeMillis()),receipt);});
+    }
+    List<ProductionJournal.Event> authorizedFixtureJobHistory(String token,String receipt,int offset){
+        return fixtureTransaction(db->ProductionJournal.history(db,CashierJournal.requireSession(db,token,System.currentTimeMillis()),receipt,offset));
+    }
     ProductionJournal.Job authorizedFixtureJob(String token,String receipt){
         return fixtureTransaction(db->{StockMath.validateRequestId(receipt);ProductionJournal.Job job=ProductionJournal.read(db,CashierJournal.requireSession(db,token,System.currentTimeMillis()),receipt);
             if(job==null)throw new IllegalStateException("Job unavailable");return job;});

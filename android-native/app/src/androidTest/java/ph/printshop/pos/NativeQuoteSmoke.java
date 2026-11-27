@@ -90,7 +90,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "pricing settings and document quote"; verifyPricingScreen(screen);
             phase = "measured quote"; verifyMeasuredQuote(screen);
             phase = "native cashier training UI"; verifyCashierTrainingScreen(screen);
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_RECURRING_UI_PASS\nNATIVE_CUSTOMER_DIRECTORY_PASS\nNATIVE_CUSTOMER_CHECKOUT_PASS\nNATIVE_CREDIT_COLLECTION_API_PASS\nNATIVE_CREDIT_REPORT_PASS\nNATIVE_CREDIT_CHECKOUT_UI_PASS\nNATIVE_CREDIT_COLLECTION_UI_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\nNATIVE_SAVED_QUOTATION_PASS\nNATIVE_QUOTATION_CASH_CONVERSION_PASS\nNATIVE_QUOTATION_CREDIT_CONVERSION_PASS\nNATIVE_QUOTATION_UI_PASS\nNATIVE_PRODUCTION_JOURNAL_PASS\n");
+            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_RECURRING_UI_PASS\nNATIVE_CUSTOMER_DIRECTORY_PASS\nNATIVE_CUSTOMER_CHECKOUT_PASS\nNATIVE_CREDIT_COLLECTION_API_PASS\nNATIVE_CREDIT_REPORT_PASS\nNATIVE_CREDIT_CHECKOUT_UI_PASS\nNATIVE_CREDIT_COLLECTION_UI_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\nNATIVE_SAVED_QUOTATION_PASS\nNATIVE_QUOTATION_CASH_CONVERSION_PASS\nNATIVE_QUOTATION_CREDIT_CONVERSION_PASS\nNATIVE_QUOTATION_UI_PASS\nNATIVE_PRODUCTION_JOURNAL_PASS\nNATIVE_PRODUCTION_UI_PASS\n");
             result = Activity.RESULT_OK;
         } catch (Throwable error) {
             evidence.putString("stream", failureDetails(phase, error));
@@ -376,6 +376,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             verifyCollectionUI(second,fixtureId,owner,ownerPass);
             verifyQuotationUI(second,fixtureId,owner,ownerPass);
             verifyProductionJournal(fixtureId);
+            verifyProductionUI(second);
             try(CatalogStore ordinary=new CatalogStore(context)){
                 java.util.List<CatalogEntry> after=ordinary.list(true);
                 require(before.size()==after.size(),"ordinary catalog changed");
@@ -1274,7 +1275,19 @@ public final class NativeQuoteSmoke extends Instrumentation {
         awaitText(a,"Confirm quotation conversion","cash review");
         trainingClick(a,R.id.cashier_quote_confirm);awaitText(a,"Training quotation · Cash converted","cash link");
         trainingClick(a,R.id.cashier_quote_receipt);awaitText(a,"Recorded training receipt","cash receipt");
-        trainingClick(a,R.id.cashier_return_home);awaitText(a,"Shift open · Expected cash: PHP 26.00","cash conversion effect once");
+        trainingClick(a,R.id.cashier_job_receipt);awaitText(a,"Create training production job","create job screen");
+        trainingField(a,R.id.cashier_job_note,"Synthetic print instructions");trainingClick(a,R.id.cashier_job_confirm);
+        awaitText(a,"Training job · Pending","job created");
+        for(String stage:new String[]{"In production","Quality checking","Ready for pickup","Completed"}){
+            trainingSelect(a,"Move to "+stage);
+            awaitText(a,stage.equals("Completed")?"Confirm job release":"Confirm production transition","job transition review");
+            trainingField(a,R.id.cashier_job_note,"Synthetic "+stage);trainingClick(a,R.id.cashier_job_confirm);
+            awaitText(a,"Training job · "+stage,"job stage");
+        }
+        trainingClick(a,R.id.cashier_job_history);awaitText(a,"Training job event history","job history");
+        awaitText(a,"#5 · Completed","job final history");awaitText(a,"#1 · Pending","job creation history");
+        trainingClick(a,R.id.cashier_job_reload);awaitText(a,"Training job · Completed","job return");
+        trainingClick(a,R.id.cashier_back);awaitText(a,"Shift open · Expected cash: PHP 26.00","cash conversion effect once");
         trainingClick(a,R.id.cashier_close_shift);awaitText(a,"Close training shift","quote close");
         trainingField(a,R.id.cashier_counted,"26.00");trainingClick(a,R.id.cashier_confirm_close);
         awaitText(a,"Variance: PHP 0.00","quote exact close");
@@ -1298,28 +1311,35 @@ public final class NativeQuoteSmoke extends Instrumentation {
                     require(c.moveToFirst(),"cash conversion missing");cash=c.getString(0);}
                 try(android.database.Cursor c=fixture.getReadableDatabase().rawQuery("SELECT checkout_id FROM saved_quotation_credit_conversions",null)){
                     require(c.moveToFirst(),"credit conversion missing");credit=c.getString(0);}
+                require(fixture.authorizedFixtureJob(token,cash).status==ProductionWorkflow.Status.COMPLETED,"cash UI release");
                 String event=java.util.UUID.randomUUID().toString();
-                require(fixture.appendAuthorizedFixtureJob(token,cash,event,0,ProductionWorkflow.Status.PENDING,"Synthetic job").revision==1,"job creation");
-                require(fixture.appendAuthorizedFixtureJob(token,cash,event,0,ProductionWorkflow.Status.PENDING,"Synthetic job").revision==1,"job replay");
-                for(String receipt:new String[]{cash,credit}){
-                    if(receipt.equals(credit))fixture.appendAuthorizedFixtureJob(token,credit,java.util.UUID.randomUUID().toString(),0,ProductionWorkflow.Status.PENDING,"Synthetic job");
-                    long revision=1;
-                    for(ProductionWorkflow.Status status:new ProductionWorkflow.Status[]{ProductionWorkflow.Status.IN_PRODUCTION,ProductionWorkflow.Status.QUALITY_CHECKING,ProductionWorkflow.Status.READY_FOR_PICKUP}){
-                        ProductionJournal.Job job=fixture.appendAuthorizedFixtureJob(token,receipt,java.util.UUID.randomUUID().toString(),revision++,status,"Synthetic transition");
-                        require(job.status==status&&job.revision==revision,"job stage");
-                    }
-                    if(receipt.equals(cash)){
-                        require(fixture.appendAuthorizedFixtureJob(token,cash,java.util.UUID.randomUUID().toString(),4,ProductionWorkflow.Status.COMPLETED,"Synthetic release").status==ProductionWorkflow.Status.COMPLETED,"paid release");
-                    }else{
-                        try{fixture.appendAuthorizedFixtureJob(token,credit,java.util.UUID.randomUUID().toString(),4,ProductionWorkflow.Status.COMPLETED,"Blocked unpaid release");throw new AssertionError("unpaid job released");}
-                        catch(IllegalStateException expected){}
-                        require(fixture.authorizedFixtureJob(token,credit).financial.balance==1600,"live job debt");
-                    }
+                require(fixture.appendAuthorizedFixtureJob(token,credit,event,0,ProductionWorkflow.Status.PENDING,"Synthetic job").revision==1,"credit job creation");
+                require(fixture.appendAuthorizedFixtureJob(token,credit,event,0,ProductionWorkflow.Status.PENDING,"Synthetic job").revision==1,"credit job replay");
+                long revision=1;
+                for(ProductionWorkflow.Status status:new ProductionWorkflow.Status[]{ProductionWorkflow.Status.IN_PRODUCTION,ProductionWorkflow.Status.QUALITY_CHECKING,ProductionWorkflow.Status.READY_FOR_PICKUP}){
+                    ProductionJournal.Job job=fixture.appendAuthorizedFixtureJob(token,credit,java.util.UUID.randomUUID().toString(),revision++,status,"Synthetic transition");
+                    require(job.status==status&&job.revision==revision,"job stage");
                 }
+                try{fixture.appendAuthorizedFixtureJob(token,credit,java.util.UUID.randomUUID().toString(),4,ProductionWorkflow.Status.COMPLETED,"Blocked unpaid release");throw new AssertionError("unpaid job released");}
+                catch(IllegalStateException expected){}
+                require(fixture.authorizedFixtureJob(token,credit).financial.balance==1600,"live job debt");
                 require(fixture.authorizedFixtureJobs(token,0).size()==2,"job page");
                 fixture.signOutFixture(token);
             }finally{java.util.Arrays.fill(pw,'\0');}
         }
+    }
+
+    private void verifyProductionUI(Activity a){
+        trainingLogin(a,"catalog-cashier","Synthetic-Catalog-Cashier-01");awaitText(a,"No open shift","job login");
+        trainingClick(a,R.id.cashier_jobs);awaitText(a,"Training production jobs","job page");
+        trainingSelect(a,"Synthetic UI configured · Ready for pickup");awaitText(a,"Training job · Ready for pickup","credit job detail");
+        awaitText(a,"Release blocked: collect outstanding payment first.","unpaid release fence");
+        runOnMainChecked(()->require(a.findViewById(R.id.cashier_job_release)==null,"unpaid release action visible"));
+        trainingClick(a,R.id.cashier_job_reload);awaitText(a,"Training job · Ready for pickup","reload job");
+        trainingClick(a,R.id.cashier_jobs);awaitText(a,"Training production jobs","return job page");
+        trainingSelect(a,"Synthetic UI configured · Completed");awaitText(a,"Training job · Completed","cash job detail");
+        trainingClick(a,R.id.cashier_back);awaitText(a,"No open shift","job dashboard");
+        trainingClick(a,R.id.cashier_lock);awaitText(a,"Training sign in","job logout");
     }
 
     /** Preserve exceptions from the UI thread without terminating instrumentation. */

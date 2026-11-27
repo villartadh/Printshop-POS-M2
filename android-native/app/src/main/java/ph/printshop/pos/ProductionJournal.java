@@ -47,6 +47,19 @@ final class ProductionJournal {
             while(c.moveToNext())result.add(new Job(c));
         }return result;
     }
+    static final class Event{
+        final long revision,created,actorRevision;
+        final String actor,status,note;
+        Event(Cursor c){revision=c.getLong(0);created=c.getLong(1);actorRevision=c.getLong(2);actor=c.getString(3);status=c.getString(4);note=c.getString(5);}
+    }
+    static List<Event> history(SQLiteDatabase db,CashierJournal.Principal actor,String receipt,int offset){
+        TrainingForms.validatePageOffset(offset);
+        if(read(db,actor,receipt)==null)throw new IllegalStateException("Job unavailable");
+        List<Event> rows=new ArrayList<>();
+        try(Cursor c=db.rawQuery("SELECT e.revision,e.created_ms,e.actor_revision,a.username,e.status,e.note FROM production_job_events e JOIN cashier_accounts a ON a.id=e.actor_id WHERE receipt_id=? ORDER BY e.revision DESC LIMIT 9 OFFSET ?",new String[]{receipt,Integer.toString(offset)})){
+            while(c.moveToNext())rows.add(new Event(c));
+        }return rows;
+    }
     static Job append(SQLiteDatabase db,CashierJournal.Principal actor,String receipt,String event,long prior,ProductionWorkflow.Status target,String rawNote,long now){
         StockMath.validateRequestId(receipt);StockMath.validateRequestId(event);
         if(prior<0||prior==Long.MAX_VALUE||target==null)throw new IllegalArgumentException("Invalid production revision");

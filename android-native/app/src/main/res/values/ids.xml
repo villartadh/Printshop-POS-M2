@@ -200,4 +200,11 @@
     <item name="cashier_quote_cancel" type="id"/>
     <item name="cashier_quote_reload" type="id"/>
     <item name="cashier_quote_confirm" type="id"/>
+    <item name="cashier_jobs" type="id"/>
+    <item name="cashier_job_receipt" type="id"/>
+    <item name="cashier_job_note" type="id"/>
+    <item name="cashier_job_confirm" type="id"/>
+    <item name="cashier_job_reload" type="id"/>
+    <item name="cashier_job_release" type="id"/>
+    <item name="cashier_job_history" type="id"/>
 </resources>
