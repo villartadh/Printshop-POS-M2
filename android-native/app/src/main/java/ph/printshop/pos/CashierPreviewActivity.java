@@ -869,6 +869,14 @@ public final class CashierPreviewActivity extends Activity {
                     button("Configure training pricing",R.id.cashier_catalog_pricing,()->showOwnerPricing(detail));
                     label("Recipe: "+detail.bindings.size()+" linked material(s) · revision "+detail.recipeRevision);
                     button("Configure training recipe",R.id.cashier_catalog_recipe,()->showOwnerRecipe(detail,0));
+                    label("Production jobs: "+(detail.production.enabled?"Automatic":"Manual")+" · revision "+detail.production.revision);
+                    button("Configure production jobs",R.id.cashier_production_policy,()->{
+                        mode="production-policy";screen("Production job setting","Applies only to future successful sales. Existing receipts and jobs are unchanged.");
+                        boolean enabled=!detail.production.enabled;
+                        button(enabled?"Enable automatic jobs":"Use manual jobs",R.id.cashier_production_policy_save,()->submit(
+                            ()->store.setAuthorizedFixtureProductionPolicy(session(),item.id,item.revision,detail.production.revision,enabled),v2->showOwnerDetail(item.id)));
+                        button("Keep current setting",R.id.cashier_catalog_return,()->showOwnerDetail(item.id));back();
+                    });
                 }
             }
             button(item.archived?"Restore training item":"Archive training item",R.id.cashier_catalog_archive,()->showCatalogArchive(item));

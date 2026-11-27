@@ -23,6 +23,18 @@ with tempfile.TemporaryDirectory() as temp, closing(sqlite3.connect(str(Path(tem
     before=snapshot(db,names)
     for sql in statements("ProductionJournal.java"): db.execute(sql)
     check(snapshot(db,names)==before,"v20 migration preserves financial data")
+    for statement in statements("ProductionPolicy.java"): db.execute(statement)
+    check(db.execute("SELECT COUNT(*) FROM production_service_policy").fetchone()==(0,),"default manual policy")
+    policy="INSERT INTO production_service_policy VALUES(?,?,?,?,?,?,?)"
+    reject(db,policy,("service",1,1,1,"staff",1,20))
+    reject(db,policy,("service",1,2,1,"owner",1,20))
+    reject(db,policy,("service",2,1,1,"owner",1,20))
+    db.execute(policy,("service",1,1,1,"owner",1,20))
+    reject(db,policy,("service",1,1,0,"owner",1,21))
+    db.execute(policy,("service",2,1,0,"owner",1,21))
+    reject(db,"UPDATE production_service_policy SET enabled=0")
+    reject(db,"DELETE FROM production_service_policy")
+    check(snapshot(db,names)==before,"policy changes have no financial effect")
     sql="INSERT INTO production_job_events VALUES(?,?,?,?,?,?,?,?)"
     def event(id,receipt,rev,state,actor="staff",actor_rev=1,at=20):
         return (id,receipt,rev,state,actor,actor_rev,"Synthetic job event",at)
