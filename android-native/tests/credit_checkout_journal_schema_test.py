@@ -1,4 +1,4 @@
-"""Combined synthetic credit checkout/stock/debt/cash candidate; no runtime migration."""
+"""Combined synthetic credit checkout/stock/debt/cash schema migration and synthetic SQL fixtures."""
 import drawer_journal_schema_test as prior
 from drawer_journal_schema_test import *
 start=prior.checks
@@ -31,6 +31,7 @@ with sqlite3.connect(":memory:") as db:
         return (id,"paper",move,"sheet",1,srev,1000,qty,before,before-qty)
     def resolve_credit(id,state="APPLIED",at=7):
         db.execute("UPDATE credit_checkout_requests SET state=?,resolved_ms=?,resolved_revision=1,cancel_reason=? WHERE id=?",(state,at,None if state=="APPLIED" else "Synthetic cancel",id))
+    def inputs(id):db.execute("INSERT INTO credit_checkout_inputs VALUES(?,1,1,1,NULL,NULL,NULL,'BILLABLE_UNIT')",(id,))
     def source_count():return db.execute("SELECT COUNT(*) FROM credit_receivable_sources").fetchone()[0]
     def state_credit(id):return db.execute("SELECT state FROM credit_checkout_requests WHERE id=?",(id,)).fetchone()[0]
     reject(db,req,proposal("bad",actor="owner"));reject(db,req,proposal("bad",paid=500))
@@ -41,6 +42,12 @@ with sqlite3.connect(":memory:") as db:
     reject(db,mat,material("partial","bad",srev=2))
     reject(db,"UPDATE credit_checkout_requests SET state='APPLIED',resolved_ms=7,resolved_revision=1 WHERE id='partial'")
     db.execute(mat,material("partial","movement1"))
+    reject(db,"UPDATE credit_checkout_requests SET state='APPLIED',resolved_ms=7,resolved_revision=1 WHERE id='partial'")
+    inputs("partial")
+    reject(db,"UPDATE credit_checkout_inputs SET input_count=2 WHERE request_id='partial'")
+    reject(db,"DELETE FROM credit_checkout_inputs WHERE request_id='partial'")
+    reject(db,"INSERT INTO credit_checkout_inputs VALUES('partial',1,1,1,NULL,NULL,NULL,'BILLABLE_UNIT')")
+
     reject(db,mat,material("partial","movement2"))
     reject(db,"UPDATE credit_checkout_materials SET quantity_milli=999 WHERE request_id='partial'")
     check(stock()==(10000,1) and cash(db,"open")==1000 and source_count()==0,"staging no financial effects")
@@ -54,21 +61,22 @@ with sqlite3.connect(":memory:") as db:
     check(stock()==(10000,1) and cash(db,"open")==1000 and source_count()==0 and state_credit("partial")=="PENDING","stock/debt/cash rollback together")
     db.execute("DROP TRIGGER synthetic_fault");resolve_credit("partial")
     check(stock()==(9000,2) and cash(db,"open")==1200 and source_count()==1,"atomic partial sale")
+    check(db.execute("SELECT input_count,pages,copies,basis FROM credit_checkout_inputs WHERE request_id='partial'").fetchone()==(1,1,1,"BILLABLE_UNIT"),"raw inputs persisted")
     check(db.execute("SELECT remaining FROM credit_receivable_open WHERE id='partial'").fetchone()==(300,),"partial debt")
     reject(db,"UPDATE credit_checkout_requests SET state='APPLIED' WHERE id='partial'")
     reject(db,"UPDATE stock_movements SET reason='altered' WHERE request_id='movement1'")
     reject(db,"DELETE FROM stock_movements WHERE request_id='movement1'")
-    db.execute(req,proposal("unpaid",paid=0,at=8));db.execute(mat,material("unpaid","movement2",srev=2,before=9000));resolve_credit("unpaid",at=9)
+    db.execute(req,proposal("unpaid",paid=0,at=8));inputs("unpaid");db.execute(mat,material("unpaid","movement2",srev=2,before=9000));resolve_credit("unpaid",at=9)
     check(stock()==(8000,3) and cash(db,"open")==1200 and source_count()==2,"unpaid consumes stock without cash")
-    db.execute(req,proposal("stale",at=10));db.execute(mat,material("stale","movement3",srev=3,before=8000))
+    db.execute(req,proposal("stale",at=10));inputs("stale");db.execute(mat,material("stale","movement3",srev=3,before=8000))
     db.execute("INSERT INTO stock_movements VALUES('other-move','paper',1,4,'sheet','Synthetic competing adjustment',1000,8000,9000,11)")
     reject(db,"UPDATE credit_checkout_requests SET state='APPLIED',resolved_ms=12,resolved_revision=1 WHERE id='stale'")
     resolve_credit("stale","CANCELLED",12)
     check(stock()==(9000,4) and source_count()==2 and cash(db,"open")==1200,"stale cancel no sale")
-    db.execute(req,proposal("price",rate=499,total=499,at=13));db.execute(mat,material("price","movement4",srev=4,before=9000))
+    db.execute(req,proposal("price",rate=499,total=499,at=13));inputs("price");db.execute(mat,material("price","movement4",srev=4,before=9000))
     reject(db,"UPDATE credit_checkout_requests SET state='APPLIED',resolved_ms=14,resolved_revision=1 WHERE id='price'")
     resolve_credit("price","CANCELLED",14)
-    db.execute(req,proposal("cancel",at=15));db.execute(mat,material("cancel","movement5",srev=4,before=9000));resolve_credit("cancel","CANCELLED",16)
+    db.execute(req,proposal("cancel",at=15));inputs("cancel");db.execute(mat,material("cancel","movement5",srev=4,before=9000));resolve_credit("cancel","CANCELLED",16)
     check(stock()==(9000,4) and cash(db,"open")==1200 and source_count()==2,"cancellation no stock or debt")
     close(db,"open",1200,1200)
     check(not db.execute("PRAGMA foreign_key_check").fetchall(),"foreign key integrity")

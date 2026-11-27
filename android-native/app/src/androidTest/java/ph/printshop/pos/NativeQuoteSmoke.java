@@ -66,6 +66,8 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "v12 recurring migration"; verifyCheckoutMigration(12);
             phase = "v13 customer migration"; verifyCheckoutMigration(13);
             phase = "v14 checkout-customer migration"; verifyCheckoutMigration(14);
+            phase = "v15 credit migration"; verifyCheckoutMigration(15);
+            phase = "credit checkout fixture"; verifyCreditCheckout();
             phase = "customer checkout fixture"; verifyCustomerCheckoutLink();
             phase = "durable atomic checkout fixture"; verifyDurableCheckout();
             phase = "cashier authorization and shift fixture"; verifyCashierAuthShift();
@@ -887,6 +889,45 @@ public final class NativeQuoteSmoke extends Instrumentation {
         }
     }
 
+    private void verifyCreditCheckout(){
+        android.content.Context context=getTargetContext();String fixture=stockId(),filename="checkout-fixture-"+fixture+".db";
+        char[] ownerPass="Synthetic-Credit-Owner-01".toCharArray(),staffPass="Synthetic-Credit-Staff-01".toCharArray();
+        try(CatalogStore store=CatalogStore.checkoutFixture(context,fixture)){
+            store.bootstrapDemoFixtureOwner("credit-owner",ownerPass);String owner=store.signInFixture("credit-owner",ownerPass);
+            store.createFixtureCashier(owner,"credit-staff",staffPass);String staff=store.signInFixture("credit-staff",staffPass);
+            String customer=stockId(),shift=stockId();store.saveFixtureCustomer(owner,customer,0,"Synthetic credit customer","",true);
+            store.openFixtureShift(staff,shift,0);
+            CustomerLinkJournal.Selection selected=store.authorizedFixtureCheckoutCustomers(staff,shift,"credit",0,9).get(0);
+            CatalogEntry service=store.authorizedDemoService(staff);
+            CatalogStore.CheckoutSelection chosen=store.authorizedFixtureCheckoutSelection(staff,service.id,service.revision);
+            CheckoutPlan.Inputs partial=new CheckoutPlan.Inputs(1,1,1,null,null,null,CheckoutPlan.UsageBasis.BILLABLE_UNIT,100);
+            CreditCheckoutPlan plan=store.prepareAuthorizedFixtureCreditCheckout(staff,shift,stockId(),chosen,selected,partial);
+            require(plan.total==250&&plan.paid==100&&plan.owed==150,"partial credit pricing");
+            require(store.stageAuthorizedFixtureCreditCheckout(staff,shift,plan).state.equals("PENDING"),"credit stage");
+            require(store.stageAuthorizedFixtureCreditCheckout(staff,shift,plan).state.equals("PENDING"),"credit stage replay");
+            require(store.expectedFixtureCash(staff,shift)==0,"credit stage changed cash");
+            require(store.pendingAuthorizedFixtureCreditCheckout(staff,shift).id.equals(plan.id),"credit pending recovery");
+            rejectStock(()->store.authorizedFixtureCreditCheckout(owner,plan.id));
+            rejectStock(()->store.applyAuthorizedFixtureCreditCheckout(staff,plan.id,"wrong"));
+            require(store.applyAuthorizedFixtureCreditCheckout(staff,plan.id,plan.fingerprint).state.equals("APPLIED"),"credit apply");
+            store.applyAuthorizedFixtureCreditCheckout(staff,plan.id,plan.fingerprint);
+            require(store.expectedFixtureCash(staff,shift)==100,"partial credit cash replay");
+            require(trainingCount(store,"SELECT COUNT(*) FROM credit_receivable_sources")==1,"credit source replay");
+            CheckoutPlan.Inputs unpaid=new CheckoutPlan.Inputs(1,1,1,null,null,null,CheckoutPlan.UsageBasis.BILLABLE_UNIT,0);
+            CreditCheckoutPlan second=store.prepareAuthorizedFixtureCreditCheckout(staff,shift,stockId(),chosen,selected,unpaid);
+            store.stageAuthorizedFixtureCreditCheckout(staff,shift,second);
+            store.applyAuthorizedFixtureCreditCheckout(staff,second.id,second.fingerprint);
+            require(store.expectedFixtureCash(staff,shift)==100,"unpaid changed cash");
+            CreditCheckoutPlan third=store.prepareAuthorizedFixtureCreditCheckout(staff,shift,stockId(),chosen,selected,unpaid);
+            store.stageAuthorizedFixtureCreditCheckout(staff,shift,third);
+            store.cancelAuthorizedFixtureCreditCheckout(staff,third.id,third.fingerprint,"Synthetic cancellation");
+            require(store.cancelAuthorizedFixtureCreditCheckout(staff,third.id,third.fingerprint,"Synthetic cancellation").state.equals("CANCELLED"),"credit cancel replay");
+            rejectStock(()->store.applyAuthorizedFixtureCreditCheckout(staff,third.id,third.fingerprint));
+            require(trainingCount(store,"SELECT COUNT(*) FROM credit_receivable_sources")==2,"cancel invented credit");
+            require(store.pendingAuthorizedFixtureCreditCheckout(staff,shift)==null,"resolved credit remained pending");
+            rejectStock(()->store.authorizedFixtureSalesReport(owner,ReportMath.Period.DAY));
+        }finally{java.util.Arrays.fill(ownerPass,'\0');java.util.Arrays.fill(staffPass,'\0');context.deleteDatabase(filename);}
+    }
     private void verifyCustomerCheckoutLink(){
         android.content.Context context=getTargetContext();String fixture=stockId(),filename="checkout-fixture-"+fixture+".db";
         char[] ownerPass="Synthetic-Link-Owner-01".toCharArray(),staffPass="Synthetic-Link-Staff-01".toCharArray();
@@ -1150,7 +1191,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 db.setVersion(4);
             }
             try(CatalogStore store=new CatalogStore(context,filename)){
-                require(store.getReadableDatabase().getVersion()==15,"v4-to-v15 migration version wrong");
+                require(store.getReadableDatabase().getVersion()==16,"v4-to-v16 migration version wrong");
                 require(store.stockBalance(material).quantity==1500&&store.stockHistory(material,0,5).size()==1,"v4 stock lost");
                 require(store.recipeBindings(service).get(0).quantityMilli==500&&store.pricing(service).tiers.get(0).rateCentavos==250,"v4 recipe/pricing lost");
                 require(store.pendingStock(material)==null,"unexpected migrated pending request");
@@ -1341,10 +1382,11 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 if(former>=12)RefundJournal.upgrade(db);
                 if(former>=13)RecurringJournal.upgrade(db);
                 if(former>=14)CustomerJournal.upgrade(db);
+                if(former>=15)CustomerLinkJournal.upgrade(db);
                 db.setVersion(former);
             }
             try(CatalogStore store=former>=7?CatalogStore.checkoutFixture(context,fixture):new CatalogStore(context,filename)){
-                require(store.getReadableDatabase().getVersion()==15,"v5-v14 migration failed");
+                require(store.getReadableDatabase().getVersion()==16,"v5-v15 migration failed");
                 require(store.stockBalance(material).quantity==1500&&store.stockHistory(material,0,10).size()==1,"v5 stock changed");
                 require(store.pendingStock(material)!=null&&store.pendingStock(material).id.equals(pending),"v5 pending stock lost");
                 require(store.get(material).centavos==199,"v5 catalog changed");
@@ -2259,7 +2301,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             }
             java.util.List<PricingMath.Tier> tiers=java.util.Arrays.asList(new PricingMath.Tier(2000,200),new PricingMath.Tier(1000,250));
             try(CatalogStore store=new CatalogStore(context,filename)){
-                require(store.getReadableDatabase().getVersion()==15,"v3-to-v15 migration version wrong");
+                require(store.getReadableDatabase().getVersion()==16,"v3-to-v16 migration version wrong");
                 require(store.pricing(service).revision==0&&!store.pricing(service).needsAdvancedQuote(),"legacy default changed");
                 require(store.recipeRevision(service)==1&&store.stockBalance(material).quantity==1500,"migration changed recipe or stock");
                 PricingProfile saved=store.savePricing(service,1,0,PricingMath.Method.PER_PAGE,true,tiers);
