@@ -28,11 +28,12 @@ jobs:
       - name: Exact centavo tests
         run: |
           mkdir -p /tmp/quote-classes
-          javac -d /tmp/quote-classes android-native/app/src/main/java/ph/printshop/pos/QuoteMath.java android-native/tests/QuoteMathTest.java android-native/app/src/main/java/ph/printshop/pos/CatalogEntry.java android-native/tests/CatalogEntryTest.java android-native/app/src/main/java/ph/printshop/pos/StockMath.java android-native/tests/StockMathTest.java android-native/app/src/main/java/ph/printshop/pos/MaterialCost.java android-native/tests/MaterialCostTest.java
+          javac -d /tmp/quote-classes android-native/app/src/main/java/ph/printshop/pos/QuoteMath.java android-native/tests/QuoteMathTest.java android-native/app/src/main/java/ph/printshop/pos/CatalogEntry.java android-native/tests/CatalogEntryTest.java android-native/app/src/main/java/ph/printshop/pos/StockMath.java android-native/tests/StockMathTest.java android-native/app/src/main/java/ph/printshop/pos/MaterialCost.java android-native/tests/MaterialCostTest.java android-native/app/src/main/java/ph/printshop/pos/PricingMath.java android-native/tests/PricingMathTest.java
           java -cp /tmp/quote-classes ph.printshop.pos.QuoteMathTest
           java -cp /tmp/quote-classes ph.printshop.pos.CatalogEntryTest
           java -cp /tmp/quote-classes ph.printshop.pos.StockMathTest
           java -cp /tmp/quote-classes ph.printshop.pos.MaterialCostTest
+          java -cp /tmp/quote-classes ph.printshop.pos.PricingMathTest
       - name: Provision Android SDK
         uses: android-actions/setup-android@v4.0.3
         with:

@@ -86,7 +86,7 @@ Use the latest `DEVELOPMENT_QUEUE.md` entry rather than earlier historical snaps
 1. Check fresh integrated develop software and Android CI, then recipe PR #9 retargeted against develop. Prior run 45774433997 failed compile for Spinner minimum height; the repair uses the supported View API and captures native test stack traces and emulator crash buffer. No acceptance claims until all required jobs pass.
 2. Inspect the recipe UI pull request's CI. The installed native screen must emit `NATIVE_RECIPE_SCREEN_PASS` along with every preexisting marker and exact successful instrumentation code. Resolve real failures without relaxing checks. Retarget to develop only after #8 is integrated, then run full gates.
 3. For Android local verification, use JDK 17, Gradle 8.9, Android SDK 35/build-tools 34.0.0, an API 34 emulator and the checked-in `.github/workflows/android-native.yml`. Run `gradle -p android-native --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug`; install preview and instrumentation APKs on a disposable emulator only, then use the exact instrumentation command in CI. The native APK is not an official sales application; use synthetic data exclusively.
-4. After recipe UI acceptance, implement pricing-method parity and safe durable pending stock recovery in isolated branches. Preserve the distinction between estimated materials, editable selling price and actual stock movements. Physical devices, printing, and official BIR approval are still external gates.
+4. After recipe UI acceptance, inspect stacked `feature/native-android-pricing-math`. The exact pricing arithmetic has 41 passing local checks; verify JDK 17/Android CI and all parent gates before retarget/merge. Implement persistent pricing preferences, native input fields, measured fractional material costs and safe durable pending stock recovery next. See Android README for explicitly deferred parity gaps. Preserve the distinction between estimated materials, editable selling price and actual stock movements. Physical devices, printing, and official BIR approval are still external gates.
  
 
 ## Current branch cleanup — owner-approved 2026-11-26
@@ -109,3 +109,10 @@ The actual connectivity run 45801371514/job 139845142020 at `e1b9da05bd55cbb605c
 ## Copy-ready continuation prompt
 
 Continue Printshop POS M2 from the current GitHub repository. Read HANDOFF-README.md, AGENTS.md and the latest DEVELOPMENT_QUEUE.md checkpoint. Reconcile live branches, PRs and CI before changing code. Implement the next eligible task, test with synthetic data, preserve protected baselines, commit verified work and append the exact next action to the queue. Continue eligible milestones without routine approval; report genuine blockers and never claim unexecuted tests or production readiness. Preserve this handoff in all future source packages.
+
+
+## Current first integration — pricing math PR #10
+The feature branch has been reconciled with develop `30307cc42df54b0f022464bd96e24b3078a07731` (owner runner configuration preserved), while keeping exact existing pricing math and Android tests. Historical CI above is not fresh acceptance. Latest parent #9 is integrated; #10 now requires new exact Android and full Windows/Linux gates before merge. #11–#13 remain stacked, update/retarget in order. Self-hosted Windows remains opt-in only on isolated environment. See SELF_HOSTED_RUNNER.md and DEVELOPMENT_QUEUE.md.
+
+## Current Windows activation
+The owner enabled the isolated VMware route; see SELF_HOSTED_RUNNER.md for the activation checkpoint and live run 45924721267. Current reconciliation includes develop `5a7b3d53056486d53ed06bf4842f0c9081d7b0d2`; all original acceptance gates remain mandatory.
