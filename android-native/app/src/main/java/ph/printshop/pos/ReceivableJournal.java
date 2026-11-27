@@ -1,11 +1,20 @@
 package ph.printshop.pos;
 
 import android.database.sqlite.SQLiteDatabase;
+import android.database.Cursor;
+import android.content.ContentValues;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Collections;
+import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 
 /**
- * Isolated schema candidate. NOT installed by CatalogStore and has no runtime mutation API.
+ * v16 training schema and authenticated CatalogStore collection persistence.
  * Future credit checkout must atomically persist its authoritative sale, inventory and drawer effects
- * alongside the source. Collection cash integration is a separate mandatory gate.
+ * alongside the source. Collection cash effects are provided by CreditCashJournal.
  */
 final class ReceivableJournal {
     private ReceivableJournal(){}
@@ -28,4 +37,85 @@ final class ReceivableJournal {
         db.execSQL("CREATE TRIGGER credit_collection_no_delete BEFORE DELETE ON credit_collection_requests BEGIN SELECT RAISE(ABORT,'Collection request immutable'); END");
         db.execSQL("CREATE TRIGGER credit_collection_resolution BEFORE UPDATE ON credit_collection_requests WHEN OLD.state<>'PENDING' OR NEW.state NOT IN ('APPLIED','CANCELLED') OR NEW.id IS NOT OLD.id OR NEW.customer_id IS NOT OLD.customer_id OR NEW.customer_revision IS NOT OLD.customer_revision OR NEW.shift_id IS NOT OLD.shift_id OR NEW.operator_id IS NOT OLD.operator_id OR NEW.actor_revision IS NOT OLD.actor_revision OR NEW.amount IS NOT OLD.amount OR NEW.before_cash IS NOT OLD.before_cash OR NEW.after_cash IS NOT OLD.after_cash OR NEW.created_ms IS NOT OLD.created_ms OR NOT EXISTS(SELECT 1 FROM cashier_shifts s JOIN cashier_accounts a ON a.id=s.operator_id JOIN cashier_drawer_current b ON b.shift_id=s.id WHERE s.id=OLD.shift_id AND s.state='OPEN' AND a.id=OLD.operator_id AND a.active=1 AND a.revision=NEW.resolved_revision AND (NEW.state='CANCELLED' OR b.expected_cash=OLD.before_cash)) OR (NEW.state='APPLIED' AND (EXISTS(SELECT 1 FROM cashier_drawer_requests r WHERE r.shift_id=OLD.shift_id AND r.state='PENDING') OR EXISTS(SELECT 1 FROM cashier_shift_checkouts l JOIN checkout_requests r ON r.request_id=l.request_id WHERE l.shift_id=OLD.shift_id AND r.state='PENDING') OR COALESCE((SELECT SUM(amount) FROM credit_collection_allocations WHERE collection_id=OLD.id),0)<>OLD.amount OR EXISTS(SELECT 1 FROM credit_collection_allocations a JOIN credit_receivable_open d ON d.id=a.debt_id WHERE a.collection_id=OLD.id AND (d.customer_id<>OLD.customer_id OR d.remaining<>a.before_owed)))) BEGIN SELECT RAISE(ABORT,'Invalid collection resolution'); END");
     }
+    /** Review identity binds the exact persisted payment and ordered allocation payload. */
+    static final class Review {
+        final String id,customer,shift,operator,fingerprint;
+        final long customerRevision;
+        final ReceivableMath.Collection collection;
+        Review(String id,String customer,long revision,String shift,String operator,ReceivableMath.Collection collection){
+            StockMath.validateRequestId(id);
+            this.id=id;this.customer=customer;customerRevision=revision;this.shift=shift;this.operator=operator;this.collection=collection;
+            List<AllocationRow> rows=new ArrayList<>();
+            for(ReceivableMath.Allocation a:collection.allocations)rows.add(new AllocationRow(a.debtId,a.before,a.amount,a.after));
+            fingerprint=identity(id,customer,revision,shift,operator,collection.amount,collection.drawerBefore,collection.drawerAfter,rows);
+        }
+    }
+    static final class AllocationRow {
+        final String debt;final long before,amount,after;
+        AllocationRow(String debt,long before,long amount,long after){this.debt=debt;this.before=before;this.amount=amount;this.after=after;}
+    }
+    static final class Record {
+        final String id,customer,shift,operator,state,reason,fingerprint;
+        final long customerRevision,amount,before,after;
+        final List<AllocationRow> allocations;
+        Record(Cursor c,List<AllocationRow> rows){
+            id=c.getString(0);customer=c.getString(1);customerRevision=c.getLong(2);shift=c.getString(3);operator=c.getString(4);
+            amount=c.getLong(5);before=c.getLong(6);after=c.getLong(7);state=c.getString(8);reason=c.getString(9);
+            allocations=Collections.unmodifiableList(new ArrayList<>(rows));
+            fingerprint=identity(id,customer,customerRevision,shift,operator,amount,before,after,allocations);
+        }
+        void requireIdentity(String value){if(!fingerprint.equals(value))throw new IllegalStateException("Collection identity changed");}
+        void requireCurrent(ReceivableMath.Collection review){
+            if(!customer.equals(review.customer)||amount!=review.amount||before!=review.drawerBefore||after!=review.drawerAfter||allocations.size()!=review.allocations.size())
+                throw new IllegalStateException("Collection changed; review again");
+            for(int i=0;i<allocations.size();i++){
+                AllocationRow a=allocations.get(i);ReceivableMath.Allocation b=review.allocations.get(i);
+                if(!a.debt.equals(b.debtId)||a.before!=b.before||a.amount!=b.amount||a.after!=b.after)throw new IllegalStateException("Collection allocation changed");
+            }
+        }
+    }
+    private static String identity(String id,String customer,long revision,String shift,String operator,long amount,long before,long after,List<AllocationRow> rows){
+        StringBuilder payload=new StringBuilder("COLLECTION-V1|").append(id).append('|').append(customer).append('|').append(revision).append('|').append(shift).append('|').append(operator).append('|').append(amount).append('|').append(before).append('|').append(after);
+        for(AllocationRow a:rows)payload.append('|').append(a.debt).append(':').append(a.before).append(':').append(a.amount).append(':').append(a.after);
+        try{
+            byte[] bytes=MessageDigest.getInstance("SHA-256").digest(payload.toString().getBytes(StandardCharsets.UTF_8));
+            StringBuilder hex=new StringBuilder();for(byte b:bytes)hex.append(Character.forDigit((b&255)>>>4,16)).append(Character.forDigit(b&15,16));return hex.toString();
+        }catch(NoSuchAlgorithmException e){throw new IllegalStateException("Collection fingerprint unavailable",e);}
+    }
+    static List<ReceivableMath.Debt> debts(SQLiteDatabase db,String customer){
+        StockMath.validateRequestId(customer);List<ReceivableMath.Debt> rows=new ArrayList<>();
+        try(Cursor c=db.rawQuery("SELECT id,opened_ms,total-paid,remaining FROM credit_receivable_open WHERE customer_id=? AND remaining>0 ORDER BY opened_ms,id",new String[]{customer})){
+            while(c.moveToNext())rows.add(new ReceivableMath.Debt(c.getString(0),customer,c.getLong(1),c.getLong(2),Math.subtractExact(c.getLong(2),c.getLong(3))));
+        }
+        return rows;
+    }
+    static BigInteger outstanding(SQLiteDatabase db,String customer){
+        BigInteger value=BigInteger.ZERO;for(ReceivableMath.Debt debt:debts(db,customer))value=value.add(BigInteger.valueOf(debt.remaining()));return value;
+    }
+    static Record read(SQLiteDatabase db,String id){
+        StockMath.validateRequestId(id);List<AllocationRow> rows=new ArrayList<>();
+        try(Cursor c=db.rawQuery("SELECT a.debt_id,a.before_owed,a.amount,a.after_owed FROM credit_collection_allocations a JOIN credit_receivable_sources d ON d.id=a.debt_id WHERE a.collection_id=? ORDER BY d.opened_ms,d.id",new String[]{id})){
+            while(c.moveToNext())rows.add(new AllocationRow(c.getString(0),c.getLong(1),c.getLong(2),c.getLong(3)));
+        }
+        try(Cursor c=db.rawQuery("SELECT id,customer_id,customer_revision,shift_id,operator_id,amount,before_cash,after_cash,state,cancel_reason FROM credit_collection_requests WHERE id=?",new String[]{id})){
+            return c.moveToFirst()?new Record(c,rows):null;
+        }
+    }
+    static void stage(SQLiteDatabase db,CashierJournal.Principal actor,Review reviewed,long now){
+        ContentValues v=new ContentValues();v.put("id",reviewed.id);v.put("customer_id",reviewed.customer);v.put("customer_revision",reviewed.customerRevision);
+        v.put("shift_id",reviewed.shift);v.put("operator_id",actor.id);v.put("actor_revision",actor.revision);v.put("amount",reviewed.collection.amount);
+        v.put("before_cash",reviewed.collection.drawerBefore);v.put("after_cash",reviewed.collection.drawerAfter);v.put("created_ms",now);v.put("state","PENDING");
+        db.insertOrThrow("credit_collection_requests",null,v);
+        for(ReceivableMath.Allocation a:reviewed.collection.allocations){
+            ContentValues row=new ContentValues();row.put("collection_id",reviewed.id);row.put("debt_id",a.debtId);row.put("before_owed",a.before);row.put("amount",a.amount);row.put("after_owed",a.after);
+            db.insertOrThrow("credit_collection_allocations",null,row);
+        }
+    }
+    static Record resolve(SQLiteDatabase db,CashierJournal.Principal actor,String id,boolean applied,String reason,long now){
+        ContentValues v=new ContentValues();v.put("state",applied?"APPLIED":"CANCELLED");v.put("resolved_ms",now);v.put("resolved_revision",actor.revision);
+        if(reason==null)v.putNull("cancel_reason");else v.put("cancel_reason",reason);
+        if(db.update("credit_collection_requests",v,"id=? AND state='PENDING'",new String[]{id})!=1)throw new IllegalStateException("Collection resolution unavailable");
+        return read(db,id);
+    }
+
 }

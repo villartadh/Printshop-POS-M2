@@ -566,6 +566,72 @@ public final class CatalogStore extends SQLiteOpenHelper {
             return CreditCheckoutJournal.resolve(db,actor,id,false,clean,System.currentTimeMillis());
         });
     }
+    private static ReceivableJournal.Review readCollectionReview(SQLiteDatabase db,CashierJournal.Principal actor,String shift,String id,String customer,long revision,long amount){
+        CashierJournal.requireShift(db,actor,shift,true);DrawerJournal.requireNoPending(db,shift);
+        CustomerJournal.Customer current=CustomerJournal.current(db,customer);
+        if(current==null||current.revision!=revision)throw new IllegalStateException("Customer changed; review again");
+        return new ReceivableJournal.Review(id,customer,revision,shift,actor.id,ReceivableMath.collect(customer,amount,DrawerJournal.expected(db,shift),ReceivableJournal.debts(db,customer)));
+    }
+    ReceivableJournal.Review prepareAuthorizedFixtureCollection(String token,String shift,String id,String customer,long revision,long amount){
+        return fixtureTransaction(db->readCollectionReview(db,CashierJournal.requireSession(db,token,System.currentTimeMillis()),shift,id,customer,revision,amount));
+    }
+    java.math.BigInteger authorizedFixtureOutstanding(String token,String shift,String customer){
+        return fixtureTransaction(db->{
+            CashierJournal.requireShift(db,CashierJournal.requireSession(db,token,System.currentTimeMillis()),shift,true);
+            if(CustomerJournal.current(db,customer)==null)throw new IllegalStateException("Customer unavailable");
+            return ReceivableJournal.outstanding(db,customer);
+        });
+    }
+    private static ReceivableJournal.Record requireCollectionRecord(SQLiteDatabase db,CashierJournal.Principal actor,String id){
+        ReceivableJournal.Record r=ReceivableJournal.read(db,id);
+        if(r==null||!actor.id.equals(r.operator))throw new IllegalStateException("Collection unavailable");
+        CashierJournal.requireShift(db,actor,r.shift,"PENDING".equals(r.state));return r;
+    }
+    ReceivableJournal.Record stageAuthorizedFixtureCollection(String token,ReceivableJournal.Review reviewed){
+        return fixtureTransaction(db->{
+            CashierJournal.Principal actor=CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            if(reviewed==null||!actor.id.equals(reviewed.operator))throw new IllegalStateException("Collection review unavailable");
+            ReceivableJournal.Record prior=ReceivableJournal.read(db,reviewed.id);
+            if(prior!=null){prior=requireCollectionRecord(db,actor,reviewed.id);prior.requireIdentity(reviewed.fingerprint);return prior;}
+            ReceivableJournal.Review current=readCollectionReview(db,actor,reviewed.shift,reviewed.id,reviewed.customer,reviewed.customerRevision,reviewed.collection.amount);
+            reviewed.collection.requireSameReview(current.collection);
+            if(!reviewed.fingerprint.equals(current.fingerprint))throw new IllegalStateException("Collection identity changed");
+            ReceivableJournal.stage(db,actor,current,System.currentTimeMillis());
+            return requireCollectionRecord(db,actor,current.id);
+        });
+    }
+    ReceivableJournal.Record authorizedFixtureCollection(String token,String id){
+        return fixtureTransaction(db->requireCollectionRecord(db,CashierJournal.requireSession(db,token,System.currentTimeMillis()),id));
+    }
+    ReceivableJournal.Record pendingAuthorizedFixtureCollection(String token,String shift){
+        return fixtureTransaction(db->{
+            CashierJournal.Principal actor=CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            CashierJournal.requireShift(db,actor,shift,false);
+            try(Cursor c=db.rawQuery("SELECT id FROM credit_collection_requests WHERE shift_id=? AND state='PENDING'",new String[]{shift})){
+                return c.moveToFirst()?requireCollectionRecord(db,actor,c.getString(0)):null;
+            }
+        });
+    }
+    ReceivableJournal.Record applyAuthorizedFixtureCollection(String token,String id,String fingerprint){
+        return fixtureTransaction(db->{
+            CashierJournal.Principal actor=CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            ReceivableJournal.Record r=requireCollectionRecord(db,actor,id);r.requireIdentity(fingerprint);
+            if("APPLIED".equals(r.state))return r;
+            if(!"PENDING".equals(r.state))throw new IllegalStateException("Collection cancelled");
+            r.requireCurrent(ReceivableMath.collect(r.customer,r.amount,DrawerJournal.expected(db,r.shift),ReceivableJournal.debts(db,r.customer)));
+            return ReceivableJournal.resolve(db,actor,id,true,null,System.currentTimeMillis());
+        });
+    }
+    ReceivableJournal.Record cancelAuthorizedFixtureCollection(String token,String id,String fingerprint,String reason){
+        final String clean=CustomerJournal.text(reason,160,true);
+        return fixtureTransaction(db->{
+            CashierJournal.Principal actor=CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            ReceivableJournal.Record r=requireCollectionRecord(db,actor,id);r.requireIdentity(fingerprint);
+            if("CANCELLED".equals(r.state)&&clean.equals(r.reason))return r;
+            if(!"PENDING".equals(r.state))throw new IllegalStateException("Collection already resolved");
+            return ReceivableJournal.resolve(db,actor,id,false,clean,System.currentTimeMillis());
+        });
+    }
     CatalogEntry authorizedDemoService(String token){
         return fixtureTransaction(db->{CashierJournal.requireSession(db,token,System.currentTimeMillis());return demoService(db);});
     }

@@ -83,7 +83,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "pricing settings and document quote"; verifyPricingScreen(screen);
             phase = "measured quote"; verifyMeasuredQuote(screen);
             phase = "native cashier training UI"; verifyCashierTrainingScreen(screen);
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_RECURRING_UI_PASS\nNATIVE_CUSTOMER_DIRECTORY_PASS\nNATIVE_CUSTOMER_CHECKOUT_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\n");
+            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_RECURRING_UI_PASS\nNATIVE_CUSTOMER_DIRECTORY_PASS\nNATIVE_CUSTOMER_CHECKOUT_PASS\nNATIVE_CREDIT_COLLECTION_API_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\n");
             result = Activity.RESULT_OK;
         } catch (Throwable error) {
             evidence.putString("stream", failureDetails(phase, error));
@@ -925,6 +925,32 @@ public final class NativeQuoteSmoke extends Instrumentation {
             rejectStock(()->store.applyAuthorizedFixtureCreditCheckout(staff,third.id,third.fingerprint));
             require(trainingCount(store,"SELECT COUNT(*) FROM credit_receivable_sources")==2,"cancel invented credit");
             require(store.pendingAuthorizedFixtureCreditCheckout(staff,shift)==null,"resolved credit remained pending");
+            require(store.authorizedFixtureOutstanding(staff,shift,customer).longValueExact()==400,"credit outstanding");
+            rejectStock(()->store.prepareAuthorizedFixtureCollection(staff,shift,stockId(),customer,1,401));
+            ReceivableJournal.Review collection=store.prepareAuthorizedFixtureCollection(staff,shift,stockId(),customer,1,200);
+            require(collection.collection.outstandingBefore.longValueExact()==400&&collection.collection.drawerAfter==300,"collection review");
+            ReceivableJournal.Record staged=store.stageAuthorizedFixtureCollection(staff,collection);
+            require(staged.fingerprint.equals(collection.fingerprint)&&staged.state.equals("PENDING"),"collection staged identity");
+            require(store.stageAuthorizedFixtureCollection(staff,collection).state.equals("PENDING"),"collection stage replay");
+            require(store.expectedFixtureCash(staff,shift)==100&&store.authorizedFixtureOutstanding(staff,shift,customer).longValueExact()==400,"pending collection no effects");
+            rejectStock(()->store.authorizedFixtureCollection(owner,collection.id));
+            rejectStock(()->store.applyAuthorizedFixtureCollection(staff,collection.id,"wrong"));
+            rejectStock(()->store.closeFixtureShift(staff,shift,100));
+            store.signOutFixture(staff);
+            String recovered=store.signInFixture("credit-staff",staffPass);
+            require(store.pendingAuthorizedFixtureCollection(recovered,shift).fingerprint.equals(collection.fingerprint),"collection recovery after login");
+            store.saveFixtureCustomer(owner,customer,1,"Synthetic archived credit customer","",false);
+            require(store.applyAuthorizedFixtureCollection(recovered,collection.id,collection.fingerprint).state.equals("APPLIED"),"archived debt settlement");
+            store.applyAuthorizedFixtureCollection(recovered,collection.id,collection.fingerprint);
+            require(store.expectedFixtureCash(recovered,shift)==300&&store.authorizedFixtureOutstanding(recovered,shift,customer).longValueExact()==200,"collection exact replay");
+            ReceivableJournal.Review remainder=store.prepareAuthorizedFixtureCollection(recovered,shift,stockId(),customer,2,200);
+            store.stageAuthorizedFixtureCollection(recovered,remainder);
+            store.cancelAuthorizedFixtureCollection(recovered,remainder.id,remainder.fingerprint,"Synthetic cancellation");
+            require(store.cancelAuthorizedFixtureCollection(recovered,remainder.id,remainder.fingerprint,"Synthetic cancellation").state.equals("CANCELLED"),"collection cancel replay");
+            rejectStock(()->store.applyAuthorizedFixtureCollection(recovered,remainder.id,remainder.fingerprint));
+            require(store.authorizedFixtureOutstanding(recovered,shift,customer).longValueExact()==200&&store.expectedFixtureCash(recovered,shift)==300,"collection cancel no effects");
+            require(store.pendingAuthorizedFixtureCollection(recovered,shift)==null,"collection pending cleared");
+            require(trainingCount(store,"SELECT COUNT(*) FROM cashier_cash_effects_v2 WHERE collection_id IS NOT NULL")==1,"collection effect once");
             rejectStock(()->store.authorizedFixtureSalesReport(owner,ReportMath.Period.DAY));
         }finally{java.util.Arrays.fill(ownerPass,'\0');java.util.Arrays.fill(staffPass,'\0');context.deleteDatabase(filename);}
     }
