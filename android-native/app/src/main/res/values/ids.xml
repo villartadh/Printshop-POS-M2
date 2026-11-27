@@ -191,4 +191,13 @@
     <item type="id" name="cashier_collection_stage"/>
     <item type="id" name="cashier_collection_amount_edit"/>
     <item type="id" name="cashier_collection_record"/>
+    <item name="cashier_quote_new" type="id"/>
+    <item name="cashier_quote_history" type="id"/>
+    <item name="cashier_quote_review" type="id"/>
+    <item name="cashier_quote_save" type="id"/>
+    <item name="cashier_quote_receipt" type="id"/>
+    <item name="cashier_quote_convert" type="id"/>
+    <item name="cashier_quote_cancel" type="id"/>
+    <item name="cashier_quote_reload" type="id"/>
+    <item name="cashier_quote_confirm" type="id"/>
 </resources>

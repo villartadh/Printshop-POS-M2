@@ -195,3 +195,5 @@ PR #15 now includes historical decode, role-scoped quotation history and atomic 
 
 ## Latest quotation continuation — schema v19
 PR #15 v18 cash conversion passed hosted acceptance. v19 adds atomic named-customer credit quotation conversion and cross-mode uniqueness. Native screens remain next, see latest DEVELOPMENT_QUEUE.md and QUOTATION_ACCEPTANCE.md. Verify new exact full gates, not merely previous pass.
+
+Latest quotation checkpoint: native cashier quote save/history/cancel/cash-credit conversion UI implemented on PR #15; local stub compilation and SQLite journal regression pass. Fresh hosted SDK/emulator/full Windows/Linux gates required (NATIVE_QUOTATION_UI_PASS). See DEVELOPMENT_QUEUE.md.

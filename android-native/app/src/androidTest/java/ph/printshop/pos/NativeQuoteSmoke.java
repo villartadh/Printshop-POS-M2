@@ -89,7 +89,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "pricing settings and document quote"; verifyPricingScreen(screen);
             phase = "measured quote"; verifyMeasuredQuote(screen);
             phase = "native cashier training UI"; verifyCashierTrainingScreen(screen);
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_RECURRING_UI_PASS\nNATIVE_CUSTOMER_DIRECTORY_PASS\nNATIVE_CUSTOMER_CHECKOUT_PASS\nNATIVE_CREDIT_COLLECTION_API_PASS\nNATIVE_CREDIT_REPORT_PASS\nNATIVE_CREDIT_CHECKOUT_UI_PASS\nNATIVE_CREDIT_COLLECTION_UI_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\nNATIVE_SAVED_QUOTATION_PASS\nNATIVE_QUOTATION_CASH_CONVERSION_PASS\nNATIVE_QUOTATION_CREDIT_CONVERSION_PASS\n");
+            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_RECURRING_UI_PASS\nNATIVE_CUSTOMER_DIRECTORY_PASS\nNATIVE_CUSTOMER_CHECKOUT_PASS\nNATIVE_CREDIT_COLLECTION_API_PASS\nNATIVE_CREDIT_REPORT_PASS\nNATIVE_CREDIT_CHECKOUT_UI_PASS\nNATIVE_CREDIT_COLLECTION_UI_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\nNATIVE_SAVED_QUOTATION_PASS\nNATIVE_QUOTATION_CASH_CONVERSION_PASS\nNATIVE_QUOTATION_CREDIT_CONVERSION_PASS\nNATIVE_QUOTATION_UI_PASS\n");
             result = Activity.RESULT_OK;
         } catch (Throwable error) {
             evidence.putString("stream", failureDetails(phase, error));
@@ -373,6 +373,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             verifyCustomerCheckoutUI(second);
             verifyCreditCheckoutUI(second,fixtureId);
             verifyCollectionUI(second,fixtureId,owner,ownerPass);
+            verifyQuotationUI(second,fixtureId);
             try(CatalogStore ordinary=new CatalogStore(context)){
                 java.util.List<CatalogEntry> after=ordinary.list(true);
                 require(before.size()==after.size(),"ordinary catalog changed");
@@ -1215,6 +1216,59 @@ public final class NativeQuoteSmoke extends Instrumentation {
             require(trainingCount(fixture,"SELECT COUNT(*) FROM credit_collection_requests WHERE state='APPLIED' AND amount=600")==1,"collection UI applied once");
             require(trainingCount(fixture,"SELECT COUNT(*) FROM credit_collection_requests WHERE state='CANCELLED' AND amount=100")==1,"collection UI cancelled");
             require(trainingCount(fixture,"SELECT COUNT(*) FROM credit_receivable_open WHERE remaining=1000")==1,"collection remaining exact");
+        }
+    }
+
+    private void newQuotationUI(Activity a,boolean named){
+        trainingClick(a,R.id.cashier_quote_new);awaitText(a,"Choose quotation service","quotation service");
+        trainingSelect(a,"Choose Synthetic UI configured");awaitText(a,"New training quotation","quotation form");
+        trainingField(a,R.id.cashier_checkout_pages,"3");trainingField(a,R.id.cashier_checkout_copies,"2");
+        trainingSpinner(a,R.id.cashier_checkout_basis,CheckoutPlan.UsageBasis.PRODUCED_ITEM.ordinal());
+        trainingClick(a,R.id.cashier_quote_review);awaitText(a,"Review training quotation","quotation review");
+        awaitText(a,"Total: PHP 21.00","quotation amount");
+        if(named){
+            trainingClick(a,R.id.cashier_checkout_customer);awaitText(a,"Choose quotation customer","quotation customer");
+            trainingSelect(a,"Select Synthetic Customer Updated");awaitText(a,"Customer: Synthetic Customer Updated","quotation attribution");
+        }
+        trainingClick(a,R.id.cashier_quote_save);awaitText(a,"Training quotation · Saved","quotation saved");
+    }
+    private void verifyQuotationUI(Activity a,String fixtureId){
+        trainingLogin(a,"catalog-cashier","Synthetic-Catalog-Cashier-01");awaitText(a,"No open shift","quotation login");
+        newQuotationUI(a,false);
+        trainingClick(a,R.id.cashier_quote_convert);awaitText(a,"Open your own shift and resolve pending requests before conversion.","shift fence");
+        trainingClick(a,R.id.cashier_quote_reload);awaitText(a,"Training quotation · Saved","reload saved quote");
+        trainingField(a,R.id.cashier_cancel_reason,"Synthetic quote cancellation");trainingClick(a,R.id.cashier_quote_cancel);
+        awaitText(a,"Training quotation · Cancelled","quote cancelled");
+        trainingClick(a,R.id.cashier_back);awaitText(a,"No open shift","no payment from quote");
+        newQuotationUI(a,true);
+        trainingClick(a,R.id.cashier_back);awaitText(a,"No open shift","saved quote no shift");
+        trainingClick(a,R.id.cashier_open_shift);awaitText(a,"Shift open · Expected cash: PHP 0.00","quote conversion shift");
+        trainingClick(a,R.id.cashier_quote_history);awaitText(a,"Saved training quotations","history");
+        trainingSelect(a,"Synthetic UI configured · PHP 21.00 · Saved");awaitText(a,"Training quotation · Saved","history detail");
+        trainingClick(a,R.id.cashier_quote_convert);awaitText(a,"Convert training quotation","conversion tender");
+        trainingSpinner(a,R.id.cashier_payment_mode,1);trainingField(a,R.id.cashier_cash,"5.00");
+        trainingClick(a,R.id.cashier_quote_review);awaitText(a,"Confirm quotation conversion","conversion review");
+        awaitText(a,"Original debt: PHP 16.00","credit conversion debt");
+        trainingClick(a,R.id.cashier_quote_confirm);awaitText(a,"Training quotation · Credit converted","converted link");
+        trainingClick(a,R.id.cashier_quote_receipt);awaitText(a,"Recorded training credit receipt","linked receipt");
+        trainingClick(a,R.id.cashier_return_home);awaitText(a,"Shift open · Expected cash: PHP 5.00","cash effect once");
+        newQuotationUI(a,false);
+        trainingClick(a,R.id.cashier_quote_convert);awaitText(a,"Convert training quotation","cash conversion");
+        trainingField(a,R.id.cashier_cash,"25.00");trainingClick(a,R.id.cashier_quote_review);
+        awaitText(a,"Confirm quotation conversion","cash review");
+        trainingClick(a,R.id.cashier_quote_confirm);awaitText(a,"Training quotation · Cash converted","cash link");
+        trainingClick(a,R.id.cashier_quote_receipt);awaitText(a,"Recorded training receipt","cash receipt");
+        trainingClick(a,R.id.cashier_return_home);awaitText(a,"Shift open · Expected cash: PHP 26.00","cash conversion effect once");
+        trainingClick(a,R.id.cashier_close_shift);awaitText(a,"Close training shift","quote close");
+        trainingField(a,R.id.cashier_counted,"26.00");trainingClick(a,R.id.cashier_confirm_close);
+        awaitText(a,"Variance: PHP 0.00","quote exact close");
+        trainingClick(a,R.id.cashier_return_home);awaitText(a,"No open shift","quote shift closed");
+        trainingClick(a,R.id.cashier_lock);awaitText(a,"Training sign in","quote logout");
+        try(CatalogStore f=CatalogStore.checkoutFixture(getTargetContext(),fixtureId)){
+            require(trainingCount(f,"SELECT COUNT(*) FROM saved_quotations")==3,"quotation UI save count");
+            require(trainingCount(f,"SELECT COUNT(*) FROM saved_quotation_cancellations")==1,"quotation UI cancellation count");
+            require(trainingCount(f,"SELECT COUNT(*) FROM saved_quotation_cash_conversions")==1,"quotation UI cash link");
+            require(trainingCount(f,"SELECT COUNT(*) FROM saved_quotation_credit_conversions")==1,"quotation UI credit link");
         }
     }
 
