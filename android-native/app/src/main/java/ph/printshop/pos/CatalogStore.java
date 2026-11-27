@@ -509,7 +509,7 @@ public final class CatalogStore extends SQLiteOpenHelper {
             CashierJournal.Principal actor=CashierJournal.requireSession(db,token,System.currentTimeMillis());
             CashierJournal.requireShift(db,actor,shift,true);DrawerJournal.requireNoPending(db,shift);
             if(selected==null||customer==null||inputs==null)throw new IllegalArgumentException("Select service and customer");
-            return readCreditPlan(db,id,customer.id,customer.revision,selected.service.id,selected.service.revision,selected.profile.revision,selected.recipeRevision,inputs);
+            return readCreditPlan(db,id,customer.id,customer.revision,selected.service.id,selected.service.revision,selected.profile.revision,selected.recipeRevision,inputs).bind(actor.id,actor.revision,shift);
         });
     }
     private static CreditCheckoutJournal.Record requireCreditRecord(SQLiteDatabase db,CashierJournal.Principal actor,String id){
@@ -521,12 +521,14 @@ public final class CatalogStore extends SQLiteOpenHelper {
         return fixtureTransaction(db->{
             CashierJournal.Principal actor=CashierJournal.requireSession(db,token,System.currentTimeMillis());
             if(reviewed==null)throw new IllegalArgumentException("Review credit checkout first");
+            reviewed.requireAuthorization(actor.id,shift);
             CreditCheckoutJournal.Record existing=CreditCheckoutJournal.read(db,reviewed.id);
             if(existing!=null){
                 existing=requireCreditRecord(db,actor,reviewed.id);
                 if(!existing.shiftId.equals(shift))throw new IllegalStateException("Credit shift changed");
                 existing.requireIdentity(reviewed.fingerprint);return existing;
             }
+            reviewed.requireFreshAuthorization(actor.id,actor.revision,shift);
             CashierJournal.requireShift(db,actor,shift,true);DrawerJournal.requireNoPending(db,shift);
             CreditCheckoutPlan current=readCreditPlan(db,reviewed.id,reviewed.customerId,reviewed.customerRevision,reviewed.serviceId,reviewed.serviceRevision,reviewed.pricingRevision,reviewed.recipeRevision,reviewed.actualInputs);
             reviewed.requireSameReview(current);CreditCheckoutJournal.stage(db,actor,shift,current,System.currentTimeMillis());

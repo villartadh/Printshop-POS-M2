@@ -1,8 +1,11 @@
 """Combined synthetic credit checkout/stock/debt/cash schema migration and synthetic SQL fixtures."""
 import drawer_journal_schema_test as prior
 from drawer_journal_schema_test import *
+import tempfile
+from contextlib import closing
 start=prior.checks
-with sqlite3.connect(":memory:") as db:
+with tempfile.TemporaryDirectory() as temp, closing(sqlite3.connect(str(Path(temp)/"fixture.db"))) as db, db:
+    path=str(Path(temp)/"fixture.db")
     db.execute("PRAGMA foreign_keys=ON")
     db.execute("PRAGMA recursive_triggers=OFF")
     for _,sqls in stages:
@@ -52,6 +55,12 @@ with sqlite3.connect(":memory:") as db:
     reject(db,mat,material("partial","movement2"))
     reject(db,"UPDATE credit_checkout_materials SET quantity_milli=999 WHERE request_id='partial'")
     check(stock()==(10000,1) and cash(db,"open")==1000 and source_count()==0,"staging no financial effects")
+    db.commit()
+    with closing(sqlite3.connect(path)) as reopened:
+        check(reopened.execute("SELECT state,fingerprint FROM credit_checkout_requests WHERE id='partial'").fetchone()==("PENDING","a"*64),"credit pending survives reopen")
+        check(reopened.execute("SELECT input_count,basis FROM credit_checkout_inputs WHERE request_id='partial'").fetchone()==(1,"BILLABLE_UNIT"),"raw review survives reopen")
+        check(cash(reopened,"open")==1000,"reopened pending has no drawer effect")
+
     reject(db,insert,params("block",sid="open",actor="staff",amount=100,before=1000))
     reject(db,"UPDATE cashier_shifts SET state='CLOSED',closed_ms=20,expected_cash=1000,counted_cash=1000,variance=0 WHERE id='open'")
     reject(db,"INSERT INTO credit_collection_requests VALUES('block','cust',1,'open','staff',1,100,1000,1100,6,'PENDING',NULL,NULL,NULL)")
@@ -87,6 +96,12 @@ with sqlite3.connect(":memory:") as db:
     db.execute("INSERT INTO credit_collection_allocations VALUES('collect','partial',300,300,0)")
     db.execute("INSERT INTO credit_collection_allocations VALUES('collect','unpaid',500,100,400)")
     check(stock()==(9000,4) and cash(db,"open")==1200 and source_count()==2,"staged collection preserves financial effects")
+    db.commit()
+    with closing(sqlite3.connect(path)) as reopened:
+        check(reopened.execute("SELECT state,amount FROM credit_collection_requests WHERE id='collect'").fetchone()==("PENDING",400),"collection survives reopen")
+        check(reopened.execute("SELECT debt_id,before_owed,amount,after_owed FROM credit_collection_allocations WHERE collection_id='collect' ORDER BY debt_id").fetchall()==[("partial",300,300,0),("unpaid",500,100,400)],"exact allocation survives reopen")
+        check(cash(reopened,"open")==1200,"reopened collection has no drawer effect")
+
     reject(db,"UPDATE cashier_shifts SET state='CLOSED',closed_ms=20,expected_cash=1200,counted_cash=1200,variance=0 WHERE id='open'")
     reject(db,req,proposal("blocked-credit",rev=2,at=18))
     db.execute("UPDATE credit_collection_requests SET state='APPLIED',resolved_ms=19,resolved_revision=1 WHERE id='collect'")
@@ -147,4 +162,34 @@ with sqlite3.connect(":memory:") as db:
     check(db.execute(history,("staff",1,0)).fetchall()==[("final-collect",)] and db.execute(history,("staff",1,1)).fetchall()==[("collect",)],"stable history pagination")
     db.execute("UPDATE cashier_shifts SET state='CLOSED',closed_ms=24,expected_cash=2100,counted_cash=2100,variance=0 WHERE id='open'")
     check(not db.execute("PRAGMA foreign_key_check").fetchall(),"foreign key integrity")
+# Populated v15 upgrade: applied and pending named full-cash checkout, archived customer and closed shift.
+with sqlite3.connect(":memory:") as prior_db:
+    prior_db.execute("PRAGMA foreign_keys=ON")
+    for _,sqls in stages:
+        for sql in sqls: prior_db.execute(sql)
+    account(prior_db,"owner","OWNER");account(prior_db,"staff","CASHIER")
+    prior_db.execute("INSERT INTO catalog VALUES('service','SERVICE','Synthetic service','page',100,1,0)")
+    for sql in drawer+statements("RefundJournal.java")+statements("RecurringJournal.java")+statements("CustomerJournal.java")+statements("CustomerLinkJournal.java"): prior_db.execute(sql)
+    prior_db.execute("INSERT INTO cashier_customer_versions VALUES('cust',1,'Synthetic named','',1,'owner',1,2)")
+    shift(prior_db,"closed","owner",500)
+    sale_stage(prior_db,"old-named","closed","owner",100)
+    prior_db.execute("INSERT INTO cashier_checkout_customers VALUES('old-named','cust',1,'owner',1)")
+    sale_apply(prior_db,"old-named",100,at=5);close(prior_db,"closed",600,590)
+    shift(prior_db,"open","staff",1000)
+    sale_stage(prior_db,"pending-named","open","staff",100)
+    prior_db.execute("INSERT INTO cashier_checkout_customers VALUES('pending-named','cust',1,'staff',1)")
+    prior_db.execute("INSERT INTO cashier_customer_versions VALUES('cust',2,'Synthetic archived','',0,'owner',1,6)")
+    legacy_tables=["cashier_shifts","cashier_drawer_anchors","cashier_drawer_effects","checkout_requests","checkout_sales","checkout_cash","cashier_checkout_customers","cashier_customer_versions"]
+    original=snapshot(prior_db,legacy_tables);prior_db.commit()
+    with prior_db:
+        for file in ("ReceivableJournal.java","CreditCashJournal.java","CreditCheckoutJournal.java"):
+            for sql in re.findall(r'db\.execSQL\("([^"]+)"\);',(root/file).read_text()): prior_db.execute(sql)
+    check(snapshot(prior_db,legacy_tables)==original,"populated v15 upgrade preserves named paid/pending and archive history")
+    check(cash(prior_db,"closed")==600 and cash(prior_db,"open")==1000,"v15 cash preserved")
+    check(prior_db.execute("SELECT COUNT(*) FROM credit_receivable_sources").fetchone()==(0,),"no invented debt")
+    check(prior_db.execute("SELECT COUNT(*) FROM cashier_cash_effects_v2").fetchone()==(1,),"historical cash mirrored once")
+    sale_apply(prior_db,"pending-named",100,at=7)
+    check(cash(prior_db,"open")==1100,"legacy pending checkout survives v16 migration")
+    check(prior_db.execute("SELECT COUNT(*) FROM cashier_checkout_customers").fetchone()==(2,),"customer links preserved through legacy resolution")
+    check(not prior_db.execute("PRAGMA foreign_key_check").fetchall(),"populated migration foreign key integrity")
 print(f"Credit checkout candidate SQLite: {prior.checks-start} checks PASS")

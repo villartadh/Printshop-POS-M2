@@ -21,6 +21,14 @@ public final class CreditCheckoutPlanTest {
         reject(()->plan(200,1,1999));reject(()->plan(1000,1,5000));reject(()->plan(1001,1,5000));
         reject(()->plan(200,0,5000));reject(()->CheckoutPlan.prepare(ID,SERVICE,PROFILE,1,input(200),List.of(new CheckoutPlan.Material(PAPER,1000,1,5000,false))));
         check(p.fingerprint.matches("[0-9a-f]{64}"));
+        String actor="00000000-0000-0000-0000-000000000003",shift="00000000-0000-0000-0000-000000000004";
+        var authorized=p.bind(actor,1,shift);
+        check(authorized.fingerprint.equals(p.fingerprint)); // v16 durable fingerprint stays compatible
+        authorized.requireFreshAuthorization(actor,1,shift);check(true);
+        reject(()->p.requireAuthorization(actor,shift));reject(()->authorized.requireAuthorization(C,shift));
+        reject(()->authorized.requireAuthorization(actor,ID));reject(()->authorized.requireFreshAuthorization(actor,2,shift));
+        authorized.requireAuthorization(actor,shift);check(true); // exact saved replay may survive revision change
+        reject(()->authorized.bind(actor,1,shift));
         System.out.println("CreditCheckoutPlan: "+checks+" checks PASS");
     }
 }

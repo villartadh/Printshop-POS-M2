@@ -905,6 +905,9 @@ public final class NativeQuoteSmoke extends Instrumentation {
             CheckoutPlan.Inputs partial=new CheckoutPlan.Inputs(1,1,1,null,null,null,CheckoutPlan.UsageBasis.BILLABLE_UNIT,100);
             CreditCheckoutPlan plan=store.prepareAuthorizedFixtureCreditCheckout(staff,shift,stockId(),chosen,selected,partial);
             require(plan.total==250&&plan.paid==100&&plan.owed==150,"partial credit pricing");
+            String ownerShift=stockId();store.openFixtureShift(owner,ownerShift,0);
+            rejectStock(()->store.stageAuthorizedFixtureCreditCheckout(owner,ownerShift,plan));
+            rejectStock(()->store.stageAuthorizedFixtureCreditCheckout(staff,ownerShift,plan));
             require(store.stageAuthorizedFixtureCreditCheckout(staff,shift,plan).state.equals("PENDING"),"credit stage");
             require(store.stageAuthorizedFixtureCreditCheckout(staff,shift,plan).state.equals("PENDING"),"credit stage replay");
             require(store.expectedFixtureCash(staff,shift)==0,"credit stage changed cash");
