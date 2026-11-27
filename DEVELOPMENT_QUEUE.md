@@ -224,12 +224,41 @@ PR CI 45750255433 passed both Ubuntu and Windows jobs, including regression, API
 - Next: confirm dedicated Windows guest/machine, label and local opt-in and owner switch; verify exact full Windows acceptance before considering it equivalent. Keep Ubuntu and installed Android independent, diagnose hosted quota and/or separately provision isolated Linux/KVM; integrate #10–#13 only after exact all gates, preserve their handoffs and docs. No full job on DJ-PC without isolation. Reconcile #10 with current develop by merging base into feature, preserving feature code and docs.
 
 
+## Checkpoint 2026-11-26 — dual-use DJ-PC owner-approved host readiness
+- Owner confirms runner Idle and DJ-PC serves both development/testing and everyday printshop operations, authorizes use of same physical computer. Ordinary shop instance is not an isolated host; keep real data/printer/credentials untouched. Use dedicated disposable guest on DJ-PC for full acceptance, reserve generic runner for read-only diagnostics.
+- Extend existing develop-only, path-triggered connectivity smoke with coarse read-only readiness: tooling presence, workspace drive free GiB, RAM/firmware virtualization/SLAT/hypervisor, elevated status; no checkout, app code, installs, secrets, personal folders or machine changes. SELF_HOSTED_WINDOWS_READINESS_PASS indicates completed diagnostic, not full acceptance. No new branch or settings change; existing optional isolated Windows route remains disabled.
+- Next: inspect exact readiness result and choose dedicated Windows VM setup. Register only the guest with custom isolation label and environment, enable owner switch when ready; preserve all acceptance gates. Reconcile #10 then subsequent stacked PRs against current develop once complete gates available; #13 v8 credential lifecycle work remains draft. No unverified merge, production change or physical/BIR claim.
+
+
+## Checkpoint 2026-11-26 — owner-approved redundant branch cleanup
+
+Owner explicitly approved removal of the nine verified redundant branches and the permanent cleanup procedure. Immediately before deletion, GitHub compared each exact branch tip against develop `05a3a165ddf7df15fb681ab93d8df943f4735b72`: every branch was behind with zero commits ahead and no open PR using it as head or base. PRs #2–#9 are already merged. The diagnostics repair is in develop ancestry. GitHub branch-list deletion was individually verified, then a fresh branch inventory confirmed exactly eight branches remain. The original commits remain reachable through develop; no content, PR history, tags, active features or protected baseline references deleted.
+
+| Deleted temporary branch | Exact recovery tip SHA | Commits ahead of develop |
+|---|---|---:|
+| `feature/native-android-foundation` | `818723cb3481c75113ba9dd47bfe6e3eb45fc8ef` | 0 |
+| `feature/native-android-catalog` | `0b916e9aa1ee6dcbe77379d5599498c8908d4d97` | 0 |
+| `feature/native-android-catalog-ui` | `ea5722aa48a5a78afb5935c75562fa445771a6bd` | 0 |
+| `feature/native-android-stock-ledger` | `19ad3b3380d64ae089eb6bff8a60292728891a06` | 0 |
+| `feature/native-android-stock-ui` | `5e25bf6bb1a8861047ff490d30a8c3cd63697c7b` | 0 |
+| `feature/native-android-material-costing` | `9cfa8fb5810f3ba52d769a8a6167a68e6e009373` | 0 |
+| `feature/native-android-recipe-ui` | `cc43d420fd3b68f13d9d82be916325f234d73394` | 0 |
+| `prepare/native-acceptance-v097` | `74258658b5fadf5ad22a0bc10896ea10d0b2d4b4` | 0 |
+| `repair/native-recipe-build-diagnostics` | `64941e9a6bf915c430d4047cad4453247e62d080` | 0 |
+
+Retained: `main`, `develop`, `baseline/v0.9.5`, `pilot/v0.9.6`, `feature/native-android-pricing-math` (#10), `feature/native-android-pricing-settings` (#11), `feature/native-android-stock-recovery` (#12), and `feature/native-android-checkout` (#13). PRs #1 and #10–#13 remain open. No merge or promotion performed. Recovery, only if required and authorized: create the original branch name at its exact recorded SHA. No reason to restore redundant branches for routine continuation.
+
+Next: follow revised AGENTS.md cleanup rule after each accepted feature integrates; keep active stacked base branches until descendants are retargeted and all required gates pass. Owner installing VMware; do not route application tasks to live-shop DJ-PC. Exact existing Android/Windows/Linux gates for #10–#13 remain blocked/pending. Continue major checkout milestone and integrate sequentially only with verified acceptance. Documentation-only policy change; not application acceptance.
+
+
 ## Checkpoint 2026-11-26 — native pricing math foundation (stacked)
 - Parent recipe PR #9 retargeted to develop 64ec54322fcbdd7d942ed671114151d413852277 at head 64941e9a6bf915c430d4047cad4453247e62d080. Run 45775500094 in progress; require full software gate against develop also. Integrated develop runs 45775322640 and 45775322542 in progress at inspection. Do not interrupt.
 - New isolated branch feature/native-android-pricing-math starts at exact #9 repair head. Actual archived Nov 24 source ZIP and current develop src/shared/pricingEngine.ts inspected. PricingMath.java 6758a01540597eb4209f2f30a74a598c153fc28e and PricingMathTest.java 8a6452bfe3a65f833fbe2ddbaaa1f731f6b51173: fixed/unit/page/copy/sheet/area/linear feet/meters/bulk, decimal measurement with exact physical conversion, 4->2 decimal rounding, minimum measured unit 0.1, highest qualifying tier, bounded inputs, exact centavos. Desktop approximate meter-to-feet conversion can differ at rounding boundaries; exact physical conversion is intentional. No material or inventory mutation.
 - Local standalone 41 checks PASSED using JDK 21 compiler module with -source 17 -target 17; --release 17 unavailable in this runtime, actual JDK17/Android gate remains mandatory. CI test added 0ec53fdecc5e90362bf2f205318aa9e32e4a68a6, updated Android README 1a8f60d421e20b1e8ca6d43be8e6860e9bf96f4b. No native pricing controls or persisted pricing configuration yet. Formula, attributes, fees, currency rounding settings, fractional material demand and checkout are explicitly pending.
 - Next: open stacked draft PR on #9; inspect Android run. Verify #9 build, emulator (including recipe marker), full Windows/Linux and actual integrated develop gates before merge; retarget pricing PR only after parent accepted. Then implement versioned pricing preferences, native input/configuration controls and fractional billed-unit cost/stock estimation with no silent consumption, and durable pending stock recovery. Maintain preview scope and no real business data or physical/BIR claims.
-
 ## Checkpoint 2026-11-26 — pricing PR #10 reconciled with integration base
 - Merge develop 30307cc42df54b0f022464bd96e24b3078a07731 into feature/native-android-pricing-math (previous head 8c0125a3d9665474d9c57ec05af4a4b97aa5f691) without changing pricing source/tests. Preserve recipe docs, owner policy, runner connectivity and disabled opt-in configuration, both handoffs/checkpoints; no merge of pricing to develop and no new branch.
 - Local exact standalone pricing regression rerun: 93 checks passed (13 quote, 12 catalog, 15 stock, 12 material cost, 41 pricing; JDK21 source/target 17, not Android SDK); exact fresh full native + software gates mandatory, hosted failures may persist. The optional Windows route remains disabled and requires isolated runner setup as documented. Next: verify new exact PR #10 head/current base, then merge only after all applicable gates and update/retarget #11–#13 in order. No production, real data, physical or tax claim.
+
+## 2026-11-27 — reconcile pricing branch for active VMware route
+- Updated #10 with current develop `5a7b3d53056486d53ed06bf4842f0c9081d7b0d2`; pricing source, tests and Android CI remain unchanged. Owner-enabled isolated Windows route now active; develop acceptance run 45924721267 pending, Ubuntu failed without steps. Require fresh exact Windows, Ubuntu and Android acceptance before merge.

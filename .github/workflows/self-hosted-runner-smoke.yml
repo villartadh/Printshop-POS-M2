@@ -20,3 +20,32 @@ jobs:
             throw 'Expected registered Windows x64 runner'
           }
           Write-Output 'SELF_HOSTED_WINDOWS_CONNECTIVITY_PASS'
+      - name: Read-only development host readiness
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Report only coarse readiness booleans and workspace-drive capacity.
+          # No repository checkout, user files, secrets, network downloads or machine changes.
+          foreach ($tool in @('git.exe','bash.exe','pwsh.exe','node.exe','python.exe','java.exe','adb.exe','Get-VM','New-VM')) {
+            $present = [bool](Get-Command $tool -ErrorAction SilentlyContinue)
+            Write-Output ("HOST_TOOL_{0}={1}" -f $tool,$present)
+          }
+          try {
+            $drive = [IO.DriveInfo]::new([IO.Path]::GetPathRoot($env:GITHUB_WORKSPACE))
+            Write-Output ("HOST_WORKSPACE_FREE_GIB={0}" -f [math]::Floor($drive.AvailableFreeSpace / 1GB))
+          } catch { Write-Output 'HOST_WORKSPACE_FREE_GIB=unknown' }
+          try {
+            $system = Get-CimInstance -ClassName Win32_ComputerSystem
+            $processors = @(Get-CimInstance -ClassName Win32_Processor)
+            Write-Output ("HOST_MEMORY_GIB={0}" -f [math]::Round($system.TotalPhysicalMemory / 1GB))
+            Write-Output ("HOST_HYPERVISOR_PRESENT={0}" -f [bool]$system.HypervisorPresent)
+            Write-Output ("HOST_VIRTUALIZATION_FIRMWARE={0}" -f [bool]($processors | Where-Object VirtualizationFirmwareEnabled))
+            Write-Output ("HOST_SLAT={0}" -f [bool]($processors | Where-Object SecondLevelAddressTranslationExtensions))
+          } catch { Write-Output 'HOST_VIRTUALIZATION_READINESS=unknown' }
+          try {
+            $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+            $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+            Write-Output ("HOST_RUNNER_ELEVATED={0}" -f $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))
+            $identity.Dispose()
+          } catch { Write-Output 'HOST_RUNNER_ELEVATED=unknown' }
+          Write-Output 'SELF_HOSTED_WINDOWS_READINESS_PASS'
