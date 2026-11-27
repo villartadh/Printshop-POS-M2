@@ -14,7 +14,7 @@ public final class CatalogStore extends SQLiteOpenHelper {
     public CatalogStore(Context context) { this(context, "preview-catalog.db"); }
     CatalogStore(Context context, String filename) { this(context,filename,false); }
     private CatalogStore(Context context,String filename,boolean fixtureCheckoutWrites) {
-        super(context,filename,null,18);this.fixtureCheckoutWrites=fixtureCheckoutWrites;
+        super(context,filename,null,19);this.fixtureCheckoutWrites=fixtureCheckoutWrites;
     }
     /** No production/ordinary preview API can record sales or consume stock through checkout.
      * Only a separately identified synthetic fixture database opts in to transaction experiments.
@@ -68,6 +68,7 @@ public final class CatalogStore extends SQLiteOpenHelper {
         upgradeCreditSchema(db);
         QuotationJournal.upgrade(db);
         QuotationJournal.upgradeConversion(db);
+        QuotationJournal.upgradeCreditConversion(db);
     }
     private static void upgradeCreditSchema(SQLiteDatabase db){
         ReceivableJournal.createCandidate(db); CreditCashJournal.createCandidate(db); CreditCheckoutJournal.createCandidate(db);
@@ -91,7 +92,7 @@ public final class CatalogStore extends SQLiteOpenHelper {
         db.execSQL("CREATE TRIGGER stock_request_resolution BEFORE UPDATE ON stock_requests WHEN OLD.state<>'PENDING' OR NEW.state NOT IN ('APPLIED','CANCELLED') OR NEW.request_id IS NOT OLD.request_id OR NEW.material_id IS NOT OLD.material_id OR NEW.catalog_revision IS NOT OLD.catalog_revision OR NEW.expected_stock_revision IS NOT OLD.expected_stock_revision OR NEW.delta IS NOT OLD.delta OR NEW.reason IS NOT OLD.reason OR NEW.created_ms IS NOT OLD.created_ms OR (NEW.state='APPLIED' AND NOT EXISTS (SELECT 1 FROM stock_movements m WHERE m.request_id=OLD.request_id AND m.material_id=OLD.material_id AND m.catalog_revision=OLD.catalog_revision AND m.stock_revision=OLD.expected_stock_revision+1 AND m.delta=OLD.delta AND m.reason=OLD.reason)) OR (NEW.state='CANCELLED' AND EXISTS (SELECT 1 FROM stock_movements m WHERE m.request_id=OLD.request_id)) BEGIN SELECT RAISE(ABORT,'Invalid stock request transition'); END");
     }
     @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-        if (newVersion == 18 && oldVersion >= 1 && oldVersion <= 17) {
+        if (newVersion == 19 && oldVersion >= 1 && oldVersion <= 18) {
             if (oldVersion < 2) createStockLedger(db);
             if (oldVersion < 3) createRecipeSchema(db);
             if (oldVersion < 4) createPricingSchema(db);
@@ -108,7 +109,8 @@ public final class CatalogStore extends SQLiteOpenHelper {
             if(oldVersion<15) CustomerLinkJournal.upgrade(db);
             if(oldVersion<16) upgradeCreditSchema(db);
             if(oldVersion<17)QuotationJournal.upgrade(db);
-            QuotationJournal.upgradeConversion(db); return;
+            if(oldVersion<18)QuotationJournal.upgradeConversion(db);
+            QuotationJournal.upgradeCreditConversion(db); return;
         }
         throw new IllegalStateException("No migration path; existing catalog preserved");
     }
@@ -518,7 +520,7 @@ public final class CatalogStore extends SQLiteOpenHelper {
         return q;
     }
     private static SavedQuotation currentQuotationForConversion(SQLiteDatabase db,QuotationJournal.Record q){
-        if(q.cancelled||q.cashCheckout!=null||!q.convertible)throw new IllegalStateException("Quotation cannot be converted");
+        if(q.cancelled||q.cashCheckout!=null||q.creditCheckout!=null||!q.convertible)throw new IllegalStateException("Quotation cannot be converted");
         SavedQuotation.Historical h=q.historical();
         CatalogEntry service=read(db,h.serviceId);PricingProfile profile=readPricing(db,h.serviceId);long recipe=recipeRevision(db,h.serviceId);
         SavedQuotation current=SavedQuotation.review(q.id,service,profile,recipe,h.inputs,readCheckoutMaterials(db,h.serviceId));
@@ -563,6 +565,41 @@ public final class CatalogStore extends SQLiteOpenHelper {
             CustomerLinkJournal.link(db,actor,staged.id,q.customer==null?null:new CustomerLinkJournal.Selection(q.customer,q.customerName,q.customerRevision));
             CheckoutJournal.Record applied=applyCheckout(db,staged.id,reviewed.fingerprint());
             QuotationJournal.linkCash(db,actor,q.id,applied.id,now);return applied;
+        });
+    }
+    CreditCheckoutPlan prepareAuthorizedFixtureQuotationCredit(String token,String shift,String quoteId,String checkoutId,long paid){
+        return fixtureTransaction(db->{
+            CashierJournal.Principal actor=CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            CashierJournal.requireShift(db,actor,shift,true);DrawerJournal.requireNoPending(db,shift);
+            QuotationJournal.Record q=requireQuotation(db,actor,quoteId);SavedQuotation current=currentQuotationForConversion(db,q);
+            if(q.customer==null)throw new IllegalStateException("Credit conversion requires a named quotation customer");
+            return readCreditPlan(db,checkoutId,q.customer,q.customerRevision,current.serviceId,current.serviceRevision,current.pricingRevision,current.recipeRevision,q.historical().withTender(paid)).bind(actor.id,actor.revision,shift);
+        });
+    }
+    CreditCheckoutJournal.Record convertAuthorizedFixtureQuotationCredit(String token,String shift,String quoteId,CreditCheckoutPlan reviewed){
+        return fixtureTransaction(db->{
+            long now=System.currentTimeMillis();CashierJournal.Principal actor=CashierJournal.requireSession(db,token,now);
+            if(reviewed==null)throw new IllegalArgumentException("Review credit quotation conversion first");
+            reviewed.requireAuthorization(actor.id,shift);
+            QuotationJournal.Record q=requireQuotation(db,actor,quoteId);
+            if(q.creditCheckout!=null){
+                if(!q.creditCheckout.equals(reviewed.id))throw new IllegalStateException("Quotation already converted");
+                CreditCheckoutJournal.Record prior=requireCreditRecord(db,actor,reviewed.id);
+                if(!"APPLIED".equals(prior.state)||!prior.shiftId.equals(shift))throw new IllegalStateException("Quotation credit receipt unavailable");
+                prior.requireIdentity(reviewed.fingerprint);return prior;
+            }
+            reviewed.requireFreshAuthorization(actor.id,actor.revision,shift);
+            SavedQuotation quote=currentQuotationForConversion(db,q);
+            if(q.customer==null||!q.customer.equals(reviewed.customerId)||q.customerRevision!=reviewed.customerRevision)
+                throw new IllegalStateException("Quotation customer changed");
+            if(CheckoutJournal.read(db,reviewed.id)!=null||CreditCheckoutJournal.read(db,reviewed.id)!=null)
+                throw new IllegalStateException("Checkout identity already used");
+            CashierJournal.requireShift(db,actor,shift,true);DrawerJournal.requireNoPending(db,shift);
+            CreditCheckoutPlan current=readCreditPlan(db,reviewed.id,q.customer,q.customerRevision,quote.serviceId,quote.serviceRevision,quote.pricingRevision,quote.recipeRevision,q.historical().withTender(reviewed.paid));
+            reviewed.requireSameReview(current);
+            CreditCheckoutJournal.stage(db,actor,shift,current,now);
+            CreditCheckoutJournal.Record applied=CreditCheckoutJournal.resolve(db,actor,current.id,true,null,System.currentTimeMillis());
+            QuotationJournal.linkCredit(db,actor,q.id,applied.id,now);return applied;
         });
     }
     QuotationJournal.Page authorizedFixtureQuotationHistory(String token,int offset){

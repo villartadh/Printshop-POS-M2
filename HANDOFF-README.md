@@ -192,3 +192,6 @@ Checkout PR #13 integrated with verified hosted gates. Draft PR #15 is the next 
 
 ## Latest quotation continuation — schema v18
 PR #15 now includes historical decode, role-scoped quotation history and atomic full-cash receipt conversion plus unique immutable audit link. Credit conversion and native quotation UI remain missing. Read last DEVELOPMENT_QUEUE.md entry and android-native/QUOTATION_ACCEPTANCE.md; require actual gates before integration. No production promotion.
+
+## Latest quotation continuation — schema v19
+PR #15 v18 cash conversion passed hosted acceptance. v19 adds atomic named-customer credit quotation conversion and cross-mode uniqueness. Native screens remain next, see latest DEVELOPMENT_QUEUE.md and QUOTATION_ACCEPTANCE.md. Verify new exact full gates, not merely previous pass.
