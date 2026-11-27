@@ -73,6 +73,16 @@ jobs:
           test -x "$ANDROID_HOME/build-tools/34.0.0/aapt2"
       - name: Build and lint native preview
         run: gradle -p android-native --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug
+      - name: Preserve full lint diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-android-lint-diagnostics
+          path: |
+            android-native/app/build/reports/lint-results-debug.html
+            android-native/app/build/intermediates/lint_intermediate_text_report/debug/lintReportDebug/lint-results-debug.txt
+          if-no-files-found: warn
+          retention-days: 14
       - name: Upload APK preview and lint
         uses: actions/upload-artifact@v4
         with:

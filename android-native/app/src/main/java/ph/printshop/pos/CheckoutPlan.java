@@ -185,7 +185,9 @@ public final class CheckoutPlan {
             BigInteger[] required=BigInteger.valueOf(m.perUnitMilli).multiply(BigInteger.valueOf(usage)).divideAndRemainder(HUNDRED);
             if(required[1].signum()!=0||required[0].signum()<=0||required[0].compareTo(BigInteger.valueOf(StockMath.MAX))>0)
                 throw new IllegalArgumentException("Recipe demand is not representable in exact stock milliunits");
-            consumption.add(new Consumption(m,required[0].longValueExact()));
+            // Already checked positive, exact and <= StockMath.MAX (well below Long.MAX_VALUE).
+            // BigInteger.longValueExact is API 31; bounded longValue works on API 26.
+            consumption.add(new Consumption(m,required[0].longValue()));
             costs.add(new MaterialCost.Component(m.entry.centavos,m.perUnitMilli,m.availableMilli));
         }
         MaterialCost.Estimate estimate=MaterialCost.estimateFractional(costs,usage);
@@ -194,3 +196,4 @@ public final class CheckoutPlan {
         return new Proposal(requestId,service,profile,recipeRevision,inputs,price,produced,estimate.costCentavos,consumption);
     }
 }
+

@@ -91,7 +91,8 @@ final class ReportMath {
     static int bar(BigInteger net,BigInteger max){
         if(max.signum()<0||net.abs().compareTo(max)>0)throw new IllegalArgumentException("Invalid chart scale");
         if(net.signum()==0)return 0;
-        int absolute=net.abs().multiply(BigInteger.valueOf(1000)).divide(max).intValueExact();
+        // Scale guard above bounds this integer quotient to 0..1000; API 26-compatible.
+        int absolute=net.abs().multiply(BigInteger.valueOf(1000)).divide(max).intValue();
         return net.signum()*Math.max(1,absolute);
     }
     static String display(BigInteger centavos){
