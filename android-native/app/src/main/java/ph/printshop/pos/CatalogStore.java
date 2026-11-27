@@ -14,7 +14,7 @@ public final class CatalogStore extends SQLiteOpenHelper {
     public CatalogStore(Context context) { this(context, "preview-catalog.db"); }
     CatalogStore(Context context, String filename) { this(context,filename,false); }
     private CatalogStore(Context context,String filename,boolean fixtureCheckoutWrites) {
-        super(context,filename,null,19);this.fixtureCheckoutWrites=fixtureCheckoutWrites;
+        super(context,filename,null,20);this.fixtureCheckoutWrites=fixtureCheckoutWrites;
     }
     /** No production/ordinary preview API can record sales or consume stock through checkout.
      * Only a separately identified synthetic fixture database opts in to transaction experiments.
@@ -69,6 +69,7 @@ public final class CatalogStore extends SQLiteOpenHelper {
         QuotationJournal.upgrade(db);
         QuotationJournal.upgradeConversion(db);
         QuotationJournal.upgradeCreditConversion(db);
+        ProductionJournal.upgrade(db);
     }
     private static void upgradeCreditSchema(SQLiteDatabase db){
         ReceivableJournal.createCandidate(db); CreditCashJournal.createCandidate(db); CreditCheckoutJournal.createCandidate(db);
@@ -92,7 +93,7 @@ public final class CatalogStore extends SQLiteOpenHelper {
         db.execSQL("CREATE TRIGGER stock_request_resolution BEFORE UPDATE ON stock_requests WHEN OLD.state<>'PENDING' OR NEW.state NOT IN ('APPLIED','CANCELLED') OR NEW.request_id IS NOT OLD.request_id OR NEW.material_id IS NOT OLD.material_id OR NEW.catalog_revision IS NOT OLD.catalog_revision OR NEW.expected_stock_revision IS NOT OLD.expected_stock_revision OR NEW.delta IS NOT OLD.delta OR NEW.reason IS NOT OLD.reason OR NEW.created_ms IS NOT OLD.created_ms OR (NEW.state='APPLIED' AND NOT EXISTS (SELECT 1 FROM stock_movements m WHERE m.request_id=OLD.request_id AND m.material_id=OLD.material_id AND m.catalog_revision=OLD.catalog_revision AND m.stock_revision=OLD.expected_stock_revision+1 AND m.delta=OLD.delta AND m.reason=OLD.reason)) OR (NEW.state='CANCELLED' AND EXISTS (SELECT 1 FROM stock_movements m WHERE m.request_id=OLD.request_id)) BEGIN SELECT RAISE(ABORT,'Invalid stock request transition'); END");
     }
     @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-        if (newVersion == 19 && oldVersion >= 1 && oldVersion <= 18) {
+        if (newVersion == 20 && oldVersion >= 1 && oldVersion <= 19) {
             if (oldVersion < 2) createStockLedger(db);
             if (oldVersion < 3) createRecipeSchema(db);
             if (oldVersion < 4) createPricingSchema(db);
@@ -110,7 +111,8 @@ public final class CatalogStore extends SQLiteOpenHelper {
             if(oldVersion<16) upgradeCreditSchema(db);
             if(oldVersion<17)QuotationJournal.upgrade(db);
             if(oldVersion<18)QuotationJournal.upgradeConversion(db);
-            QuotationJournal.upgradeCreditConversion(db); return;
+            if(oldVersion<19)QuotationJournal.upgradeCreditConversion(db);
+            ProductionJournal.upgrade(db); return;
         }
         throw new IllegalStateException("No migration path; existing catalog preserved");
     }
@@ -601,6 +603,16 @@ public final class CatalogStore extends SQLiteOpenHelper {
             CreditCheckoutJournal.Record applied=CreditCheckoutJournal.resolve(db,actor,current.id,true,null,System.currentTimeMillis());
             QuotationJournal.linkCredit(db,actor,q.id,applied.id,now);return applied;
         });
+    }
+    ProductionJournal.Job appendAuthorizedFixtureJob(String token,String receipt,String event,long prior,ProductionWorkflow.Status target,String note){
+        return fixtureTransaction(db->{long now=System.currentTimeMillis();return ProductionJournal.append(db,CashierJournal.requireSession(db,token,now),receipt,event,prior,target,note,now);});
+    }
+    List<ProductionJournal.Job> authorizedFixtureJobs(String token,int offset){
+        return fixtureTransaction(db->ProductionJournal.page(db,CashierJournal.requireSession(db,token,System.currentTimeMillis()),offset));
+    }
+    ProductionJournal.Job authorizedFixtureJob(String token,String receipt){
+        return fixtureTransaction(db->{StockMath.validateRequestId(receipt);ProductionJournal.Job job=ProductionJournal.read(db,CashierJournal.requireSession(db,token,System.currentTimeMillis()),receipt);
+            if(job==null)throw new IllegalStateException("Job unavailable");return job;});
     }
     QuotationJournal.Page authorizedFixtureQuotationHistory(String token,int offset){
         return fixtureTransaction(db->QuotationJournal.page(db,CashierJournal.requireSession(db,token,System.currentTimeMillis()),offset));

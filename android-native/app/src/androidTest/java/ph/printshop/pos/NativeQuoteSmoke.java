@@ -70,6 +70,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "v16 quotation migration"; verifyCheckoutMigration(16);
             phase = "v17 conversion migration"; verifyCheckoutMigration(17);
             phase = "v18 credit conversion migration"; verifyCheckoutMigration(18);
+            phase = "v19 production migration"; verifyCheckoutMigration(19);
             phase = "saved quotation journal"; verifySavedQuotation();
             phase = "saved quotation cash conversion"; verifyQuotationCashConversion();
             phase = "saved quotation credit conversion"; verifyQuotationCreditConversion();
@@ -89,7 +90,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "pricing settings and document quote"; verifyPricingScreen(screen);
             phase = "measured quote"; verifyMeasuredQuote(screen);
             phase = "native cashier training UI"; verifyCashierTrainingScreen(screen);
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_RECURRING_UI_PASS\nNATIVE_CUSTOMER_DIRECTORY_PASS\nNATIVE_CUSTOMER_CHECKOUT_PASS\nNATIVE_CREDIT_COLLECTION_API_PASS\nNATIVE_CREDIT_REPORT_PASS\nNATIVE_CREDIT_CHECKOUT_UI_PASS\nNATIVE_CREDIT_COLLECTION_UI_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\nNATIVE_SAVED_QUOTATION_PASS\nNATIVE_QUOTATION_CASH_CONVERSION_PASS\nNATIVE_QUOTATION_CREDIT_CONVERSION_PASS\nNATIVE_QUOTATION_UI_PASS\n");
+            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_RECURRING_UI_PASS\nNATIVE_CUSTOMER_DIRECTORY_PASS\nNATIVE_CUSTOMER_CHECKOUT_PASS\nNATIVE_CREDIT_COLLECTION_API_PASS\nNATIVE_CREDIT_REPORT_PASS\nNATIVE_CREDIT_CHECKOUT_UI_PASS\nNATIVE_CREDIT_COLLECTION_UI_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\nNATIVE_SAVED_QUOTATION_PASS\nNATIVE_QUOTATION_CASH_CONVERSION_PASS\nNATIVE_QUOTATION_CREDIT_CONVERSION_PASS\nNATIVE_QUOTATION_UI_PASS\nNATIVE_PRODUCTION_JOURNAL_PASS\n");
             result = Activity.RESULT_OK;
         } catch (Throwable error) {
             evidence.putString("stream", failureDetails(phase, error));
@@ -374,6 +375,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             verifyCreditCheckoutUI(second,fixtureId);
             verifyCollectionUI(second,fixtureId,owner,ownerPass);
             verifyQuotationUI(second,fixtureId,owner,ownerPass);
+            verifyProductionJournal(fixtureId);
             try(CatalogStore ordinary=new CatalogStore(context)){
                 java.util.List<CatalogEntry> after=ordinary.list(true);
                 require(before.size()==after.size(),"ordinary catalog changed");
@@ -1286,6 +1288,40 @@ public final class NativeQuoteSmoke extends Instrumentation {
         }
     }
 
+    private void verifyProductionJournal(String fixtureId){
+        try(CatalogStore fixture=CatalogStore.checkoutFixture(getTargetContext(),fixtureId)){
+            char[] pw="Synthetic-Catalog-Cashier-01".toCharArray();
+            try{
+                String token=fixture.signInFixture("catalog-cashier",pw);
+                String cash,credit;
+                try(android.database.Cursor c=fixture.getReadableDatabase().rawQuery("SELECT checkout_id FROM saved_quotation_cash_conversions",null)){
+                    require(c.moveToFirst(),"cash conversion missing");cash=c.getString(0);}
+                try(android.database.Cursor c=fixture.getReadableDatabase().rawQuery("SELECT checkout_id FROM saved_quotation_credit_conversions",null)){
+                    require(c.moveToFirst(),"credit conversion missing");credit=c.getString(0);}
+                String event=java.util.UUID.randomUUID().toString();
+                require(fixture.appendAuthorizedFixtureJob(token,cash,event,0,ProductionWorkflow.Status.PENDING,"Synthetic job").revision==1,"job creation");
+                require(fixture.appendAuthorizedFixtureJob(token,cash,event,0,ProductionWorkflow.Status.PENDING,"Synthetic job").revision==1,"job replay");
+                for(String receipt:new String[]{cash,credit}){
+                    if(receipt.equals(credit))fixture.appendAuthorizedFixtureJob(token,credit,java.util.UUID.randomUUID().toString(),0,ProductionWorkflow.Status.PENDING,"Synthetic job");
+                    long revision=1;
+                    for(ProductionWorkflow.Status status:new ProductionWorkflow.Status[]{ProductionWorkflow.Status.IN_PRODUCTION,ProductionWorkflow.Status.QUALITY_CHECKING,ProductionWorkflow.Status.READY_FOR_PICKUP}){
+                        ProductionJournal.Job job=fixture.appendAuthorizedFixtureJob(token,receipt,java.util.UUID.randomUUID().toString(),revision++,status,"Synthetic transition");
+                        require(job.status==status&&job.revision==revision,"job stage");
+                    }
+                    if(receipt.equals(cash)){
+                        require(fixture.appendAuthorizedFixtureJob(token,cash,java.util.UUID.randomUUID().toString(),4,ProductionWorkflow.Status.COMPLETED,"Synthetic release").status==ProductionWorkflow.Status.COMPLETED,"paid release");
+                    }else{
+                        try{fixture.appendAuthorizedFixtureJob(token,credit,java.util.UUID.randomUUID().toString(),4,ProductionWorkflow.Status.COMPLETED,"Blocked unpaid release");throw new AssertionError("unpaid job released");}
+                        catch(IllegalStateException expected){}
+                        require(fixture.authorizedFixtureJob(token,credit).financial.balance==1600,"live job debt");
+                    }
+                }
+                require(fixture.authorizedFixtureJobs(token,0).size()==2,"job page");
+                fixture.signOutFixture(token);
+            }finally{java.util.Arrays.fill(pw,'\0');}
+        }
+    }
+
     /** Preserve exceptions from the UI thread without terminating instrumentation. */
     private void runOnMainChecked(Runnable operation) {
         java.util.concurrent.atomic.AtomicReference<Throwable> fault = new java.util.concurrent.atomic.AtomicReference<>();
@@ -1498,7 +1534,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 db.setVersion(4);
             }
             try(CatalogStore store=new CatalogStore(context,filename)){
-                require(store.getReadableDatabase().getVersion()==19,"v4-to-v19 migration version wrong");
+                require(store.getReadableDatabase().getVersion()==20,"v4-to-v20 migration version wrong");
                 require(store.stockBalance(material).quantity==1500&&store.stockHistory(material,0,5).size()==1,"v4 stock lost");
                 require(store.recipeBindings(service).get(0).quantityMilli==500&&store.pricing(service).tiers.get(0).rateCentavos==250,"v4 recipe/pricing lost");
                 require(store.pendingStock(material)==null,"unexpected migrated pending request");
@@ -1693,10 +1729,11 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 if(former>=16){ReceivableJournal.createCandidate(db);CreditCashJournal.createCandidate(db);CreditCheckoutJournal.createCandidate(db);}
                 if(former>=17)QuotationJournal.upgrade(db);
                 if(former>=18)QuotationJournal.upgradeConversion(db);
+                if(former>=19)QuotationJournal.upgradeCreditConversion(db);
                 db.setVersion(former);
             }
             try(CatalogStore store=former>=7?CatalogStore.checkoutFixture(context,fixture):new CatalogStore(context,filename)){
-                require(store.getReadableDatabase().getVersion()==19,"v5-v19 migration failed");
+                require(store.getReadableDatabase().getVersion()==20,"v5-v20 migration failed");
                 require(store.stockBalance(material).quantity==1500&&store.stockHistory(material,0,10).size()==1,"v5 stock changed");
                 require(store.pendingStock(material)!=null&&store.pendingStock(material).id.equals(pending),"v5 pending stock lost");
                 require(store.get(material).centavos==199,"v5 catalog changed");
@@ -2612,7 +2649,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             }
             java.util.List<PricingMath.Tier> tiers=java.util.Arrays.asList(new PricingMath.Tier(2000,200),new PricingMath.Tier(1000,250));
             try(CatalogStore store=new CatalogStore(context,filename)){
-                require(store.getReadableDatabase().getVersion()==19,"v3-to-v19 migration version wrong");
+                require(store.getReadableDatabase().getVersion()==20,"v3-to-v20 migration version wrong");
                 require(store.pricing(service).revision==0&&!store.pricing(service).needsAdvancedQuote(),"legacy default changed");
                 require(store.recipeRevision(service)==1&&store.stockBalance(material).quantity==1500,"migration changed recipe or stock");
                 PricingProfile saved=store.savePricing(service,1,0,PricingMath.Method.PER_PAGE,true,tiers);
