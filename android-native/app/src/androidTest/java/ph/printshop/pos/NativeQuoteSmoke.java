@@ -373,7 +373,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             verifyCustomerCheckoutUI(second);
             verifyCreditCheckoutUI(second,fixtureId);
             verifyCollectionUI(second,fixtureId,owner,ownerPass);
-            verifyQuotationUI(second,fixtureId);
+            verifyQuotationUI(second,fixtureId,owner,ownerPass);
             try(CatalogStore ordinary=new CatalogStore(context)){
                 java.util.List<CatalogEntry> after=ordinary.list(true);
                 require(before.size()==after.size(),"ordinary catalog changed");
@@ -1232,7 +1232,21 @@ public final class NativeQuoteSmoke extends Instrumentation {
         }
         trainingClick(a,R.id.cashier_quote_save);awaitText(a,"Training quotation · Saved","quotation saved");
     }
-    private void verifyQuotationUI(Activity a,String fixtureId){
+    private void verifyQuotationUI(Activity a,String fixtureId,String ownerName,String ownerPassphrase){
+        // Collection acceptance deliberately archives this customer. Verify that fence,
+        // then restore the synthetic customer through the authorized owner API.
+        try(CatalogStore fixture=CatalogStore.checkoutFixture(getTargetContext(),fixtureId)){
+            char[] password=ownerPassphrase.toCharArray();
+            try{
+                String owner=fixture.signInFixture(ownerName,password);
+                require(fixture.authorizedFixtureQuotationCustomers(owner,"Synthetic Customer Updated",0,9).isEmpty(),"archived quotation customer visible");
+                CustomerJournal.Customer archived=fixture.authorizedFixtureCustomers(owner,false,"Synthetic Customer Updated",0,9).get(0);
+                require(!archived.active,"collection fixture should archive customer");
+                fixture.saveFixtureCustomer(owner,archived.id,archived.revision,archived.name,archived.contact,true);
+                require(fixture.authorizedFixtureQuotationCustomers(owner,"Synthetic Customer Updated",0,9).size()==1,"restored quotation customer missing");
+                fixture.signOutFixture(owner);
+            }finally{java.util.Arrays.fill(password,'\0');}
+        }
         trainingLogin(a,"catalog-cashier","Synthetic-Catalog-Cashier-01");awaitText(a,"No open shift","quotation login");
         newQuotationUI(a,false);
         trainingClick(a,R.id.cashier_quote_convert);awaitText(a,"Open your own shift and resolve pending requests before conversion.","shift fence");
