@@ -72,6 +72,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "v18 credit conversion migration"; verifyCheckoutMigration(18);
             phase = "v19 production migration"; verifyCheckoutMigration(19);
             phase = "v20 production policy migration"; verifyCheckoutMigration(20);
+            phase = "v21 quotation job migration"; verifyCheckoutMigration(21);
             phase = "saved quotation journal"; verifySavedQuotation();
             phase = "saved quotation cash conversion"; verifyQuotationCashConversion();
             phase = "saved quotation credit conversion"; verifyQuotationCreditConversion();
@@ -91,7 +92,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "pricing settings and document quote"; verifyPricingScreen(screen);
             phase = "measured quote"; verifyMeasuredQuote(screen);
             phase = "native cashier training UI"; verifyCashierTrainingScreen(screen);
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_RECURRING_UI_PASS\nNATIVE_CUSTOMER_DIRECTORY_PASS\nNATIVE_CUSTOMER_CHECKOUT_PASS\nNATIVE_CREDIT_COLLECTION_API_PASS\nNATIVE_CREDIT_REPORT_PASS\nNATIVE_CREDIT_CHECKOUT_UI_PASS\nNATIVE_CREDIT_COLLECTION_UI_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\nNATIVE_SAVED_QUOTATION_PASS\nNATIVE_QUOTATION_CASH_CONVERSION_PASS\nNATIVE_QUOTATION_CREDIT_CONVERSION_PASS\nNATIVE_QUOTATION_UI_PASS\nNATIVE_PRODUCTION_JOURNAL_PASS\nNATIVE_PRODUCTION_UI_PASS\nNATIVE_PRODUCTION_POLICY_PASS\n");
+            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_RECURRING_UI_PASS\nNATIVE_CUSTOMER_DIRECTORY_PASS\nNATIVE_CUSTOMER_CHECKOUT_PASS\nNATIVE_CREDIT_COLLECTION_API_PASS\nNATIVE_CREDIT_REPORT_PASS\nNATIVE_CREDIT_CHECKOUT_UI_PASS\nNATIVE_CREDIT_COLLECTION_UI_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\nNATIVE_SAVED_QUOTATION_PASS\nNATIVE_QUOTATION_CASH_CONVERSION_PASS\nNATIVE_QUOTATION_CREDIT_CONVERSION_PASS\nNATIVE_QUOTATION_UI_PASS\nNATIVE_PRODUCTION_JOURNAL_PASS\nNATIVE_PRODUCTION_UI_PASS\nNATIVE_PRODUCTION_POLICY_PASS\nNATIVE_QUOTE_PRODUCTION_PASS\n");
             result = Activity.RESULT_OK;
         } catch (Throwable error) {
             evidence.putString("stream", failureDetails(phase, error));
@@ -1057,20 +1058,29 @@ public final class NativeQuoteSmoke extends Instrumentation {
             rejectStock(()->store.setAuthorizedFixtureProductionPolicy(owner,service.id,service.revision,0,false));
             SavedQuotation quote=store.prepareAuthorizedFixtureQuotation(owner,stockId(),selection,new CheckoutPlan.Inputs(2,1,1,null,null,null,CheckoutPlan.UsageBasis.NONE,0));
             store.saveAuthorizedFixtureQuotation(owner,selection,quote,null);
+            String event=stockId();
+            require(store.appendAuthorizedFixtureQuoteJob(owner,quote.id,event,0,ProductionWorkflow.Status.QUOTATION,"Synthetic requested work").revision==1,"manual quotation job creation");
+            require(store.appendAuthorizedFixtureQuoteJob(owner,quote.id,event,0,ProductionWorkflow.Status.QUOTATION,"Synthetic requested work").revision==1,"quotation job replay");
+            rejectStock(()->store.appendAuthorizedFixtureQuoteJob(owner,quote.id,stockId(),1,ProductionWorkflow.Status.COMPLETED,"Forbidden unpaid release"));
+            require(store.appendAuthorizedFixtureQuoteJob(owner,quote.id,stockId(),1,ProductionWorkflow.Status.AWAITING_APPROVAL,"Await approval").revision==2,"quotation approval stage");
+            require(trainingCount(store,"SELECT COUNT(*) FROM checkout_sales")==0,"quotation job invented a sale");
             require(store.authorizedFixtureQuotationHistory(owner,0).rows.size()==1,"quote history unavailable");
             require(store.authorizedFixtureQuotation(owner,quote.id).historical().total==1000,"historical decode incorrect");
             for(int i=0;i<8;i++){SavedQuotation more=store.prepareAuthorizedFixtureQuotation(owner,stockId(),selection,quote.inputs);store.saveAuthorizedFixtureQuotation(owner,selection,more,null);}
             require(store.authorizedFixtureQuotationHistory(owner,0).rows.size()==8&&store.authorizedFixtureQuotationHistory(owner,0).more,"quote page missing lookahead");
             require(store.authorizedFixtureQuotationHistory(owner,8).rows.size()==1&&!store.authorizedFixtureQuotationHistory(owner,8).more,"quote last page incorrect");
+            store.setAuthorizedFixtureProductionPolicy(owner,service.id,service.revision,1,false);
             store.openFixtureShift(owner,shift,0);
             CheckoutPlan.Proposal sale=store.prepareAuthorizedFixtureQuotationCash(owner,shift,quote.id,stockId(),1200);
             require(sale.totalCentavos==1000&&sale.changeCentavos==200,"conversion cash review wrong");
             require(store.expectedFixtureCash(owner,shift)==0,"quote review changed cash");
             store.convertAuthorizedFixtureQuotationCash(owner,shift,quote.id,sale);
             store.convertAuthorizedFixtureQuotationCash(owner,shift,quote.id,sale);
-            require(store.authorizedFixtureJob(owner,sale.requestId).revision==1,"automatic cash quote job");
+            require(store.authorizedFixtureJob(owner,sale.requestId).revision==1,"converted quotation job");
+            require(sale.requestId.equals(store.authorizedFixtureQuoteJob(owner,quote.id).receipt),"quoted job conversion provenance");
+            require(store.authorizedFixtureQuoteJobHistory(owner,quote.id,0).size()==2,"original job history lost");
             require(trainingCount(store,"SELECT COUNT(*) FROM production_job_events")==1,"automatic job replay duplicated");
-            store.setAuthorizedFixtureProductionPolicy(owner,service.id,service.revision,1,false);
+            store.setAuthorizedFixtureProductionPolicy(owner,service.id,service.revision,2,true);
             store.convertAuthorizedFixtureQuotationCash(owner,shift,quote.id,sale);
             require(trainingCount(store,"SELECT COUNT(*) FROM production_job_events")==1,"policy change affected historical job");
             require(store.expectedFixtureCash(owner,shift)==1000&&trainingCount(store,"SELECT COUNT(*) FROM checkout_sales")==1,"conversion replay duplicated sale");
@@ -1600,7 +1610,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 db.setVersion(4);
             }
             try(CatalogStore store=new CatalogStore(context,filename)){
-                require(store.getReadableDatabase().getVersion()==21,"v4-to-v21 migration version wrong");
+                require(store.getReadableDatabase().getVersion()==22,"v4-to-v22 migration version wrong");
                 require(store.stockBalance(material).quantity==1500&&store.stockHistory(material,0,5).size()==1,"v4 stock lost");
                 require(store.recipeBindings(service).get(0).quantityMilli==500&&store.pricing(service).tiers.get(0).rateCentavos==250,"v4 recipe/pricing lost");
                 require(store.pendingStock(material)==null,"unexpected migrated pending request");
@@ -1797,13 +1807,15 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 if(former>=18)QuotationJournal.upgradeConversion(db);
                 if(former>=19)QuotationJournal.upgradeCreditConversion(db);
                 if(former>=20)ProductionJournal.upgrade(db);
+                if(former>=21)ProductionPolicy.upgrade(db);
                 db.setVersion(former);
             }
             try(CatalogStore store=former>=7?CatalogStore.checkoutFixture(context,fixture):new CatalogStore(context,filename)){
-                require(store.getReadableDatabase().getVersion()==21,"v5-v21 migration failed");
+                require(store.getReadableDatabase().getVersion()==22,"v5-v22 migration failed");
                 require(store.stockBalance(material).quantity==1500&&store.stockHistory(material,0,10).size()==1,"v5 stock changed");
                 require(store.pendingStock(material)!=null&&store.pendingStock(material).id.equals(pending),"v5 pending stock lost");
                 require(store.get(material).centavos==199,"v5 catalog changed");
+                require(trainingCount(store,"SELECT COUNT(*) FROM production_quote_events")==0,"migration invented quotation jobs");
                 require(trainingCount(store,"SELECT COUNT(*) FROM production_service_policy")==0,"migration invented production settings");
                 require(trainingCount(store,"SELECT COUNT(*) FROM saved_quotations")==0,"migration invented quotations");
                 require(trainingCount(store,"SELECT COUNT(*) FROM cashier_admin_events")== (former>=10?1:0),"migration changed administrative audit");
@@ -2717,7 +2729,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             }
             java.util.List<PricingMath.Tier> tiers=java.util.Arrays.asList(new PricingMath.Tier(2000,200),new PricingMath.Tier(1000,250));
             try(CatalogStore store=new CatalogStore(context,filename)){
-                require(store.getReadableDatabase().getVersion()==21,"v3-to-v21 migration version wrong");
+                require(store.getReadableDatabase().getVersion()==22,"v3-to-v22 migration version wrong");
                 require(store.pricing(service).revision==0&&!store.pricing(service).needsAdvancedQuote(),"legacy default changed");
                 require(store.recipeRevision(service)==1&&store.stockBalance(material).quantity==1500,"migration changed recipe or stock");
                 PricingProfile saved=store.savePricing(service,1,0,PricingMath.Method.PER_PAGE,true,tiers);

@@ -209,4 +209,6 @@
     <item name="cashier_job_history" type="id"/>
     <item type="id" name="cashier_production_policy"/>
     <item type="id" name="cashier_production_policy_save"/>
+    <item type="id" name="cashier_quote_jobs"/>
+    <item type="id" name="cashier_quote_job"/>
 </resources>
