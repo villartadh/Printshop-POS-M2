@@ -16,12 +16,53 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-2022]
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ fromJSON(matrix.os == 'windows-2022' && github.event.repository.private && vars.PRINTSHOP_POS_WINDOWS_RUNNER == 'isolated' && github.repository == 'villartadh/Printshop-POS-M2' && (((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/develop') || (github.event_name == 'pull_request' && github.base_ref == 'develop' && github.event.pull_request.head.repo.full_name == github.repository)) && '["self-hosted","Windows","X64","printshop-pos-isolated"]' || format('["{0}"]', matrix.os)) }}
     timeout-minutes: 35
     defaults:
       run:
         shell: bash
     steps:
+      # The generic Windows runner is deliberately ineligible. This opt-in lane is only
+      # for an isolated disposable test machine; these checks are not a sandbox.
+      - name: Confirm isolated Windows runner prerequisites
+        if: runner.environment == 'self-hosted'
+        shell: powershell
+        env:
+          POS_WINDOWS_RUNNER_MODE: ${{ vars.PRINTSHOP_POS_WINDOWS_RUNNER }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:POS_WINDOWS_RUNNER_MODE -ne 'isolated' -or
+              $env:PRINTSHOP_POS_ISOLATED_TEST_RUNNER -ne '1' -or
+              $env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
+            throw 'Isolated Windows runner opt-in and x64 identity required'
+          }
+          $root = $env:PRINTSHOP_POS_ISOLATED_TEST_ROOT
+          if ([string]::IsNullOrWhiteSpace($root) -or -not [IO.Path]::IsPathRooted($root)) {
+            throw 'Dedicated absolute runner work root required'
+          }
+          $root = [IO.Path]::GetFullPath($root).TrimEnd([char[]]@('\','/'))
+          $driveRoot = [IO.Path]::GetPathRoot($root + '\').TrimEnd([char[]]@('\','/'))
+          if ($root -eq $driveRoot -or -not (Test-Path -LiteralPath $root -PathType Container)) {
+            throw 'Dedicated existing runner work root required; never use a volume root'
+          }
+          if ((Get-Item -LiteralPath $root).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            throw 'Runner work root must not be a reparse point'
+          }
+          $prefix = $root + '\'
+          foreach ($candidate in @($env:GITHUB_WORKSPACE, $env:RUNNER_TEMP)) {
+            if ([string]::IsNullOrWhiteSpace($candidate) -or
+                -not [IO.Path]::GetFullPath($candidate).StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)) {
+              throw 'Workspace and temp must be inside the dedicated runner work root'
+            }
+          }
+          foreach ($tool in @('git.exe','pwsh.exe','bash.exe')) {
+            if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
+              throw ('Required executable missing: ' + $tool)
+            }
+          }
+          $drive = [IO.DriveInfo]::new([IO.Path]::GetPathRoot($root))
+          if ($drive.AvailableFreeSpace -lt 20GB) { throw 'At least 20 GiB of workspace free space required' }
+          Write-Output 'ISOLATED_WINDOWS_PREFLIGHT_PASS'
       - uses: actions/checkout@v4
         with:
           persist-credentials: false

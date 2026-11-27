@@ -5,7 +5,7 @@ This is the permanent continuation entry point for any developer, Codex session,
 ## Canonical source and authority
 
 - Repository: https://github.com/villartadh/Printshop-POS-M2
-- Active integration branch: `develop`; use isolated feature branches for unverified work.
+- Active integration branch: `develop`; reserve feature branches for major/critical changes. Merge only after exact head/base acceptance. Remove a redundant temporary branch only after verified integration, zero unique commits, no open PR head/base or active dependencies, and recorded recovery SHA. Preserve `main`, `develop`, accepted versioned branches/tags, and protected baselines/pilots. See AGENTS.md and latest DEVELOPMENT_QUEUE checkpoint.
 - Protected historical reference: `main` and `baseline/v0.9.5`, commit `255518ed388bcee3d63ee211e17c199ba984547e`. Do not rewrite history.
 - Verified v0.9.6 pilot: `pilot/v0.9.6`, commit `b681596d50ee2fb31d40b5ef087bf58169350429`.
 - Original feature reference: https://github.com/villartadh/Printshop-POS (read-only comparison).
@@ -101,6 +101,10 @@ Read AGENTS.md on develop and the latest DEVELOPMENT_QUEUE.md. Owner-approved de
 5. Actual Android gate: JDK17, Gradle8.9, SDK35/build-tools34.0.0, API34 disposable emulator, `gradle -p android-native --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug`, installed instrumentation as in workflow. No unexecuted acceptance or production claims.
 
 
+## Current branch cleanup — owner-approved 2026-11-26
+
+Nine redundant branches were removed after ancestry and open-PR dependency checks; all nine exact tips remain reachable through develop. The recovery hashes and deletion evidence are in [DEVELOPMENT_QUEUE.md](DEVELOPMENT_QUEUE.md). Only main, develop, baseline/v0.9.5, pilot/v0.9.6 and four active native PR branches (#10 pricing math, #11 pricing settings, #12 stock recovery, #13 checkout) remain. Never recreate deleted branches for routine work. Retarget stacked PRs before removing any accepted parent branch, and verify current acceptance before each integration. No feature merge or release promotion was made by this cleanup.
+
 ## Protected contracts and release limits
 
 - Preserve exact financial arithmetic, atomic transactions, idempotency, inventory and balance protections, immutable audit trails, cancellation fences and safe backup migrations. Never discard unresolved paid transactions.
@@ -108,6 +112,19 @@ Read AGENTS.md on develop and the latest DEVELOPMENT_QUEUE.md. Owner-approved de
 - Keep physical Windows scaling, actual printer output, actual tablet/phone/PWA tests, native Android acceptance and formal BIR review separate from hosted CI. Use disposable Windows desktop for native harness; never run scaling tests on live shop PC. TCP preflight does not prove server identity.
 - Reproducible candidates require exact tested SHA, package manifest/checksums, installation and recovery instructions, and documented acceptance limitations. Do not promote production until required gates pass and applicable approvals exist.
 
+## Self-hosted runner transition (connectivity only)
+
+Owner registered a Windows x64 runner (DJ-PC) and started it interactively; the console must stay running and the PC must remain awake and connected to accept jobs. The develop-only, path-filtered `.github/workflows/self-hosted-runner-smoke.yml` checks just routing and architecture, without checkout, credentials, installation or application execution. Its success is NOT a software acceptance gate. Do not enable regular builds on the live printshop PC: use a disposable isolated Windows VM/test machine, synthetic data and a restricted runner; verify environment and each original test. Do not substitute Windows for Linux/KVM Android acceptance. Preserve all hosted and independent gates until an equivalent verified lane is established; no production or BIR claims.
+
+The actual connectivity run 45801371514/job 139845142020 at `e1b9da05bd55cbb605c566b6b94926db55de2426` passed all steps and log marker SELF_HOSTED_WINDOWS_CONNECTIVITY_PASS. Normal hosted Windows/Ubuntu run 45801371390 failed without steps. See [SELF_HOSTED_RUNNER.md](SELF_HOSTED_RUNNER.md) for the disabled-by-default isolated Windows route, required custom label and local preflight. Owner confirms DJ-PC is dual-use and authorizes testing on the same physical computer; prefer a dedicated disposable Windows guest there. Do not activate full builds on the ordinary shop Windows instance or change billing settings. The smoke now includes a read-only coarse host readiness diagnostic. Keep all existing full gates, no production claim.
+
 ## Copy-ready continuation prompt
 
 Continue Printshop POS M2 from the current GitHub repository. Read HANDOFF-README.md, AGENTS.md and the latest DEVELOPMENT_QUEUE.md checkpoint. Reconcile live branches, PRs and CI before changing code. Implement the next eligible task, test with synthetic data, preserve protected baselines, commit verified work and append the exact next action to the queue. Continue eligible milestones without routine approval; report genuine blockers and never claim unexecuted tests or production readiness. Preserve this handoff in all future source packages.
+
+
+## Current first integration — pricing math PR #10
+The feature branch has been reconciled with develop `30307cc42df54b0f022464bd96e24b3078a07731` (owner runner configuration preserved), while keeping exact existing pricing math and Android tests. Historical CI above is not fresh acceptance. Latest parent #9 is integrated; #10 now requires new exact Android and full Windows/Linux gates before merge. #11–#13 remain stacked, update/retarget in order. Self-hosted Windows remains opt-in only on isolated environment. See SELF_HOSTED_RUNNER.md and DEVELOPMENT_QUEUE.md.
+
+## Current Windows activation
+The owner enabled the isolated VMware route; see SELF_HOSTED_RUNNER.md for the activation checkpoint and live run 45924721267. Current reconciliation includes develop `5a7b3d53056486d53ed06bf4842f0c9081d7b0d2`; all original acceptance gates remain mandatory.
