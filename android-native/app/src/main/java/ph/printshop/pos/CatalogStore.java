@@ -11,10 +11,11 @@ import java.util.List;
 /** App-private preview catalog. Checkout writes are isolated to explicit synthetic fixtures. */
 public final class CatalogStore extends SQLiteOpenHelper {
     private final boolean fixtureCheckoutWrites;
+    private final Context backupContext;
     public CatalogStore(Context context) { this(context, "preview-catalog.db"); }
     CatalogStore(Context context, String filename) { this(context,filename,false); }
     private CatalogStore(Context context,String filename,boolean fixtureCheckoutWrites) {
-        super(context,filename,null,22);this.fixtureCheckoutWrites=fixtureCheckoutWrites;
+        super(context,filename,null,22);this.fixtureCheckoutWrites=fixtureCheckoutWrites;this.backupContext=context.getApplicationContext();
     }
     /** No production/ordinary preview API can record sales or consume stock through checkout.
      * Only a separately identified synthetic fixture database opts in to transaction experiments.
@@ -394,6 +395,9 @@ public final class CatalogStore extends SQLiteOpenHelper {
         requireCheckoutFixture();SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
         try{T result=action.run(db);db.setTransactionSuccessful();return result;}
         finally{db.endTransaction();}
+    }
+    byte[] encryptedFixtureBackup(String token,char[] password){
+        return fixtureTransaction(db->{requireFixtureOwner(db,token);return NativeBackupSnapshot.create(db,backupContext.getCacheDir(),password);});
     }
     boolean fixtureInitialized(){
         return fixtureTransaction(CashierJournal::initialized);
@@ -851,6 +855,42 @@ public final class CatalogStore extends SQLiteOpenHelper {
             long revision=recipeRevision(db,service.id);
             CheckoutPlan.Inputs input=new CheckoutPlan.Inputs(count,1,1,null,null,null,CheckoutPlan.UsageBasis.BILLABLE_UNIT,cash);
             return readCheckoutPlan(db,requestId,service.id,service.revision,profile.revision,revision,input);
+        });
+    }
+    ReceiptDocument authorizedFixtureReceiptDocument(String token,String id,boolean credit){
+        return fixtureTransaction(db->{
+            StockMath.validateRequestId(id);
+            CashierJournal.Principal actor=CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            if(credit){
+                CreditCheckoutJournal.Record r=requireCreditRecord(db,actor,id);
+                if(!"APPLIED".equals(r.state))throw new IllegalStateException("Receipt not recorded");
+                return ReceiptDocument.credit(r.id,r.serviceName,r.customerName,r.total,r.paid);
+            }
+            CashierJournal.requireCheckoutLink(db,actor,id,false);
+            CheckoutJournal.Record r=CheckoutJournal.read(db,id);
+            if(r==null||!"APPLIED".equals(r.state))throw new IllegalStateException("Receipt not recorded");
+            CustomerLinkJournal.Selection customer=CustomerLinkJournal.read(db,id);
+            return ReceiptDocument.cash(r.id,r.serviceName,customer==null?null:customer.name,r.total,r.received,r.change);
+        });
+    }
+    List<CheckoutJournal.Record> authorizedFixtureReceiptPage(String token,int offset){
+        return fixtureTransaction(db->{
+            TrainingForms.validatePageOffset(offset);
+            CashierJournal.Principal actor=CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            List<CheckoutJournal.Record> rows=new ArrayList<>();
+            try(Cursor c=db.rawQuery("SELECT r.request_id FROM cashier_shift_checkouts l JOIN checkout_requests r ON l.request_id=r.request_id WHERE l.operator_id=? AND r.state='APPLIED' ORDER BY r.resolved_ms DESC,r.request_id LIMIT 9 OFFSET ?",new String[]{actor.id,Integer.toString(offset)})){
+                while(c.moveToNext())rows.add(CheckoutJournal.read(db,c.getString(0)));
+            }return rows;
+        });
+    }
+    List<CreditCheckoutJournal.Record> authorizedFixtureCreditReceiptPage(String token,int offset){
+        return fixtureTransaction(db->{
+            TrainingForms.validatePageOffset(offset);
+            CashierJournal.Principal actor=CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            List<CreditCheckoutJournal.Record> rows=new ArrayList<>();
+            try(Cursor c=db.rawQuery("SELECT id FROM credit_checkout_requests WHERE operator_id=? AND state='APPLIED' ORDER BY resolved_ms DESC,id LIMIT 9 OFFSET ?",new String[]{actor.id,Integer.toString(offset)})){
+                while(c.moveToNext())rows.add(requireCreditRecord(db,actor,c.getString(0)));
+            }return rows;
         });
     }
     List<CheckoutJournal.Record> recentAuthorizedFixtureReceipts(String token,int limit){
