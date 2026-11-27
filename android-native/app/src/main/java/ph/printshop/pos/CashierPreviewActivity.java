@@ -2,6 +2,8 @@ package ph.printshop.pos;
 
 import android.app.Activity;
 import android.content.SharedPreferences;
+import android.content.Intent;
+import android.widget.Toast;
 import android.graphics.Color;
 import android.os.Bundle;
 import android.os.Handler;
@@ -38,6 +40,9 @@ public final class CashierPreviewActivity extends Activity {
     private CatalogStore store;
     // Worker confined, never serialized, never placed in a View or preferences.
     private String workerToken;
+    private static final int BACKUP_EXPORT=7101;
+    // Only authenticated ciphertext crosses the external document-picker lifecycle.
+    private byte[] pendingBackupExport;
     private LinearLayout page;
     private TextView status;
     private ScrollView scroll;
@@ -80,6 +85,7 @@ public final class CashierPreviewActivity extends Activity {
     }
     @Override protected void onDestroy(){
         handler.removeCallbacks(expiry);
+        clearBackupExport();
         if(store!=null)worker.execute(()->{logoutWorker();store.close();});
         worker.shutdown();super.onDestroy();
     }
@@ -101,7 +107,7 @@ public final class CashierPreviewActivity extends Activity {
             try{value=task.run();}catch(RuntimeException ex){failed=ex;}
             final Object output=value;final RuntimeException failure=failed;
             runOnUiThread(()->{
-                if(!active||epoch!=currentEpoch)return;
+                if(!active||epoch!=currentEpoch){if(output instanceof byte[])Arrays.fill((byte[])output,(byte)0);return;}
                 busy=false;for(View v:paused)v.setEnabled(true);status.setText("");
                 if(failure==null){result.accept(output);return;}
                 String message=failure.getMessage();
@@ -365,6 +371,7 @@ public final class CashierPreviewActivity extends Activity {
         button("Training drawer history",R.id.cashier_drawer_history,()->showDrawerHistory(0));
         button("Change my training passphrase",R.id.cashier_change_pass,()->showCredentialChange(false));
         if(d.actor.role==CashierSecurity.Role.OWNER){
+            button("Encrypted training backup",R.id.cashier_backup,this::showBackupExport);
             button("Training sale refunds / voids",R.id.cashier_refund_receipts,()->showRefundReceipts(0));
             button("Refund / void history",R.id.cashier_refund_history,()->showRefundHistory(0));
             button("Training customers",R.id.cashier_customers,()->showCustomers(true,"",0));
@@ -379,6 +386,46 @@ public final class CashierPreviewActivity extends Activity {
             button("Reset training cashier passphrase",R.id.cashier_reset_pass,()->showCredentialChange(true));
         }
         button("Lock / sign out",R.id.cashier_lock,this::lockAndReload);
+    }
+    private void clearBackupExport(){
+        if(pendingBackupExport!=null)Arrays.fill(pendingBackupExport,(byte)0);
+        pendingBackupExport=null;
+    }
+    private void showBackupExport(){
+        clearBackupExport();mode="backup-export";screen("Encrypted backup export","Training data only. Choose a separate backup passphrase and keep it safe. Losing it makes the archive unreadable.");
+        EditText password=credentialField("Backup passphrase (12+ characters)",R.id.cashier_backup_password);
+        EditText confirmation=credentialField("Repeat backup passphrase",R.id.cashier_backup_confirm);
+        button("Create encrypted backup",R.id.cashier_backup_create,()->{
+            char[] first=takePassword(password),second=takePassword(confirmation);
+            if(!Arrays.equals(first,second)){Arrays.fill(first,'\0');Arrays.fill(second,'\0');status.setText("Backup passphrases do not match.");return;}
+            Arrays.fill(second,'\0');
+            boolean queued=submit(()->{try{return store.encryptedFixtureBackup(session(),first);}finally{Arrays.fill(first,'\0');}},v->launchBackupExport((byte[])v));
+            if(!queued)Arrays.fill(first,'\0');
+        });
+        back();
+    }
+    private void launchBackupExport(byte[] archive){
+        clearBackupExport();pendingBackupExport=archive;
+        Intent picker=new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("application/octet-stream");
+        picker.putExtra(Intent.EXTRA_TITLE,"printshop-training-"+UUID.randomUUID()+".psposbackup");
+        try{startActivityForResult(picker,BACKUP_EXPORT);}
+        catch(RuntimeException e){clearBackupExport();status.setText("Unable to open backup destination. No archive exported.");}
+    }
+    @Override protected void onActivityResult(int request,int result,Intent data){
+        super.onActivityResult(request,result,data);
+        if(request!=BACKUP_EXPORT)return;
+        byte[] archive=pendingBackupExport;pendingBackupExport=null;
+        if(result!=RESULT_OK||data==null||data.getData()==null||archive==null){if(archive!=null)Arrays.fill(archive,(byte)0);return;}
+        android.net.Uri destination=data.getData();
+        worker.execute(()->{
+            boolean saved=false;
+            try(java.io.OutputStream out=getContentResolver().openOutputStream(destination,"w")){
+                BackupFileTransfer.write(out,archive);saved=true;
+            }catch(java.io.IOException|RuntimeException e){saved=false;}
+            finally{Arrays.fill(archive,(byte)0);}
+            final boolean success=saved;
+            runOnUiThread(()->Toast.makeText(this,success?"Encrypted training backup exported.":"Backup export failed. Discard incomplete file.",Toast.LENGTH_LONG).show());
+        });
     }
     private static String drawerLabel(ShiftMath.DrawerKind kind){
         switch(kind){case EXPENSE:return "Expense";case CASH_IN:return "Cash in";case CASH_OUT:return "Cash out";default:throw new IllegalArgumentException("Select a drawer activity");}

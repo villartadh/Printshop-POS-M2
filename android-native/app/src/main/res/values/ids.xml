@@ -213,4 +213,8 @@
     <item type="id" name="cashier_production_policy_save"/>
     <item type="id" name="cashier_quote_jobs"/>
     <item type="id" name="cashier_quote_job"/>
+    <item type="id" name="cashier_backup"/>
+    <item type="id" name="cashier_backup_password"/>
+    <item type="id" name="cashier_backup_confirm"/>
+    <item type="id" name="cashier_backup_create"/>
 </resources>

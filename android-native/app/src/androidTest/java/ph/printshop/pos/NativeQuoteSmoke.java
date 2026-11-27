@@ -409,6 +409,14 @@ public final class NativeQuoteSmoke extends Instrumentation {
         // Earlier UI workflow has completed and its original financial invariants were checked.
         trainingLogin(activity,owner,ownerPass);
         awaitText(activity,"No open shift","owner login for catalog failed");
+        trainingClick(activity,R.id.cashier_backup);
+        awaitText(activity,"Encrypted backup export","owner backup screen missing");
+        trainingField(activity,R.id.cashier_backup_password,"Synthetic-export-password-01");
+        trainingField(activity,R.id.cashier_backup_confirm,"Synthetic-export-password-02");
+        trainingClick(activity,R.id.cashier_backup_create);
+        awaitText(activity,"Backup passphrases do not match.","backup mismatch not rejected");
+        trainingClick(activity,R.id.cashier_back);
+        awaitText(activity,"No open shift","backup screen return failed");
         trainingClick(activity,R.id.cashier_catalog_services);
         awaitText(activity,"Training services","owner services missing");
         runOnMainChecked(()->require(activity.findViewById(R.id.cashier_catalog_next)==null,"unnecessary page control"));
@@ -1410,6 +1418,11 @@ public final class NativeQuoteSmoke extends Instrumentation {
             CheckoutPlan.Proposal pending=store.prepareCheckout(stockId(),service.id,1,0,0,new CheckoutPlan.Inputs(1,1,1,null,null,null,CheckoutPlan.UsageBasis.NONE,500));
             store.stageAuthorizedFixtureCheckout(owner,shift,pending);
             byte[] archive=store.encryptedFixtureBackup(owner,backup);
+            java.io.ByteArrayOutputStream destination=new java.io.ByteArrayOutputStream();
+            BackupFileTransfer.write(destination,archive);
+            byte[] transferred=BackupFileTransfer.read(new java.io.ByteArrayInputStream(destination.toByteArray()));
+            require(java.util.Arrays.equals(archive,transferred),"encrypted archive transfer changed bytes");
+            java.util.Arrays.fill(transferred,(byte)0);
             NativeBackupSnapshot.Review review=store.reviewEncryptedFixtureBackup(owner,archive,backup);
             require(review.schema==22&&review.sales==1&&review.pendingSales==1&&review.openShifts==1,"backup review totals");
             rejectStock(()->store.reviewEncryptedFixtureBackup(staff,archive,backup));
