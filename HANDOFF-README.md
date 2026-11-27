@@ -186,3 +186,14 @@ The owner enabled the isolated VMware route; see SELF_HOSTED_RUNNER.md for the a
 
 ## Latest integration checkpoint — 2026-11-27
 PRs #10–#12 are merged to develop after successful exact hosted Windows/Linux/Android acceptance. PR #13 passed installed Android on its former stacked base and is now reconciled with develop b017ab480bfc1431052c34a8aeec42be6ed984fd. Fresh full gates mandatory before merging checkout. The public repository uses GitHub-hosted runners only. Read the final DEVELOPMENT_QUEUE.md checkpoint; older pending statuses above are historical. Preserve main and immutable baselines.
+
+## Current continuation — saved quotations v17
+Checkout PR #13 integrated with verified hosted gates. Draft PR #15 is the next critical feature: native immutable saved quotations and conversion. See android-native/QUOTATION_ACCEPTANCE.md and latest DEVELOPMENT_QUEUE.md. Native v17 save/cancel foundation has no financial or inventory effects, not yet usable from UI; implement authenticated history and dedicated atomic conversion linkage before exposure. Tracker #14 covers remaining scope. No production claims.
+
+## Latest quotation continuation — schema v18
+PR #15 now includes historical decode, role-scoped quotation history and atomic full-cash receipt conversion plus unique immutable audit link. Credit conversion and native quotation UI remain missing. Read last DEVELOPMENT_QUEUE.md entry and android-native/QUOTATION_ACCEPTANCE.md; require actual gates before integration. No production promotion.
+
+## Latest quotation continuation — schema v19
+PR #15 v18 cash conversion passed hosted acceptance. v19 adds atomic named-customer credit quotation conversion and cross-mode uniqueness. Native screens remain next, see latest DEVELOPMENT_QUEUE.md and QUOTATION_ACCEPTANCE.md. Verify new exact full gates, not merely previous pass.
+
+Latest quotation checkpoint: native cashier quote save/history/cancel/cash-credit conversion UI implemented on PR #15; local stub compilation and SQLite journal regression pass. Fresh hosted SDK/emulator/full Windows/Linux gates required (NATIVE_QUOTATION_UI_PASS). See DEVELOPMENT_QUEUE.md.

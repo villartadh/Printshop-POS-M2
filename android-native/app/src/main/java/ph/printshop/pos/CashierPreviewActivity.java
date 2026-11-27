@@ -198,6 +198,15 @@ public final class CashierPreviewActivity extends Activity {
             case "Zero-value checkout requires a separate policy":
             case "Enter a positive quantity; use Remove to unlink":
             case "Only active services and materials may be linked":
+            case "Quotation cannot be converted":
+            case "Quotation terms changed; save a new quotation":
+            case "Quotation customer changed; save a new quotation":
+            case "Quotation already converted":
+            case "Quotation already cancelled":
+            case "Quotation unavailable":
+            case "Quotation changed; review again":
+            case "Service changed; review quotation again":
+            case "Credit conversion requires a named quotation customer":
             case "Select an active service":
                 return message;
             case "Resolve the existing pending stock movement first":return message;
@@ -341,6 +350,8 @@ public final class CashierPreviewActivity extends Activity {
             drawer.setEnabled(d.pending==0&&d.pendingCredit==null&&d.pendingCollection==null);
             Button close=button("Close training shift",R.id.cashier_close_shift,()->showClose(d));close.setEnabled(d.clear());
         }
+        button("New training quotation",R.id.cashier_quote_new,()->showQuoteServices(0));
+        button("Saved training quotations",R.id.cashier_quote_history,()->showQuoteHistory(0));
         button("Recorded training receipts",R.id.cashier_history,this::showHistory);
         button("Recorded training credit receipts",R.id.cashier_credit_history,this::showCreditHistory);
         button("Training collection history",R.id.cashier_collection_history,()->showCollectionHistory(0));
@@ -1097,6 +1108,154 @@ public final class CashierPreviewActivity extends Activity {
                 else lockAndReload();
             })){Arrays.fill(old,'\0');Arrays.fill(replacement,'\0');}
         });back();
+    }
+    private void showQuoteServices(int offset){
+        submit(()->store.authorizedFixtureCheckoutServices(session(),offset),v->{
+            CatalogStore.CatalogPage page=(CatalogStore.CatalogPage)v;
+            mode="quote-services";screen("Choose quotation service","Active training services only; no stock reservation.");
+            if(page.entries.isEmpty())label("No active training services");
+            for(CatalogEntry item:page.entries)button("Choose "+item.name,0,()->
+                submit(()->store.authorizedFixtureCheckoutSelection(session(),item.id,item.revision),x->showQuoteForm((CatalogStore.CheckoutSelection)x)));
+            catalogPages(offset,page.more,()->showQuoteServices(offset-TrainingForms.PAGE_SIZE),()->showQuoteServices(offset+TrainingForms.PAGE_SIZE));back();
+        });
+    }
+    private void showQuoteForm(CatalogStore.CheckoutSelection selected){
+        CatalogEntry service=selected.service;PricingProfile profile=selected.profile;
+        mode="quote-form";screen("New training quotation",service.name+" · "+QuoteMath.display(service.centavos)+" / "+service.unit);
+        label("Pricing: "+PricingProfile.label(profile.method)+" · "+profile.tiers.size()+" tier(s)");
+        EditText count=profile.pagesAndCopies?null:field("Quantity ("+service.unit+")",R.id.cashier_count,InputType.TYPE_CLASS_NUMBER,6,"1");
+        EditText pages=profile.pagesAndCopies?field("Pages",R.id.cashier_checkout_pages,InputType.TYPE_CLASS_NUMBER,6,"1"):null;
+        EditText copies=profile.pagesAndCopies?field("Copies",R.id.cashier_checkout_copies,InputType.TYPE_CLASS_NUMBER,6,"1"):null;
+        boolean measured=TrainingForms.measured(profile.method);
+        int decimals=InputType.TYPE_CLASS_NUMBER|InputType.TYPE_NUMBER_FLAG_DECIMAL;
+        EditText width=measured?field("Width",R.id.cashier_checkout_width,decimals,9,null):null;
+        EditText height=measured?field("Height",R.id.cashier_checkout_height,decimals,9,null):null;
+        Spinner units=measured?choices("Measurement unit",R.id.cashier_checkout_unit,Arrays.asList("Feet","Inches","Centimeters","Meters"),0):null;
+        Spinner basis=selected.hasMaterials&&profile.needsAdvancedQuote()?choices("Material usage basis",R.id.cashier_checkout_basis,
+            Arrays.asList("Choose usage basis","Per billable unit","Per produced item"),0):null;
+        if(selected.hasMaterials&&!profile.needsAdvancedQuote())label("Material usage: per billable unit");
+        if(!selected.hasMaterials)label("No material recipe configured");
+        button("Review quotation",R.id.cashier_quote_review,()->{
+            String quantity=text(count),p=text(pages),c=text(copies),w=text(width),h=text(height),id=UUID.randomUUID().toString();
+            PricingMath.DimensionUnit unit=units==null?null:PricingMath.DimensionUnit.values()[units.getSelectedItemPosition()];
+            CheckoutPlan.UsageBasis usage=basis==null?null:CheckoutPlan.UsageBasis.values()[basis.getSelectedItemPosition()];
+            submit(()->store.prepareAuthorizedFixtureQuotation(session(),id,selected,
+                TrainingForms.checkout(profile,selected.hasMaterials,quantity,p,c,w,h,unit,usage,"0.00")),
+                v->showQuoteReview(selected,(SavedQuotation)v,null));
+        });
+        button("Change service",R.id.cashier_checkout_choose,()->showQuoteServices(0));back();
+    }
+    private void quoteTerms(String name,long quantity,long rate,long total,long cost,PricingMath.Method method,CheckoutPlan.Inputs inputs){
+        label(name+" · "+PricingProfile.label(method));
+        label("Billable quantity: "+PricingMath.displayQuantity(quantity)+" · Rate: "+QuoteMath.display(rate));
+        label("Total: "+QuoteMath.display(total),20,Color.rgb(27,39,58));
+        label("Estimated material cost: "+QuoteMath.display(cost));
+        label("Quantity: "+inputs.count+" · Pages: "+inputs.pages+" · Copies: "+inputs.copies);
+        if(inputs.dimensionUnit!=null)label("Dimensions: "+inputs.width+(inputs.height==null?"":" × "+inputs.height)+" "+inputs.dimensionUnit);
+        label("Material basis: "+inputs.basis);
+    }
+    private void quoteFlags(boolean sufficient,boolean pending,boolean convertible){
+        label(sufficient?"Stock estimate: sufficient":"Stock estimate: insufficient");
+        if(pending)label("Stock movements pending at review");
+        if(!convertible)label("Not convertible under current checkout precision or value rules");
+        label("Stock is not reserved; conversion requires a fresh check.");
+    }
+    private String quoteUsage(long hundredthMilli){
+        return java.math.BigDecimal.valueOf(hundredthMilli,5).stripTrailingZeros().toPlainString();
+    }
+    private void showQuoteReview(CatalogStore.CheckoutSelection selected,SavedQuotation q,CustomerLinkJournal.Selection customer){
+        mode="quote-review";screen("Review training quotation","No payment, sale, debt or stock movement.");
+        quoteTerms(q.serviceName,q.quantityHundredths,q.rateCentavos,q.totalCentavos,q.materialCostCentavos,q.method,q.inputs);
+        for(SavedQuotation.Material m:q.materials)label("Estimated use: "+quoteUsage(m.requiredHundredthMilli)+" "+m.unit+" ("+m.name+")");
+        quoteFlags(q.stockSufficientAtReview,q.pendingStockAtReview,q.representableForCheckout);
+        checkoutCustomerLabel(customer);
+        button("Choose customer",R.id.cashier_checkout_customer,()->showQuoteCustomers(selected,q,customer,"",0));
+        if(customer!=null)button("Clear customer",R.id.cashier_checkout_customer_clear,()->showQuoteReview(selected,q,null));
+        button("Save quotation",R.id.cashier_quote_save,()->submit(()->store.saveAuthorizedFixtureQuotation(session(),selected,q,customer),v->openQuote(((QuotationJournal.Record)v).id)));
+        button("Edit inputs",R.id.cashier_checkout_choose,()->showQuoteForm(selected));back();
+    }
+    private void showQuoteCustomers(CatalogStore.CheckoutSelection selected,SavedQuotation q,CustomerLinkJournal.Selection prior,String search,int offset){
+        submit(()->store.authorizedFixtureQuotationCustomers(session(),search,offset,9),v->{
+            @SuppressWarnings("unchecked") List<CustomerLinkJournal.Selection> rows=(List<CustomerLinkJournal.Selection>)v;
+            mode="quote-customers";screen("Choose quotation customer","Optional active named customer; no debt is created.");
+            EditText query=field("Search customer name",R.id.cashier_customer_search,InputType.TYPE_CLASS_TEXT,80,search);
+            button("Search",R.id.cashier_customer_find,()->showQuoteCustomers(selected,q,prior,text(query),0));
+            if(rows.isEmpty())label("No matching customers");
+            for(int i=0;i<Math.min(8,rows.size());i++){
+                CustomerLinkJournal.Selection c=rows.get(i);label(c.id);button("Select "+c.name,0,()->showQuoteReview(selected,q,c));
+            }
+            catalogPages(offset,rows.size()>8,()->showQuoteCustomers(selected,q,prior,search,offset-8),()->showQuoteCustomers(selected,q,prior,search,offset+8));
+            button("Back to review",R.id.cashier_checkout_customer,()->showQuoteReview(selected,q,prior));back();
+        });
+    }
+    private String quoteState(QuotationJournal.Record q){
+        return q.cancelled?"Cancelled":q.cashCheckout!=null?"Cash converted":q.creditCheckout!=null?"Credit converted":"Saved";
+    }
+    private void showQuoteHistory(int offset){
+        submit(()->store.authorizedFixtureQuotationHistory(session(),offset),v->{
+            QuotationJournal.Page page=(QuotationJournal.Page)v;
+            mode="quote-history";screen("Saved training quotations","Select an original record, including after an interrupted confirmation.");
+            if(page.rows.isEmpty())label("No saved quotations");
+            for(QuotationJournal.Record q:page.rows)button(q.historical().serviceName+" · "+QuoteMath.display(q.total)+" · "+quoteState(q),0,()->openQuote(q.id));
+            catalogPages(offset,page.more,()->showQuoteHistory(offset-TrainingForms.PAGE_SIZE),()->showQuoteHistory(offset+TrainingForms.PAGE_SIZE));back();
+        });
+    }
+    private void openQuote(String id){
+        submit(()->store.authorizedFixtureQuotation(session(),id),v->showQuoteDetail((QuotationJournal.Record)v));
+    }
+    private void showQuoteDetail(QuotationJournal.Record q){
+        SavedQuotation.Historical h=q.historical();
+        mode="quote-detail";screen("Training quotation · "+quoteState(q),"Historical synthetic quotation, not a tax receipt.");
+        label("Quotation: "+q.id);quoteTerms(h.serviceName,h.quantityHundredths,h.rate,h.total,h.materialCost,h.method,h.inputs);
+        label("Service / pricing / recipe revisions: "+h.serviceRevision+" / "+h.pricingRevision+" / "+h.recipeRevision);
+        label(q.customer==null?"Customer: Walk-in / unassigned":"Customer: "+q.customerName+" · Revision "+q.customerRevision);
+        for(SavedQuotation.HistoricalMaterial m:h.materials)label("Estimated use: "+quoteUsage(m.requiredHundredthMilli)+" "+m.unit+" ("+m.name+")");
+        quoteFlags(q.stockSufficient,q.stockPending,q.convertible);
+        if(q.cancelled)label("Cancellation: "+q.cancelReason);
+        else if(q.cashCheckout!=null){
+            label("Linked cash receipt: "+q.cashCheckout);
+            button("Open my cash receipt",R.id.cashier_quote_receipt,()->submit(()->store.authorizedFixtureCheckout(session(),q.cashCheckout),v->showReceipt((CheckoutJournal.Record)v)));
+        }else if(q.creditCheckout!=null){
+            label("Linked credit receipt: "+q.creditCheckout);
+            button("Open my credit receipt",R.id.cashier_quote_receipt,()->submit(()->store.authorizedFixtureCreditCheckout(session(),q.creditCheckout),v->showCreditRecord((CreditCheckoutJournal.Record)v)));
+        }else{
+            if(q.convertible)button("Review conversion",R.id.cashier_quote_convert,()->submit(this::dashboard,v->showQuoteTender(q,(Dashboard)v)));
+            EditText reason=field("Cancellation reason",R.id.cashier_cancel_reason,InputType.TYPE_CLASS_TEXT,160,null);
+            button("Cancel quotation",R.id.cashier_quote_cancel,()->{String note=text(reason);submit(()->store.cancelAuthorizedFixtureQuotation(session(),q.id,note),v->showQuoteDetail((QuotationJournal.Record)v));});
+        }
+        button("Reload quotation",R.id.cashier_quote_reload,()->openQuote(q.id));
+        button("Quotation history",R.id.cashier_quote_history,()->showQuoteHistory(0));back();
+    }
+    private void showQuoteTender(QuotationJournal.Record q,Dashboard d){
+        mode="quote-tender";screen("Convert training quotation","Current commercial terms, stock and shift are checked again.");
+        label("Total: "+QuoteMath.display(q.total));
+        if(d.shift==null||!d.clear())label("Open your own shift and resolve pending requests before conversion.");
+        else{
+            Spinner payment=choices("Payment mode",R.id.cashier_payment_mode,q.customer==null?Arrays.asList("Full cash"):Arrays.asList("Full cash","Partial or unpaid credit"),0);
+            EditText cash=cashField("Actual training cash (PHP)",R.id.cashier_cash,null);
+            button("Review payment",R.id.cashier_quote_review,()->{
+                String raw=text(cash),id=UUID.randomUUID().toString(),shift=d.shift.id;
+                boolean credit=payment.getSelectedItemPosition()==1;
+                submit(()->{
+                    long amount=QuoteMath.parseCentavos(raw);
+                    if(credit)return store.prepareAuthorizedFixtureQuotationCredit(session(),shift,q.id,id,amount);
+                    return store.prepareAuthorizedFixtureQuotationCash(session(),shift,q.id,id,amount);
+                },v->showQuoteConversionReview(q,shift,v));
+            });
+        }
+        button("Back to quotation",R.id.cashier_quote_reload,()->openQuote(q.id));back();
+    }
+    private void showQuoteConversionReview(QuotationJournal.Record q,String shift,Object plan){
+        mode="quote-conversion-review";screen("Confirm quotation conversion","Record synthetic sale once. After uncertainty, reload the original quotation.");
+        label("Quotation: "+q.id);label("Customer: "+(q.customerName==null?"Walk-in / unassigned":q.customerName));
+        if(plan instanceof CheckoutPlan.Proposal){
+            CheckoutPlan.Proposal cash=(CheckoutPlan.Proposal)plan;label(CheckoutPreview.render(cash));
+            button("Record cash conversion",R.id.cashier_quote_confirm,()->submit(()->store.convertAuthorizedFixtureQuotationCash(session(),shift,q.id,cash),v->openQuote(q.id)));
+        }else{
+            CreditCheckoutPlan credit=(CreditCheckoutPlan)plan;creditAmounts(credit.total,credit.paid);
+            button("Record credit conversion",R.id.cashier_quote_confirm,()->submit(()->store.convertAuthorizedFixtureQuotationCredit(session(),shift,q.id,credit),v->openQuote(q.id)));
+        }
+        button("Reload original quotation",R.id.cashier_quote_reload,()->openQuote(q.id));back();
     }
     private void showCheckoutChoices(String shift,int offset){
         submit(()->store.authorizedFixtureCheckoutServices(session(),offset),v->{
