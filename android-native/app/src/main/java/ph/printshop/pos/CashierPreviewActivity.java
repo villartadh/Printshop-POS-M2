@@ -449,6 +449,10 @@ public final class CashierPreviewActivity extends Activity {
         label("Gross sales: "+reportMoney(total.gross));label("Receipts: "+total.sales);
         label("Cash refunds: "+reportMoney(total.refunds));label("Cash voids: "+reportMoney(total.voids));
         label("Net sales: "+reportMoney(total.net()),22,Color.rgb(31,95,124));
+        label("Cash paid at checkout: "+reportMoney(total.upfrontCash));
+        label("Debt created: "+reportMoney(total.debtCreated));label("Debt collected: "+reportMoney(total.debtCollected));
+        label("Net sales cash received: "+reportMoney(total.cashCollected()));
+        label("Debt movement this period: "+reportMoney(total.debtMovement())+" (not outstanding balance)");
         label("Expenses: "+reportMoney(total.expenses));label("Other cash in: "+reportMoney(total.cashIn));label("Other cash out: "+reportMoney(total.cashOut));
         label("Net drawer movement: "+reportMoney(total.movement()));
         label("Closed shift reconciliation (whole shifts closed in period)");
@@ -501,7 +505,7 @@ public final class CashierPreviewActivity extends Activity {
         button("Back to report",R.id.cashier_report_return,()->showSalesReport(period,report,0));back();
     }
     private static String eventLabel(String kind){
-        switch(kind){case "SALE":return "Sale";case "REFUND":return "Refund";case "VOID":return "Void";case "EXPENSE":return "Expense";case "CASH_IN":return "Other cash in";case "CASH_OUT":return "Other cash out";default:return "Unknown";}
+        switch(kind){case "SALE":return "Sale";case "CREDIT_SALE":return "Credit sale";case "COLLECTION":return "Debt collection";case "REFUND":return "Refund";case "VOID":return "Void";case "EXPENSE":return "Expense";case "CASH_IN":return "Other cash in";case "CASH_OUT":return "Other cash out";default:return "Unknown";}
     }
     private static String eventDate(long at){
         java.text.SimpleDateFormat date=new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss",java.util.Locale.ROOT);
@@ -528,6 +532,9 @@ public final class CashierPreviewActivity extends Activity {
         label("Event: "+event.id);label("Shift: "+event.shiftId);label("Operator: "+event.operatorId);
         if(event.receiptId!=null)label("Original receipt: "+event.receiptId);
         if(event.serviceName!=null)label("Original service: "+event.serviceName+" · "+event.serviceId);
+        if(event.customerId!=null)label("Customer: "+event.customerId+" · Revision "+event.customerRevision);
+        if("CREDIT_SALE".equals(event.kind)){label("Cash paid: "+QuoteMath.display(event.upfrontCash));label("Original debt: "+QuoteMath.display(event.amount-event.upfrontCash));}
+        if("COLLECTION".equals(event.kind))label("Debt settlement only · Not new sales revenue");
         if(event.reason!=null)label("Reason: "+event.reason);
         if(event.recurringSchedule!=null){label("Recurring expense: "+event.recurringName);label("Schedule: "+event.recurringSchedule+" · Revision "+event.recurringRevision);label("Due: "+event.recurringDue);}
         button("Back to transactions",R.id.cashier_report_events,()->showReportEvents(period,report,offset));

@@ -775,21 +775,14 @@ public final class CatalogStore extends SQLiteOpenHelper {
     RecurringJournal.Occurrence resolveFixtureRecurringExpense(String token,String id,boolean apply,String reason){
         return fixtureTransaction(db->RecurringJournal.resolve(db,requireFixtureOwner(db,token),id,apply,reason,System.currentTimeMillis()));
     }
-    private CashierJournal.Principal requireLegacyReportScope(SQLiteDatabase db,String token){
-        CashierJournal.Principal owner=requireFixtureOwner(db,token);
-        try(Cursor c=db.rawQuery("SELECT 1 FROM credit_receivable_sources LIMIT 1",null)){
-            if(c.moveToFirst())throw new IllegalStateException("Credit-inclusive reports are not yet available");
-        }
-        return owner;
-    }
     ReportJournal.Report authorizedFixtureSalesReport(String token,ReportMath.Range range){
-        return fixtureTransaction(db->ReportJournal.read(db,requireLegacyReportScope(db,token),range));
+        return fixtureTransaction(db->ReportJournal.read(db,requireFixtureOwner(db,token),range));
     }
     ReportJournal.Report authorizedFixtureSalesReport(String token,ReportMath.Period period){
-        return fixtureTransaction(db->ReportJournal.read(db,requireLegacyReportScope(db,token),ReportMath.range(period,System.currentTimeMillis()),period));
+        return fixtureTransaction(db->ReportJournal.read(db,requireFixtureOwner(db,token),ReportMath.range(period,System.currentTimeMillis()),period));
     }
     List<ReportJournal.Event> authorizedFixtureReportEvents(String token,ReportMath.Range range,int offset,int limit){
-        return fixtureTransaction(db->ReportJournal.events(db,requireLegacyReportScope(db,token),range,offset,limit));
+        return fixtureTransaction(db->ReportJournal.events(db,requireFixtureOwner(db,token),range,offset,limit));
     }
     List<RefundJournal.Receipt> authorizedFixtureRefundReceipts(String token,int offset,int limit){
         return fixtureTransaction(db->RefundJournal.receipts(db,requireFixtureOwner(db,token),offset,limit));

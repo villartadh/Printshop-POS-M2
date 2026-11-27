@@ -5,7 +5,7 @@ import java.util.Calendar;
 import java.util.GregorianCalendar;
 import java.util.TimeZone;
 
-/** Exact synthetic cash reporting, using Philippine shop calendar boundaries. */
+/** Exact synthetic accrual sales and cash reporting, using Philippine shop calendar boundaries. */
 final class ReportMath {
     private ReportMath(){}
     enum Period { DAY, WEEK, MONTH }
@@ -29,12 +29,17 @@ final class ReportMath {
     }
     static final class Totals {
         BigInteger gross=BigInteger.ZERO, refunds=BigInteger.ZERO, voids=BigInteger.ZERO, expenses=BigInteger.ZERO,
-            cashIn=BigInteger.ZERO,cashOut=BigInteger.ZERO,sales=BigInteger.ZERO;
-        void add(String kind,long amount){
-            if(amount<=0)throw new IllegalArgumentException("Invalid report event amount");
+            cashIn=BigInteger.ZERO,cashOut=BigInteger.ZERO,sales=BigInteger.ZERO,
+            upfrontCash=BigInteger.ZERO,debtCreated=BigInteger.ZERO,debtCollected=BigInteger.ZERO;
+        void add(String kind,long amount){add(kind,amount,"SALE".equals(kind)?amount:0);}
+        void add(String kind,long amount,long upfront){
+            if(amount<=0||upfront<0||("SALE".equals(kind)?upfront!=amount:"CREDIT_SALE".equals(kind)?upfront>=amount:upfront!=0))throw new IllegalArgumentException("Invalid report event amount");
             BigInteger n=BigInteger.valueOf(amount);
             switch(kind){
-                case "SALE":gross=gross.add(n);sales=sales.add(BigInteger.ONE);break;
+                case "SALE":case "CREDIT_SALE":
+                    gross=gross.add(n);sales=sales.add(BigInteger.ONE);upfrontCash=upfrontCash.add(BigInteger.valueOf(upfront));
+                    debtCreated=debtCreated.add(BigInteger.valueOf(amount-upfront));break;
+                case "COLLECTION":debtCollected=debtCollected.add(n);break;
                 case "REFUND":refunds=refunds.add(n);break;
                 case "VOID":voids=voids.add(n);break;
                 case "EXPENSE":expenses=expenses.add(n);break;
@@ -44,7 +49,9 @@ final class ReportMath {
             }
         }
         BigInteger net(){return gross.subtract(refunds).subtract(voids);}
-        BigInteger movement(){return net().subtract(expenses).add(cashIn).subtract(cashOut);}
+        BigInteger cashCollected(){return upfrontCash.add(debtCollected).subtract(refunds).subtract(voids);}
+        BigInteger debtMovement(){return debtCreated.subtract(debtCollected);}
+        BigInteger movement(){return cashCollected().subtract(expenses).add(cashIn).subtract(cashOut);}
     }
     static final class Bucket {
         final long start,end;
@@ -67,10 +74,11 @@ final class ReportMath {
                 if(buckets.size()>31)throw new IllegalArgumentException("Invalid chart length");
             }
         }
-        void add(String kind,long amount,long at){
+        void add(String kind,long amount,long at){add(kind,amount,"SALE".equals(kind)?amount:0,at);}
+        void add(String kind,long amount,long upfront,long at){
             if(at<range.start||at>=range.end)throw new IllegalArgumentException("Chart event outside range");
-            if(!"SALE".equals(kind)&&!"REFUND".equals(kind)&&!"VOID".equals(kind))return;
-            for(Bucket bucket:buckets)if(at>=bucket.start&&at<bucket.end){bucket.totals.add(kind,amount);return;}
+            if(!"SALE".equals(kind)&&!"CREDIT_SALE".equals(kind)&&!"REFUND".equals(kind)&&!"VOID".equals(kind))return;
+            for(Bucket bucket:buckets)if(at>=bucket.start&&at<bucket.end){bucket.totals.add(kind,amount,upfront);return;}
             throw new IllegalStateException("Chart bucket unavailable");
         }
         BigInteger maxAbs(){
@@ -91,3 +99,4 @@ final class ReportMath {
         return "PHP "+(centavos.signum()<0?"-":"")+parts[0]+"."+(parts[1].intValue()<10?"0":"")+parts[1];
     }
 }
+

@@ -83,7 +83,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "pricing settings and document quote"; verifyPricingScreen(screen);
             phase = "measured quote"; verifyMeasuredQuote(screen);
             phase = "native cashier training UI"; verifyCashierTrainingScreen(screen);
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_RECURRING_UI_PASS\nNATIVE_CUSTOMER_DIRECTORY_PASS\nNATIVE_CUSTOMER_CHECKOUT_PASS\nNATIVE_CREDIT_COLLECTION_API_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\n");
+            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_RECURRING_UI_PASS\nNATIVE_CUSTOMER_DIRECTORY_PASS\nNATIVE_CUSTOMER_CHECKOUT_PASS\nNATIVE_CREDIT_COLLECTION_API_PASS\nNATIVE_CREDIT_REPORT_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\n");
             result = Activity.RESULT_OK;
         } catch (Throwable error) {
             evidence.putString("stream", failureDetails(phase, error));
@@ -951,7 +951,14 @@ public final class NativeQuoteSmoke extends Instrumentation {
             require(store.authorizedFixtureOutstanding(recovered,shift,customer).longValueExact()==200&&store.expectedFixtureCash(recovered,shift)==300,"collection cancel no effects");
             require(store.pendingAuthorizedFixtureCollection(recovered,shift)==null,"collection pending cleared");
             require(trainingCount(store,"SELECT COUNT(*) FROM cashier_cash_effects_v2 WHERE collection_id IS NOT NULL")==1,"collection effect once");
-            rejectStock(()->store.authorizedFixtureSalesReport(owner,ReportMath.Period.DAY));
+            ReportJournal.Report creditReport=store.authorizedFixtureSalesReport(owner,new ReportMath.Range(0,Long.MAX_VALUE));
+            require(creditReport.totals.gross.longValueExact()==500&&creditReport.totals.sales.intValueExact()==2,"credit gross and count");
+            require(creditReport.totals.upfrontCash.longValueExact()==100&&creditReport.totals.debtCreated.longValueExact()==400&&creditReport.totals.debtCollected.longValueExact()==200,"credit report split");
+            require(creditReport.totals.net().longValueExact()==500&&creditReport.totals.cashCollected().longValueExact()==300&&creditReport.totals.movement().longValueExact()==300,"credit report reconciliation");
+            require(creditReport.services.size()==1&&creditReport.services.get(0).name.equals(service.name)&&creditReport.services.get(0).totals.gross.longValueExact()==500,"credit service history");
+            java.util.List<ReportJournal.Event> creditEvents=store.authorizedFixtureReportEvents(owner,creditReport.range,0,9);
+            require(creditEvents.size()==3&&creditEvents.stream().filter(e->e.kind.equals("COLLECTION")).count()==1,"credit events no duplicate");
+            rejectStock(()->store.authorizedFixtureSalesReport(recovered,creditReport.range));
         }finally{java.util.Arrays.fill(ownerPass,'\0');java.util.Arrays.fill(staffPass,'\0');context.deleteDatabase(filename);}
     }
     private void verifyCustomerCheckoutLink(){

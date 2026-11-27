@@ -59,6 +59,23 @@ class ReportMathTest {
         ReportMath.Range month=ReportMath.range(ReportMath.Period.MONTH,ms("2026-12-31T12:00:00Z"));
         check(new ReportMath.Series(ReportMath.Period.MONTH,month).buckets.size()==31,"31 day chart");
         try{new ReportMath.Series(ReportMath.Period.DAY,new ReportMath.Range(day.start,day.end-1));throw new AssertionError("noncanonical chart accepted");}catch(IllegalArgumentException expected){checks++;}
+        ReportMath.Totals mixed=new ReportMath.Totals();
+        mixed.add("SALE",500);mixed.add("CREDIT_SALE",600,200);mixed.add("CREDIT_SALE",300,0);
+        mixed.add("COLLECTION",400);mixed.add("REFUND",100);mixed.add("EXPENSE",50);mixed.add("CASH_IN",20);mixed.add("CASH_OUT",10);
+        check(mixed.gross.intValueExact()==1400&&mixed.sales.intValueExact()==3,"credit gross and receipt count");
+        check(mixed.net().intValueExact()==1300,"net accrual revenue");
+        check(mixed.upfrontCash.intValueExact()==700&&mixed.debtCreated.intValueExact()==700,"upfront versus debt");
+        check(mixed.debtCollected.intValueExact()==400&&mixed.debtMovement().intValueExact()==300,"debt period movement");
+        check(mixed.cashCollected().intValueExact()==1000&&mixed.movement().intValueExact()==960,"cash reconciliation");
+        ReportMath.Totals later=new ReportMath.Totals();later.add("COLLECTION",400);
+        check(later.net().signum()==0&&later.sales.signum()==0&&later.debtMovement().intValueExact()==-400&&later.movement().intValueExact()==400,"collection-only period");
+        series.add("CREDIT_SALE",500,100,day.start);series.add("COLLECTION",900,day.start);
+        check(series.buckets.get(0).totals.net().intValueExact()==600,"chart includes credit gross excludes collection");
+        try{mixed.add("CREDIT_SALE",100,100);throw new AssertionError("invalid credit accepted");}catch(IllegalArgumentException expected){checks++;}
+        try{mixed.add("COLLECTION",100,20);throw new AssertionError("invalid collection upfront accepted");}catch(IllegalArgumentException expected){checks++;}
+        for(int i=0;i<1000;i++){mixed.add("CREDIT_SALE",max,0);mixed.add("COLLECTION",max);}
+        check(mixed.debtCreated.compareTo(BigInteger.valueOf(Long.MAX_VALUE))>0&&mixed.debtMovement().intValueExact()==300,"large debt exact");
         System.out.println("ReportMath: "+checks+" checks PASS");
     }
 }
+
