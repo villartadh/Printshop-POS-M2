@@ -89,7 +89,8 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "pricing settings and document quote"; verifyPricingScreen(screen);
             phase = "measured quote"; verifyMeasuredQuote(screen);
             phase = "native cashier training UI"; verifyCashierTrainingScreen(screen);
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_RECURRING_UI_PASS\nNATIVE_CUSTOMER_DIRECTORY_PASS\nNATIVE_CUSTOMER_CHECKOUT_PASS\nNATIVE_CREDIT_COLLECTION_API_PASS\nNATIVE_CREDIT_REPORT_PASS\nNATIVE_CREDIT_CHECKOUT_UI_PASS\nNATIVE_CREDIT_COLLECTION_UI_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\nNATIVE_SAVED_QUOTATION_PASS\nNATIVE_QUOTATION_CASH_CONVERSION_PASS\nNATIVE_QUOTATION_CREDIT_CONVERSION_PASS\nNATIVE_QUOTATION_UI_PASS\n");
+            phase = "native receipt PDF"; verifyReceiptPdf();
+            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_RECURRING_UI_PASS\nNATIVE_CUSTOMER_DIRECTORY_PASS\nNATIVE_CUSTOMER_CHECKOUT_PASS\nNATIVE_CREDIT_COLLECTION_API_PASS\nNATIVE_CREDIT_REPORT_PASS\nNATIVE_CREDIT_CHECKOUT_UI_PASS\nNATIVE_CREDIT_COLLECTION_UI_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\nNATIVE_SAVED_QUOTATION_PASS\nNATIVE_QUOTATION_CASH_CONVERSION_PASS\nNATIVE_QUOTATION_CREDIT_CONVERSION_PASS\nNATIVE_QUOTATION_UI_PASS\nNATIVE_RECEIPT_PDF_PASS\n");
             result = Activity.RESULT_OK;
         } catch (Throwable error) {
             evidence.putString("stream", failureDetails(phase, error));
@@ -1283,6 +1284,38 @@ public final class NativeQuoteSmoke extends Instrumentation {
             require(trainingCount(f,"SELECT COUNT(*) FROM saved_quotation_cancellations")==1,"quotation UI cancellation count");
             require(trainingCount(f,"SELECT COUNT(*) FROM saved_quotation_cash_conversions")==1,"quotation UI cash link");
             require(trainingCount(f,"SELECT COUNT(*) FROM saved_quotation_credit_conversions")==1,"quotation UI credit link");
+        }
+    }
+
+    private void verifyReceiptPdf() throws java.io.IOException{
+        ReceiptDocument doc=ReceiptDocument.credit("synthetic-reference-123456789","Synthetic service with a long historical name","Synthetic customer with a long historical name",12500,2500);
+        for(ReceiptDocument.Paper paper:ReceiptDocument.Paper.values()){
+            ReceiptDocument.Geometry geometry=ReceiptDocument.geometry(paper,30,100);
+            java.io.File file=java.io.File.createTempFile("synthetic-receipt-",".pdf",getTargetContext().getCacheDir());
+            try{
+                int pages;
+                try(java.io.FileOutputStream out=new java.io.FileOutputStream(file)){pages=ReceiptPdf.write(doc,true,geometry,out);}
+                require(file.length()>100&&pages>=1,"PDF content missing");
+                try(android.os.ParcelFileDescriptor fd=android.os.ParcelFileDescriptor.open(file,android.os.ParcelFileDescriptor.MODE_READ_ONLY);
+                    android.graphics.pdf.PdfRenderer renderer=new android.graphics.pdf.PdfRenderer(fd)){
+                    require(renderer.getPageCount()==pages,"PDF page count");
+                    for(int n=0;n<pages;n++){
+                        try(android.graphics.pdf.PdfRenderer.Page page=renderer.openPage(n)){
+                            require(Math.abs(page.getWidth()-geometry.widthMm*72/25.4)<1,"PDF physical width");
+                            require(Math.abs(page.getHeight()-geometry.heightMm*72/25.4)<1,"PDF physical height");
+                            android.graphics.Bitmap bitmap=android.graphics.Bitmap.createBitmap(page.getWidth(),page.getHeight(),android.graphics.Bitmap.Config.ARGB_8888);
+                            try{
+                                bitmap.eraseColor(android.graphics.Color.WHITE);
+                                page.render(bitmap,null,null,android.graphics.pdf.PdfRenderer.Page.RENDER_MODE_FOR_PRINT);
+                                boolean visible=false;
+                                for(int y=0;y<bitmap.getHeight()&&!visible;y++)for(int x=0;x<bitmap.getWidth();x++)
+                                    if(android.graphics.Color.red(bitmap.getPixel(x,y))<128){visible=true;break;}
+                                require(visible,"PDF page blank");
+                            }finally{bitmap.recycle();}
+                        }
+                    }
+                }
+            }finally{require(file.delete(),"synthetic PDF cleanup");}
         }
     }
 
