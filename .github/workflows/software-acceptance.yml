@@ -16,7 +16,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-2022]
-    runs-on: ${{ fromJSON(matrix.os == 'windows-2022' && vars.PRINTSHOP_POS_WINDOWS_RUNNER == 'isolated' && github.repository == 'villartadh/Printshop-POS-M2' && (((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/develop') || (github.event_name == 'pull_request' && github.base_ref == 'develop' && github.event.pull_request.head.repo.full_name == github.repository)) && '["self-hosted","Windows","X64","printshop-pos-isolated"]' || format('["{0}"]', matrix.os)) }}
+    runs-on: ${{ fromJSON(matrix.os == 'windows-2022' && github.event.repository.private && vars.PRINTSHOP_POS_WINDOWS_RUNNER == 'isolated' && github.repository == 'villartadh/Printshop-POS-M2' && (((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/develop') || (github.event_name == 'pull_request' && github.base_ref == 'develop' && github.event.pull_request.head.repo.full_name == github.repository)) && '["self-hosted","Windows","X64","printshop-pos-isolated"]' || format('["{0}"]', matrix.os)) }}
     timeout-minutes: 35
     defaults:
       run:

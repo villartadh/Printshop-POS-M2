@@ -7,7 +7,7 @@ on:
 permissions: {}
 jobs:
   windows-connectivity:
-    if: github.repository == 'villartadh/Printshop-POS-M2' && github.ref == 'refs/heads/develop'
+    if: github.event.repository.private && github.repository == 'villartadh/Printshop-POS-M2' && github.ref == 'refs/heads/develop'
     runs-on: [self-hosted, Windows, X64]
     timeout-minutes: 3
     steps:

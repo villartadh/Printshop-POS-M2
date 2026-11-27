@@ -41,6 +41,17 @@ Version 0.9.7 expanded engineering candidate; not a production release.
 12. One-click physical acceptance tools — PR #2 awaiting full acceptance; audit scope, including printer and device tools, before closing.
 13. Final expanded software acceptance — pending integrated revision, evidence and packages.
 
+## GitHub branching and integration policy — owner-approved 2026-11-26
+
+This policy supersedes any older wording that requires a separate branch for every task.
+
+- `develop` is the single active development and integration branch. Make routine fixes, small UI adjustments, tests, documentation and handoff updates directly on develop after appropriate verification. Commit cohesive changes and validate the fresh integrated head before advancing.
+- Create or reuse a feature branch only for substantial/critical features such as architecture, database and migration work, financial transaction logic, security, cross-platform/native milestones; group related changes in the same feature branch. Do not create separate branches for small tasks, repair commits, documentation, or staging. Preserve dedicated immutable baseline/release branches/tags.
+- Before editing, inspect current branches, PRs, exact head/base SHAs, CI results and automation activity. Prioritize integrating tested, complete features. Merge each mergeable feature PR into develop promptly once its exact current head against the current base has passed all applicable targeted and full regression/Android/Windows/Linux gates. Retarget existing stacked PRs after their parent integrates, resolve conflicts and run required gates anew.
+- Never merge a failed, pending, unverified or conflicting feature; diagnose and fix in the relevant existing branch without weakening gates. Preserve fresh integrated CI, do not cancel unrelated running jobs. Minor work on develop must not disrupt existing gates.
+- Keep main, accepted versioned candidates, historical baselines (including baseline/v0.9.5), the original repository and prior evidence immutable. No branch deletion, production promotion, deployment, physical acceptance or BIR claim without separate authorization/evidence. Record exact tested SHAs, merge commits, evidence, outstanding checks and next action in DEVELOPMENT_QUEUE.md and maintain HANDOFF-README.md.
+
+
 ## Exact resumption procedure
 
 1. Obtain authorized repository access. Clone or open the existing checkout, inspect `git status`, preserve uncommitted work, fetch without destructive resets, and inspect `git log -5 --oneline`, current branch, open PRs and Actions. Never assume this checkpoint is current.
@@ -81,13 +92,14 @@ Version 0.9.7 expanded engineering candidate; not a production release.
 
 ## Immediate next action — 2026-11-26
 
-Use the latest `DEVELOPMENT_QUEUE.md` entry rather than earlier historical snapshots in this file. Verified v0.9.7 expanded software candidate is preserved; the native Android preview is now advancing toward feature parity independently of production. Current integrated native costing checkpoint: develop `64ec54322fcbdd7d942ed671114151d413852277`; PR #8 passed full Windows/Linux and Android retry and is merged. Recipe PR #9 remains open.
+Read AGENTS.md on develop and the latest DEVELOPMENT_QUEUE.md. Owner-approved develop-first policy is canonical; no new branch for routine work.
 
-1. Check fresh integrated develop software and Android CI, then recipe PR #9 retargeted against develop. Prior run 45774433997 failed compile for Spinner minimum height; the repair uses the supported View API and captures native test stack traces and emulator crash buffer. No acceptance claims until all required jobs pass.
-2. Inspect the recipe UI pull request's CI. The installed native screen must emit `NATIVE_RECIPE_SCREEN_PASS` along with every preexisting marker and exact successful instrumentation code. Resolve real failures without relaxing checks. Retarget to develop only after #8 is integrated, then run full gates.
-3. For Android local verification, use JDK 17, Gradle 8.9, Android SDK 35/build-tools 34.0.0, an API 34 emulator and the checked-in `.github/workflows/android-native.yml`. Run `gradle -p android-native --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug`; install preview and instrumentation APKs on a disposable emulator only, then use the exact instrumentation command in CI. The native APK is not an official sales application; use synthetic data exclusively.
-4. After recipe UI acceptance, inspect stacked `feature/native-android-pricing-math`. The exact pricing arithmetic has 41 passing local checks; verify JDK 17/Android CI and all parent gates before retarget/merge. Implement persistent pricing preferences, native input fields, measured fractional material costs and safe durable pending stock recovery next. See Android README for explicitly deferred parity gaps. Preserve the distinction between estimated materials, editable selling price and actual stock movements. Physical devices, printing, and official BIR approval are still external gates.
- 
+1. Reconcile develop policy commit `538fd9c01a7f6fc52aa9ead20afd9baa7835d982`, PR #10 head `8c0125a3d9665474d9c57ec05af4a4b97aa5f691`, and PR #11. Develop runs 45778769018/45778769005 and #10 45778553217/45778551074 had repeated failures without job steps or retrievable logs; actual application outcome unverified. Recheck current runner status and rerun only failed jobs when diagnostics/runner availability returns. Never merge unverified work. #10 Windows job passed; earlier source pricing CI passed but does not certify latest head.
+2. PR #11 was reconciled without a new branch at b3339acf35c640c8ff1619e2ca6d655ba0f82482; prior native settings run 45777985403 passed. Related advanced quote UI, profile-revision fence, exact fractional material estimate with explicit billable versus produced-item basis, and installed test changes are now on this same major feature branch. 126 local pure-Java checks passed; Android SDK absent locally. Verify all markers including NATIVE_ADVANCED_QUOTE_PASS, actual emulator and full software regression. Test with synthetic fixtures exclusively.
+3. When #10 exact current full gates and fresh integrated develop pass, merge to develop, retarget #11 and require new full gates. Preserve prior evidence and use existing branch until verified; merge promptly. Routine subsequent changes on develop. Do not promote main or delete protected branches.
+4. Next development: durable pending stock movement recovery, then native audited checkout/receipts/authentication, and remaining pricing parity (attributes/formula/fees/tax/rounding). No real shop data. Physical-device/kiosk/printer and BIR acceptance remain separate.
+5. Actual Android gate: JDK17, Gradle8.9, SDK35/build-tools34.0.0, API34 disposable emulator, `gradle -p android-native --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug`, installed instrumentation as in workflow. No unexecuted acceptance or production claims.
+
 
 ## Current branch cleanup — owner-approved 2026-11-26
 

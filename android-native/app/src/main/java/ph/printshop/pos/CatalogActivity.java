@@ -87,6 +87,13 @@ public final class CatalogActivity extends Activity {
                     });
                 }
                 if (!entry.archived && entry.kind == CatalogEntry.Kind.SERVICE) {
+                    PricingProfile profile=store.pricing(entry.id);
+                    label(rows,"Pricing: "+PricingProfile.label(profile.method)+" · "+profile.tiers.size()+" tier(s)",15);
+                    button(rows,"Configure service pricing",()->{
+                        Intent intent=new Intent(this,PricingSettingsActivity.class);
+                        intent.putExtra("serviceId",entry.id);
+                        startActivity(intent);
+                    });
                     button(rows, "Configure service materials", () -> {
                         Intent intent=new Intent(this,RecipeActivity.class);
                         intent.putExtra("serviceId",entry.id);
@@ -96,7 +103,10 @@ public final class CatalogActivity extends Activity {
                         try {
                             CatalogEntry current = store.get(entry.id);
                             if (current.archived || current.revision != entry.revision) throw new IllegalStateException("Service changed; reload and select again");
+                            PricingProfile currentProfile=store.pricing(current.id);
+                            if(currentProfile.revision!=profile.revision)throw new IllegalStateException("Pricing settings changed; reload and select again");
                             Intent result = new Intent();
+                            result.putExtra("pricingRevision",currentProfile.revision);
                             result.putExtra("centavos", current.centavos);
                             result.putExtra("serviceName", current.name);
                             result.putExtra("serviceId", current.id);
