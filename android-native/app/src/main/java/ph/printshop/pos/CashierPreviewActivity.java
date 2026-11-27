@@ -138,6 +138,7 @@ public final class CashierPreviewActivity extends Activity {
             case "Original receipt changed or amount is invalid; review again":
             case "Authorized original cash receipt unavailable":
             case "Invalid customer details":
+            case "Checkout customer selection changed":
             case "Customer changed; reload":
             case "Invalid expense date":
             case "Invalid recurring expense":
@@ -1116,17 +1117,40 @@ public final class CashierPreviewActivity extends Activity {
         });
         button("Reload service selection",R.id.cashier_checkout_choose,()->showCheckoutChoices(shift,0));back();
     }
-    private void showReview(String shift,CheckoutPlan.Proposal plan){
+    private void showReview(String shift,CheckoutPlan.Proposal plan){showReview(shift,plan,null);}
+    private void showReview(String shift,CheckoutPlan.Proposal plan,CustomerLinkJournal.Selection customer){
         mode="review";screen("Review training checkout","No sale, payment or inventory change has been recorded.");
         label(CheckoutPreview.render(plan));
+        checkoutCustomerLabel(customer);
+        button("Choose customer",R.id.cashier_checkout_customer,()->showCheckoutCustomerSelection(shift,plan,customer,"",0));
+        if(customer!=null)button("Clear customer",R.id.cashier_checkout_customer_clear,()->showReview(shift,plan,null));
         for(CheckoutPlan.Consumption m:plan.materials)label("Proposed use: "+StockMath.display(m.quantityMilli)+" "+m.unit+" ("+m.name+")");
-        button("Save pending request",R.id.cashier_stage,()->submit(()->store.stageAuthorizedFixtureCheckout(session(),shift,plan),v->{
+        button("Save pending request",R.id.cashier_stage,()->submit(()->store.stageAuthorizedFixtureCheckout(session(),shift,plan,customer),v->{
             CheckoutJournal.Record record=(CheckoutJournal.Record)v;
             if("APPLIED".equals(record.state))showReceipt(record);
             else if("CANCELLED".equals(record.state)){
                 screen("Training request cancelled","This original request was cancelled and cannot be recorded.");back();
             }else showPendingRecord(record);
         }));back();
+    }
+    private void showCheckoutCustomerSelection(String shift,CheckoutPlan.Proposal plan,CustomerLinkJournal.Selection prior,String search,int offset){
+        submit(()->store.authorizedFixtureCheckoutCustomers(session(),shift,search,offset,9),v->{
+            @SuppressWarnings("unchecked") List<CustomerLinkJournal.Selection> rows=(List<CustomerLinkJournal.Selection>)v;
+            mode="checkout-customer";screen("Select training customer","Active names only. No contact details, credit or balance changes.");
+            EditText query=field("Search customer name",R.id.cashier_customer_search,InputType.TYPE_CLASS_TEXT,80,search);
+            button("Search",R.id.cashier_customer_find,()->showCheckoutCustomerSelection(shift,plan,prior,text(query),0));
+            if(rows.isEmpty())label("No matching customers");
+            for(int i=0;i<Math.min(8,rows.size());i++){
+                CustomerLinkJournal.Selection c=rows.get(i);
+                label(c.id);button("Select "+c.name,0,()->showReview(shift,plan,c));
+            }
+            catalogPages(offset,rows.size()>8,()->showCheckoutCustomerSelection(shift,plan,prior,search,offset-8),()->showCheckoutCustomerSelection(shift,plan,prior,search,offset+8));
+            button("Back to checkout review",R.id.cashier_checkout_customer,()->showReview(shift,plan,prior));back();
+        });
+    }
+    private void checkoutCustomerLabel(CustomerLinkJournal.Selection c){
+        label(c==null?"Customer: Walk-in / unassigned":"Customer: "+c.name);
+        if(c!=null)label("Customer ID: "+c.id+" · Revision "+c.revision);
     }
     private void showPendingList(String shift){
         submit(()->store.pendingAuthorizedFixtureCheckouts(session(),shift,20),v->{
@@ -1138,11 +1162,14 @@ public final class CashierPreviewActivity extends Activity {
         });
     }
     private void showPendingRecord(CheckoutJournal.Record r){
+        submit(()->store.authorizedFixtureCheckoutCustomer(session(),r.id),v->renderPendingRecord(r,(CustomerLinkJournal.Selection)v));
+    }
+    private void renderPendingRecord(CheckoutJournal.Record r,CustomerLinkJournal.Selection customer){
         mode="pending";screen("Pending training checkout","The reviewed request is saved. Training cash and stock change only after explicit recording.");
         label(r.serviceName+" · "+PricingMath.displayQuantity(r.billableHundredths)+" units");
         label("Total: "+QuoteMath.display(r.total),20,Color.rgb(27,39,58));
         label("Training cash: "+QuoteMath.display(r.received)+" · Change: "+QuoteMath.display(r.change));
-        label("Request: "+r.id);
+        label("Request: "+r.id);checkoutCustomerLabel(customer);
         button("Record synthetic checkout",R.id.cashier_record,()->submit(()->store.applyAuthorizedFixtureCheckout(session(),r.id,r.fingerprint),v->showReceipt((CheckoutJournal.Record)v)));
         EditText reason=field("Cancellation reason (only for unrecorded request)",R.id.cashier_cancel_reason,InputType.TYPE_CLASS_TEXT,160,null);
         button("Cancel unrecorded request",R.id.cashier_cancel,()->{
@@ -1151,8 +1178,11 @@ public final class CashierPreviewActivity extends Activity {
         });back();
     }
     private void showReceipt(CheckoutJournal.Record r){
+        submit(()->store.authorizedFixtureCheckoutCustomer(session(),r.id),v->renderReceipt(r,(CustomerLinkJournal.Selection)v));
+    }
+    private void renderReceipt(CheckoutJournal.Record r,CustomerLinkJournal.Selection customer){
         mode="receipt";screen("Recorded training receipt","Historical synthetic record only. No tax receipt or physical printing.");
-        label(r.previewReceipt(),18,Color.rgb(27,39,58));
+        label(r.previewReceipt(),18,Color.rgb(27,39,58));checkoutCustomerLabel(customer);
         button("Return to training cashier",R.id.cashier_return_home,this::refreshDashboard);
     }
     private void showHistory(){

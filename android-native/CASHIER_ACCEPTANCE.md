@@ -138,3 +138,6 @@ Owner-only schedule definitions can be created, revised, archived/reactivated; r
 
 ### Customer directory (v14)
 An owner-only training directory creates, edits, archives and restores synthetic customer identities with immutable revision history and literal name filtering. Additive v14 migration preserves earlier financial data; no customer balances, checkout links or credit sales are fabricated. Installed smoke requires NATIVE_CUSTOMER_DIRECTORY_PASS; host SQLite tests passed but actual Android acceptance remains pending.
+
+### Customer-linked full cash checkout (v15)
+An authenticated operator can optionally select an active synthetic customer during checkout review. Immutable staged identity/revision survives later edit/archive and is available on receipt/recovery; stale review is rejected before staging completes. Walk-in and legacy transactions remain unassigned. No customer contact is exposed to cashier, no new cash effects or balances are invented. NATIVE_CUSTOMER_CHECKOUT_PASS is required but not yet installed-tested.

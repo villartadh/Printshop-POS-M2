@@ -176,4 +176,6 @@
     <item type="id" name="cashier_customer_name"/>
     <item type="id" name="cashier_customer_contact"/>
     <item type="id" name="cashier_customer_save"/>
+    <item type="id" name="cashier_checkout_customer"/>
+    <item type="id" name="cashier_checkout_customer_clear"/>
 </resources>

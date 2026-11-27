@@ -14,7 +14,7 @@ public final class CatalogStore extends SQLiteOpenHelper {
     public CatalogStore(Context context) { this(context, "preview-catalog.db"); }
     CatalogStore(Context context, String filename) { this(context,filename,false); }
     private CatalogStore(Context context,String filename,boolean fixtureCheckoutWrites) {
-        super(context,filename,null,14);this.fixtureCheckoutWrites=fixtureCheckoutWrites;
+        super(context,filename,null,15);this.fixtureCheckoutWrites=fixtureCheckoutWrites;
     }
     /** No production/ordinary preview API can record sales or consume stock through checkout.
      * Only a separately identified synthetic fixture database opts in to transaction experiments.
@@ -64,6 +64,7 @@ public final class CatalogStore extends SQLiteOpenHelper {
         RefundJournal.upgrade(db);
         RecurringJournal.upgrade(db);
         CustomerJournal.upgrade(db);
+        CustomerLinkJournal.upgrade(db);
     }
     private static void createStockLedger(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE stock_movements (request_id TEXT PRIMARY KEY NOT NULL, material_id TEXT NOT NULL REFERENCES catalog(id), catalog_revision INTEGER NOT NULL CHECK(catalog_revision>=1), stock_revision INTEGER NOT NULL CHECK(stock_revision>=1), unit TEXT NOT NULL, reason TEXT NOT NULL, delta INTEGER NOT NULL CHECK(delta BETWEEN -999999999999 AND 999999999999 AND delta<>0), before_quantity INTEGER NOT NULL CHECK(before_quantity BETWEEN 0 AND 999999999999), after_quantity INTEGER NOT NULL CHECK(after_quantity BETWEEN 0 AND 999999999999 AND after_quantity=before_quantity+delta), created_ms INTEGER NOT NULL, UNIQUE(material_id,stock_revision))");
@@ -84,7 +85,7 @@ public final class CatalogStore extends SQLiteOpenHelper {
         db.execSQL("CREATE TRIGGER stock_request_resolution BEFORE UPDATE ON stock_requests WHEN OLD.state<>'PENDING' OR NEW.state NOT IN ('APPLIED','CANCELLED') OR NEW.request_id IS NOT OLD.request_id OR NEW.material_id IS NOT OLD.material_id OR NEW.catalog_revision IS NOT OLD.catalog_revision OR NEW.expected_stock_revision IS NOT OLD.expected_stock_revision OR NEW.delta IS NOT OLD.delta OR NEW.reason IS NOT OLD.reason OR NEW.created_ms IS NOT OLD.created_ms OR (NEW.state='APPLIED' AND NOT EXISTS (SELECT 1 FROM stock_movements m WHERE m.request_id=OLD.request_id AND m.material_id=OLD.material_id AND m.catalog_revision=OLD.catalog_revision AND m.stock_revision=OLD.expected_stock_revision+1 AND m.delta=OLD.delta AND m.reason=OLD.reason)) OR (NEW.state='CANCELLED' AND EXISTS (SELECT 1 FROM stock_movements m WHERE m.request_id=OLD.request_id)) BEGIN SELECT RAISE(ABORT,'Invalid stock request transition'); END");
     }
     @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-        if (newVersion == 14 && oldVersion >= 1 && oldVersion <= 13) {
+        if (newVersion == 15 && oldVersion >= 1 && oldVersion <= 14) {
             if (oldVersion < 2) createStockLedger(db);
             if (oldVersion < 3) createRecipeSchema(db);
             if (oldVersion < 4) createPricingSchema(db);
@@ -97,7 +98,8 @@ public final class CatalogStore extends SQLiteOpenHelper {
             if(oldVersion<11) DrawerJournal.upgrade(db);
             if(oldVersion<12) RefundJournal.upgrade(db);
             if(oldVersion<13) RecurringJournal.upgrade(db);
-            CustomerJournal.upgrade(db); return;
+            if(oldVersion<14) CustomerJournal.upgrade(db);
+            CustomerLinkJournal.upgrade(db); return;
         }
         throw new IllegalStateException("No migration path; existing catalog preserved");
     }
@@ -702,6 +704,22 @@ public final class CatalogStore extends SQLiteOpenHelper {
 
     /** Each authorized request is linked atomically to the operator's reviewed open shift. */
     CheckoutJournal.Record stageAuthorizedFixtureCheckout(String token,String shiftId,CheckoutPlan.Proposal reviewed){
+        return stageAuthorizedFixtureCheckout(token,shiftId,reviewed,null);
+    }
+    List<CustomerLinkJournal.Selection> authorizedFixtureCheckoutCustomers(String token,String shiftId,String search,int offset,int limit){
+        return fixtureTransaction(db->{
+            CashierJournal.Principal p=CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            CashierJournal.requireShift(db,p,shiftId,true);
+            return CustomerLinkJournal.list(db,search,offset,limit);
+        });
+    }
+    CustomerLinkJournal.Selection authorizedFixtureCheckoutCustomer(String token,String id){
+        return fixtureTransaction(db->{
+            CashierJournal.Principal p=CashierJournal.requireSession(db,token,System.currentTimeMillis());
+            CashierJournal.requireCheckoutLink(db,p,id,false);return CustomerLinkJournal.read(db,id);
+        });
+    }
+    CheckoutJournal.Record stageAuthorizedFixtureCheckout(String token,String shiftId,CheckoutPlan.Proposal reviewed,CustomerLinkJournal.Selection customer){
         return fixtureTransaction(db->{
             CashierJournal.Principal p=CashierJournal.requireSession(db,token,System.currentTimeMillis());
             if(reviewed==null)throw new IllegalArgumentException("Checkout proposal required");
@@ -709,12 +727,12 @@ public final class CatalogStore extends SQLiteOpenHelper {
             if(prior!=null){
                 CashierJournal.Shift linked=CashierJournal.requireCheckoutLink(db,p,prior.id,"PENDING".equals(prior.state));
                 if(!linked.id.equals(shiftId))throw new IllegalStateException("Checkout assigned to another shift");
-                prior.verifyFingerprint(reviewed.fingerprint());return prior;
+                prior.verifyFingerprint(reviewed.fingerprint());CustomerLinkJournal.verify(db,prior.id,customer);return prior;
             }
             CashierJournal.Shift shift=CashierJournal.requireShift(db,p,shiftId,true);
             DrawerJournal.requireNoPending(db,shift.id);
             CheckoutJournal.Record staged=stageCheckout(db,reviewed);
-            CashierJournal.link(db,staged.id,shift);return staged;
+            CashierJournal.link(db,staged.id,shift);CustomerLinkJournal.link(db,p,staged.id,customer);return staged;
         });
     }
     CheckoutJournal.Record authorizedFixtureCheckout(String token,String id){

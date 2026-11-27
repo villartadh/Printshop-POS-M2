@@ -65,6 +65,8 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "v11 refund migration"; verifyCheckoutMigration(11);
             phase = "v12 recurring migration"; verifyCheckoutMigration(12);
             phase = "v13 customer migration"; verifyCheckoutMigration(13);
+            phase = "v14 checkout-customer migration"; verifyCheckoutMigration(14);
+            phase = "customer checkout fixture"; verifyCustomerCheckoutLink();
             phase = "durable atomic checkout fixture"; verifyDurableCheckout();
             phase = "cashier authorization and shift fixture"; verifyCashierAuthShift();
             phase = "audited credential lifecycle"; verifyCredentialLifecycle();
@@ -79,7 +81,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "pricing settings and document quote"; verifyPricingScreen(screen);
             phase = "measured quote"; verifyMeasuredQuote(screen);
             phase = "native cashier training UI"; verifyCashierTrainingScreen(screen);
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_RECURRING_UI_PASS\nNATIVE_CUSTOMER_DIRECTORY_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\n");
+            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_RECURRING_UI_PASS\nNATIVE_CUSTOMER_DIRECTORY_PASS\nNATIVE_CUSTOMER_CHECKOUT_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\n");
             result = Activity.RESULT_OK;
         } catch (Throwable error) {
             evidence.putString("stream", failureDetails(phase, error));
@@ -360,6 +362,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             verifySalesReportTrainingUI(second,fixtureId,owner,ownerPass);
             verifyRecurringTrainingUI(second,fixtureId,owner,ownerPass);
             verifyCustomerTrainingUI(second,fixtureId,owner,ownerPass);
+            verifyCustomerCheckoutUI(second);
             try(CatalogStore ordinary=new CatalogStore(context)){
                 java.util.List<CatalogEntry> after=ordinary.list(true);
                 require(before.size()==after.size(),"ordinary catalog changed");
@@ -884,6 +887,57 @@ public final class NativeQuoteSmoke extends Instrumentation {
         }
     }
 
+    private void verifyCustomerCheckoutLink(){
+        android.content.Context context=getTargetContext();String fixture=stockId(),filename="checkout-fixture-"+fixture+".db";
+        char[] ownerPass="Synthetic-Link-Owner-01".toCharArray(),staffPass="Synthetic-Link-Staff-01".toCharArray();
+        try(CatalogStore store=CatalogStore.checkoutFixture(context,fixture)){
+            store.bootstrapDemoFixtureOwner("link-owner",ownerPass);String owner=store.signInFixture("link-owner",ownerPass);
+            store.createFixtureCashier(owner,"link-staff",staffPass);String staff=store.signInFixture("link-staff",staffPass);
+            String customer=stockId(),shift=stockId();store.saveFixtureCustomer(owner,customer,0,"Synthetic original","Synthetic private",true);
+            store.openFixtureShift(staff,shift,0);
+            CustomerLinkJournal.Selection selected=store.authorizedFixtureCheckoutCustomers(staff,shift,"original",0,9).get(0);
+            CheckoutPlan.Proposal plan=store.prepareDemoFixtureCheckout(staff,shift,stockId(),1,300);
+            store.saveFixtureCustomer(owner,customer,1,"Synthetic renamed","Synthetic private",true);
+            rejectStock(()->store.stageAuthorizedFixtureCheckout(staff,shift,plan,selected));
+            require(trainingCount(store,"SELECT COUNT(*) FROM checkout_requests")==0,"stale customer stranded checkout");
+            CustomerLinkJournal.Selection fresh=store.authorizedFixtureCheckoutCustomers(staff,shift,"renamed",0,9).get(0);
+            store.stageAuthorizedFixtureCheckout(staff,shift,plan,fresh);
+            require(store.expectedFixtureCash(staff,shift)==0,"stage debited cash");
+            rejectStock(()->store.stageAuthorizedFixtureCheckout(staff,shift,plan));
+            store.saveFixtureCustomer(owner,customer,2,"Synthetic renamed","Synthetic private",false);
+            require(store.stageAuthorizedFixtureCheckout(staff,shift,plan,fresh).state.equals("PENDING"),"exact replay after archive");
+            require(store.authorizedFixtureCheckoutCustomer(staff,plan.requestId).revision==2,"snapshot not retained");
+            rejectStock(()->store.authorizedFixtureCheckoutCustomer(owner,plan.requestId));
+            store.applyAuthorizedFixtureCheckout(staff,plan.requestId,plan.fingerprint());
+            store.applyAuthorizedFixtureCheckout(staff,plan.requestId,plan.fingerprint());
+            require(store.expectedFixtureCash(staff,shift)==250&&trainingCount(store,"SELECT COUNT(*) FROM checkout_sales")==1,"customer sale recorded twice");
+            require(store.authorizedFixtureCheckoutCustomer(staff,plan.requestId).name.equals("Synthetic renamed"),"receipt attribution changed");
+        }finally{java.util.Arrays.fill(ownerPass,'\0');java.util.Arrays.fill(staffPass,'\0');context.deleteDatabase(filename);}
+    }
+    private void verifyCustomerCheckoutUI(Activity activity){
+        trainingLogin(activity,"catalog-cashier","Synthetic-Catalog-Cashier-01");awaitText(activity,"No open shift","customer checkout cashier login");
+        trainingField(activity,R.id.cashier_opening,"0.00");trainingClick(activity,R.id.cashier_open_shift);
+        awaitText(activity,"Shift open · Expected cash: PHP 0.00","customer shift");
+        trainingClick(activity,R.id.cashier_new_checkout);awaitText(activity,"Choose training service","customer service selection");
+        trainingSelect(activity,"Choose Synthetic UI configured");awaitText(activity,"New training checkout","customer checkout");
+        trainingField(activity,R.id.cashier_checkout_pages,"3");trainingField(activity,R.id.cashier_checkout_copies,"2");
+        trainingField(activity,R.id.cashier_cash,"25.00");trainingSpinner(activity,R.id.cashier_checkout_basis,CheckoutPlan.UsageBasis.PRODUCED_ITEM.ordinal());
+        trainingClick(activity,R.id.cashier_review);awaitText(activity,"Review training checkout","customer review");
+        trainingClick(activity,R.id.cashier_checkout_customer);awaitText(activity,"Select training customer","customer picker");
+        trainingSelect(activity,"Select Synthetic Customer Updated");awaitText(activity,"Review training checkout","selected customer review");
+        awaitText(activity,"Customer: Synthetic Customer Updated","customer review attribution");
+        trainingClick(activity,R.id.cashier_stage);awaitText(activity,"Pending training checkout","linked pending");
+        awaitText(activity,"Customer: Synthetic Customer Updated","customer pending attribution");
+        trainingClick(activity,R.id.cashier_record);awaitText(activity,"Recorded training receipt","linked receipt");
+        awaitText(activity,"Customer: Synthetic Customer Updated","customer receipt attribution");
+        trainingClick(activity,R.id.cashier_return_home);awaitText(activity,"Shift open · Expected cash: PHP 21.00","named checkout total");
+        trainingClick(activity,R.id.cashier_close_shift);awaitText(activity,"Close training shift","named close");
+        trainingField(activity,R.id.cashier_counted,"21.00");trainingClick(activity,R.id.cashier_confirm_close);
+        awaitText(activity,"Variance: PHP 0.00","named close variance");
+        trainingClick(activity,R.id.cashier_return_home);awaitText(activity,"No open shift","named shift closed");
+        trainingClick(activity,R.id.cashier_lock);awaitText(activity,"Training sign in","named cashier signout");
+    }
+
     /** Preserve exceptions from the UI thread without terminating instrumentation. */
     private void runOnMainChecked(Runnable operation) {
         java.util.concurrent.atomic.AtomicReference<Throwable> fault = new java.util.concurrent.atomic.AtomicReference<>();
@@ -1096,7 +1150,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 db.setVersion(4);
             }
             try(CatalogStore store=new CatalogStore(context,filename)){
-                require(store.getReadableDatabase().getVersion()==14,"v4-to-v14 migration version wrong");
+                require(store.getReadableDatabase().getVersion()==15,"v4-to-v15 migration version wrong");
                 require(store.stockBalance(material).quantity==1500&&store.stockHistory(material,0,5).size()==1,"v4 stock lost");
                 require(store.recipeBindings(service).get(0).quantityMilli==500&&store.pricing(service).tiers.get(0).rateCentavos==250,"v4 recipe/pricing lost");
                 require(store.pendingStock(material)==null,"unexpected migrated pending request");
@@ -1286,15 +1340,17 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 if(former>=11)DrawerJournal.upgrade(db);
                 if(former>=12)RefundJournal.upgrade(db);
                 if(former>=13)RecurringJournal.upgrade(db);
+                if(former>=14)CustomerJournal.upgrade(db);
                 db.setVersion(former);
             }
             try(CatalogStore store=former>=7?CatalogStore.checkoutFixture(context,fixture):new CatalogStore(context,filename)){
-                require(store.getReadableDatabase().getVersion()==14,"v5-v13 migration failed");
+                require(store.getReadableDatabase().getVersion()==15,"v5-v14 migration failed");
                 require(store.stockBalance(material).quantity==1500&&store.stockHistory(material,0,10).size()==1,"v5 stock changed");
                 require(store.pendingStock(material)!=null&&store.pendingStock(material).id.equals(pending),"v5 pending stock lost");
                 require(store.get(material).centavos==199,"v5 catalog changed");
                 require(trainingCount(store,"SELECT COUNT(*) FROM cashier_admin_events")== (former>=10?1:0),"migration changed administrative audit");
                 require(trainingCount(store,"SELECT COUNT(*) FROM cashier_refund_links")==0,"migration invented refund links");
+                require(trainingCount(store,"SELECT COUNT(*) FROM cashier_checkout_customers")==0,"migration invented customer links");
                 require(trainingCount(store,"SELECT COUNT(*) FROM cashier_customer_versions")==0,"migration invented customers");
                 require(trainingCount(store,"SELECT COUNT(*) FROM cashier_recurring_versions")==0&&trainingCount(store,"SELECT COUNT(*) FROM cashier_recurring_occurrences")==0,"migration invented recurring expenses");
                 require(trainingCount(store,"SELECT COUNT(*) FROM cashier_drawer_requests")==0&&trainingCount(store,"SELECT COUNT(*) FROM cashier_drawer_effects")==0,"migration invented drawer activity");
@@ -2203,7 +2259,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             }
             java.util.List<PricingMath.Tier> tiers=java.util.Arrays.asList(new PricingMath.Tier(2000,200),new PricingMath.Tier(1000,250));
             try(CatalogStore store=new CatalogStore(context,filename)){
-                require(store.getReadableDatabase().getVersion()==14,"v3-to-v14 migration version wrong");
+                require(store.getReadableDatabase().getVersion()==15,"v3-to-v15 migration version wrong");
                 require(store.pricing(service).revision==0&&!store.pricing(service).needsAdvancedQuote(),"legacy default changed");
                 require(store.recipeRevision(service)==1&&store.stockBalance(material).quantity==1500,"migration changed recipe or stock");
                 PricingProfile saved=store.savePricing(service,1,0,PricingMath.Method.PER_PAGE,true,tiers);
