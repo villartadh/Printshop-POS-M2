@@ -284,7 +284,7 @@ public final class CashierPreviewActivity extends Activity {
     }
     private void loadEntry(){
         signedIn=false;mode="entry";screen("Training cashier","Checking the isolated workspace");
-        submit(()->store.fixtureInitialized(),v->{if((Boolean)v)showLogin("");else showSetup();});
+        submit(()->{NativeBackupSnapshot.cleanup(getCacheDir());return store.fixtureInitialized();},v->{if((Boolean)v)showLogin("");else showSetup();});
     }
     private void showSetup(){
         signedIn=false;mode="setup";screen("Set up training owner","Create a synthetic-only login. Do not use your real shop credentials. Training paper and a training print service will be created.");
@@ -457,6 +457,11 @@ public final class CashierPreviewActivity extends Activity {
         label("Pending sales requests: "+review.pendingSales);
         label("Open shifts: "+review.openShifts);
         label("Credit sources: "+review.creditSources);
+        label("Pending archive operations: "+review.pendingOperations);
+        label("Current open shifts: "+review.currentOpenShifts);
+        label("Current pending operations: "+review.currentPendingOperations);
+        if(review.openShifts+review.pendingOperations+review.currentOpenShifts+review.currentPendingOperations>0)
+            label("Restore readiness blocked: resolve shifts and pending operations.");
         label("Restore is not available yet.");back();
     }
     @Override protected void onActivityResult(int request,int result,Intent data){

@@ -1462,6 +1462,11 @@ public final class NativeQuoteSmoke extends Instrumentation {
             java.util.Arrays.fill(transferred,(byte)0);
             NativeBackupSnapshot.Review review=store.reviewEncryptedFixtureBackup(owner,archive,backup);
             require(review.schema==22&&review.sales==1&&review.pendingSales==1&&review.openShifts==1,"backup review totals");
+            require(review.pendingOperations==1&&review.currentOpenShifts==1&&review.currentPendingOperations==1,"restore readiness blockers missing");
+            java.io.File residual=new java.io.File(context.getCacheDir(),"native-backup-123456789.db");
+            try(java.io.FileOutputStream out=new java.io.FileOutputStream(residual)){out.write(1);}
+            NativeBackupSnapshot.cleanup(context.getCacheDir());
+            require(!residual.exists(),"legacy interrupted staging not cleaned");
             rejectStock(()->store.reviewEncryptedFixtureBackup(staff,archive,backup));
             char[] wrong="Synthetic-Wrong-Archive-Password".toCharArray();
             try{rejectStock(()->store.reviewEncryptedFixtureBackup(owner,archive,wrong));}finally{java.util.Arrays.fill(wrong,'\0');}

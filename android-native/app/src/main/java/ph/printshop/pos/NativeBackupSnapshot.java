@@ -22,12 +22,13 @@ final class NativeBackupSnapshot {
         final String type,name,sql;
         Schema(Cursor c){type=c.getString(0);name=c.getString(1);sql=c.getString(2);}
     }
-    static byte[] create(SQLiteDatabase source,File privateDirectory,char[] password){
+    static synchronized byte[] create(SQLiteDatabase source,File privateDirectory,char[] password){
         if(!source.inTransaction())throw new IllegalStateException("Backup requires consistent transaction");
         CashierSecurity.validatePassword(password);
-        File candidate=null;byte[] plaintext=null;
+        File candidate=null;byte[] plaintext=null;BackupStaging staging=null;
         try{
-            candidate=File.createTempFile("native-backup-",".db",privateDirectory);
+            staging=BackupStaging.acquire(privateDirectory);
+            candidate=File.createTempFile("native-backup-",".db",staging.directory);
             List<Schema> schema=new ArrayList<>();
             try(Cursor c=source.rawQuery("SELECT type,name,sql FROM sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' AND name<>'android_metadata' ORDER BY CASE type WHEN 'table' THEN 0 WHEN 'index' THEN 1 WHEN 'view' THEN 2 ELSE 3 END,name",null)){
                 while(c.moveToNext())schema.add(new Schema(c));
@@ -64,14 +65,15 @@ final class NativeBackupSnapshot {
         }catch(IOException ex){throw new IllegalStateException("Unable to stage backup",ex);}
         finally{
             if(plaintext!=null)Arrays.fill(plaintext,(byte)0);
-            if(candidate!=null)SQLiteDatabase.deleteDatabase(candidate);
+            try{if(candidate!=null)SQLiteDatabase.deleteDatabase(candidate);}
+            finally{release(staging);}
         }
     }
     static final class Review {
         final int schema;
-        final long sales, pendingSales, openShifts, creditSources;
-        Review(int schema,long sales,long pendingSales,long openShifts,long creditSources){
-            this.schema=schema;this.sales=sales;this.pendingSales=pendingSales;this.openShifts=openShifts;this.creditSources=creditSources;
+        final long sales, pendingSales, openShifts, creditSources, pendingOperations,currentOpenShifts,currentPendingOperations;
+        Review(int schema,long sales,long pendingSales,long openShifts,long creditSources,long pendingOperations,long currentOpenShifts,long currentPendingOperations){
+            this.schema=schema;this.sales=sales;this.pendingSales=pendingSales;this.openShifts=openShifts;this.creditSources=creditSources;this.pendingOperations=pendingOperations;this.currentOpenShifts=currentOpenShifts;this.currentPendingOperations=currentPendingOperations;
         }
     }
     private static Map<String,String> schema(SQLiteDatabase db){
@@ -81,22 +83,36 @@ final class NativeBackupSnapshot {
         }return result;
     }
     /** Read-only candidate inspection; never opens candidate in SQLiteOpenHelper or runs migrations. */
-    static Review review(SQLiteDatabase trusted,File privateDirectory,byte[] archive,char[] password){
+    static synchronized Review review(SQLiteDatabase trusted,File privateDirectory,byte[] archive,char[] password){
         if(!trusted.inTransaction())throw new IllegalStateException("Backup review requires authorized transaction");
-        File file=null;
+        File file=null;BackupStaging staging=null;
         try(BackupEnvelope.Decoded decoded=BackupEnvelope.open(archive,trusted.getVersion(),password)){
             if(decoded.schema!=trusted.getVersion())throw new IllegalArgumentException("Older native schema requires isolated migration");
-            file=File.createTempFile("native-backup-review-",".db",privateDirectory);
+            staging=BackupStaging.acquire(privateDirectory);
+            file=File.createTempFile("native-backup-review-",".db",staging.directory);
             try(FileOutputStream out=new FileOutputStream(file)){out.write(decoded.snapshot);out.getFD().sync();}
             try(SQLiteDatabase candidate=SQLiteDatabase.openDatabase(file.getPath(),null,SQLiteDatabase.OPEN_READONLY)){
                 if(candidate.getVersion()!=decoded.schema||!schema(trusted).equals(schema(candidate)))throw new IllegalArgumentException("Backup schema does not match this app");
                 validate(candidate);
                 return new Review(decoded.schema,count(candidate,"SELECT COUNT(*) FROM checkout_sales"),
                     count(candidate,"SELECT COUNT(*) FROM checkout_requests WHERE state='PENDING'")+count(candidate,"SELECT COUNT(*) FROM credit_checkout_requests WHERE state='PENDING'"),
-                    count(candidate,"SELECT COUNT(*) FROM cashier_shifts WHERE state='OPEN'"),count(candidate,"SELECT COUNT(*) FROM credit_receivable_sources"));
+                    count(candidate,"SELECT COUNT(*) FROM cashier_shifts WHERE state='OPEN'"),count(candidate,"SELECT COUNT(*) FROM credit_receivable_sources"),pendingOperations(candidate),count(trusted,"SELECT COUNT(*) FROM cashier_shifts WHERE state='OPEN'"),pendingOperations(trusted));
             }
         }catch(IOException|android.database.sqlite.SQLiteException ex){throw new IllegalArgumentException("Backup candidate is not a valid native database",ex);}
-        finally{if(file!=null)SQLiteDatabase.deleteDatabase(file);}
+        finally{try{if(file!=null)SQLiteDatabase.deleteDatabase(file);}finally{release(staging);}}
+    }
+    private static void release(BackupStaging staging){
+        if(staging!=null)try{staging.close();}catch(IOException ex){throw new IllegalStateException("Unable to release backup staging",ex);}
+    }
+    static synchronized void cleanup(File privateDirectory){
+        try(BackupStaging ignored=BackupStaging.acquire(privateDirectory)){}
+        catch(IOException ex){throw new IllegalStateException("Unable to clean backup staging",ex);}
+    }
+    private static long pendingOperations(SQLiteDatabase db){
+        long total=0;
+        for(String table:new String[]{"stock_requests","checkout_requests","credit_checkout_requests","credit_collection_requests","cashier_drawer_requests"})
+            total+=count(db,"SELECT COUNT(*) FROM "+table+" WHERE state='PENDING'");
+        return total;
     }
     private static long count(SQLiteDatabase db,String sql){
         try(Cursor c=db.rawQuery(sql,null)){if(!c.moveToFirst())throw new IllegalStateException("Backup query failed");return c.getLong(0);}
