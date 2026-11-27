@@ -912,6 +912,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             require(store.stageAuthorizedFixtureCreditCheckout(staff,shift,plan).state.equals("PENDING"),"credit stage replay");
             require(store.expectedFixtureCash(staff,shift)==0,"credit stage changed cash");
             require(store.pendingAuthorizedFixtureCreditCheckout(staff,shift).id.equals(plan.id),"credit pending recovery");
+            rejectStock(()->store.closeFixtureShift(staff,shift,0));
             rejectStock(()->store.authorizedFixtureCreditCheckout(owner,plan.id));
             rejectStock(()->store.applyAuthorizedFixtureCreditCheckout(staff,plan.id,"wrong"));
             require(store.applyAuthorizedFixtureCreditCheckout(staff,plan.id,plan.fingerprint).state.equals("APPLIED"),"credit apply");

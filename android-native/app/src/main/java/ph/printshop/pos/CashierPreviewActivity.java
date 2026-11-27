@@ -119,6 +119,8 @@ public final class CashierPreviewActivity extends Activity {
             case "Sign in denied":return "Sign in denied. Check your synthetic credentials or wait for the lockout.";
             case "Insufficient cash.":return "Insufficient training cash.";
             case "Resolve pending checkout before closing shift":return "Resolve the pending training checkout before closing the shift.";
+            case "Resolve pending credit checkout before close":return "Resolve the pending training credit checkout before closing the shift.";
+            case "Resolve pending collection before close":return "Resolve the pending training collection before closing the shift.";
             case "Insufficient stock or quantity limit exceeded.":return "Insufficient training stock.";
             case "Username unavailable":return "Training username unavailable.";
             case "Credential confirmation denied":return "Credential confirmation denied. Check your current synthetic passphrase or wait for lockout.";
@@ -137,7 +139,7 @@ public final class CashierPreviewActivity extends Activity {
             case "Owner authorization required":return message;
             case "Original receipt changed or amount is invalid; review again":
             case "Authorized original cash receipt unavailable":
-            case "Invalid customer details":
+            case "Invalid customer details":return message;
             case "Collection exceeds outstanding balance":return "Enter a collection amount no greater than the outstanding balance.";
             case "Invalid collection":return "Enter a positive collection amount.";
             case "Collection changed; review again":return "Collection changed. Reload the balance or cancel the saved request.";

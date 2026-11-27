@@ -240,6 +240,10 @@ final class CashierJournal {
         if(exists(db,"SELECT 1 FROM cashier_shift_checkouts l JOIN checkout_requests r ON r.request_id=l.request_id WHERE l.shift_id=? AND r.state='PENDING'",new String[]{id}))
             throw new IllegalStateException("Resolve pending checkout before closing shift");
         DrawerJournal.requireNoPending(db,id);
+        if(exists(db,"SELECT 1 FROM credit_checkout_requests WHERE shift_id=? AND state='PENDING'",new String[]{id}))
+            throw new IllegalStateException("Resolve pending credit checkout before close");
+        if(exists(db,"SELECT 1 FROM credit_collection_requests WHERE shift_id=? AND state='PENDING'",new String[]{id}))
+            throw new IllegalStateException("Resolve pending collection before close");
         long expected=expected(db,s);
         ContentValues v=new ContentValues();v.put("state","CLOSED");v.put("closed_ms",now);
         v.put("expected_cash",expected);v.put("counted_cash",counted);v.put("variance",ShiftMath.variance(expected,counted));
@@ -257,3 +261,4 @@ final class CashierJournal {
         }
     }
 }
+
