@@ -5,7 +5,8 @@ from pydantic import BaseModel
 from checkpoint_validation import validate_checkpoint
 from reconcile_policy import reconcile_ref
 
-mcp = FastMCP("Development Automation Bridge")
+mcp = FastMCP("Development Automation Bridge", host="127.0.0.1",
+              stateless_http=True, json_response=True, max_request_body_size=65536)
 class Inspection(BaseModel):
     status: str
     authorizes_write: bool = False
@@ -32,4 +33,8 @@ def inspect_ref_observation(expected: str, proposed: str, observed: str | None =
     return Inspection(status=decision)
 
 if __name__ == "__main__":
-    mcp.run(transport="stdio")
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--loopback-http", action="store_true")
+    args = parser.parse_args()
+    mcp.run(transport="streamable-http" if args.loopback_http else "stdio")
