@@ -14,3 +14,6 @@ Validate bounded UTF-8 JSON, the exact repository/head SHA, expected gate set, r
 
 ## Fresh observation admission
 Before treating a stored checkpoint as a candidate, independently retrieve the current branch SHA and fresh exact-SHA workflow metadata. Reject mismatched head or checkpoint, new attempts, conflicting duplicate attempt metadata and missing/unverified bridge gates when applicable. Explicitly derive bridge applicability from PR changed paths; never infer it from artifact content. This read-only policy does not grant ownership or authorize mutations; the caller must verify fresh observations and separately obtain a proven claim. Diagnose failures independently even when a bridge artifact is absent.
+
+## Interrupted worker review
+Reconcile an independently retrieved active ledger with a pre-recorded source mutation intent (event, owner, generation, exact parent and candidate). Require independently confirmed worker termination; timeout or silence is not termination. A candidate or parent observation only permits review, not automatic retry, completion or lease release. Missing or unexpected head or mismatched intent holds the claim. Production safety still requires a durable intent store and an enforceable source-write fence; the connector's single-ref CAS cannot establish atomic multi-ref fencing on its own.
