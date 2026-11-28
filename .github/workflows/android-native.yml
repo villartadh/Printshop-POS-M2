@@ -52,6 +52,8 @@ jobs:
           java -cp /tmp/quote-classes ph.printshop.pos.RestoreJournalTest
           java -cp /tmp/quote-classes ph.printshop.pos.DatabaseLifecycleLeaseTest
           java -cp /tmp/quote-classes ph.printshop.pos.RecoveryArchiveTest
+          javac -d /tmp/quote-classes android-native/app/src/main/java/ph/printshop/pos/SyncBatchPolicy.java android-native/tests/SyncBatchPolicyTest.java
+          java -cp /tmp/quote-classes ph.printshop.pos.SyncBatchPolicyTest
       - name: Stock request SQLite schema checks
         run: |
           python3 android-native/tests/stock_request_schema_test.py
