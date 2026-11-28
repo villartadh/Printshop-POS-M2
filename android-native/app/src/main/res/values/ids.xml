@@ -213,4 +213,24 @@
     <item type="id" name="cashier_production_policy_save"/>
     <item type="id" name="cashier_quote_jobs"/>
     <item type="id" name="cashier_quote_job"/>
+    <item type="id" name="cashier_backup"/>
+    <item type="id" name="cashier_backup_password"/>
+    <item type="id" name="cashier_backup_confirm"/>
+    <item type="id" name="cashier_backup_create"/>
+    <item type="id" name="cashier_backup_import"/>
+    <item type="id" name="cashier_backup_choose"/>
+    <item type="id" name="cashier_backup_validate"/>
+    <item type="id" name="cashier_backup_review"/>
+    <item type="id" name="cashier_backup_migrate"/>
+    <item type="id" name="cashier_restore_prepare"/>
+    <item type="id" name="cashier_restore_owner_password"/>
+    <item type="id" name="cashier_restore_source_password"/>
+    <item type="id" name="cashier_restore_recovery_password"/>
+    <item type="id" name="cashier_restore_recovery_repeat"/>
+    <item type="id" name="cashier_restore_consent"/>
+    <item type="id" name="cashier_restore_execute"/>
+    <item type="id" name="cashier_recovery_list"/>
+    <item type="id" name="cashier_recovery_first"/>
+    <item type="id" name="cashier_recovery_password"/>
+    <item type="id" name="cashier_recovery_export"/>
 </resources>

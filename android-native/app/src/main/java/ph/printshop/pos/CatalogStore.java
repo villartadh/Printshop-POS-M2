@@ -11,10 +11,14 @@ import java.util.List;
 /** App-private preview catalog. Checkout writes are isolated to explicit synthetic fixtures. */
 public final class CatalogStore extends SQLiteOpenHelper {
     private final boolean fixtureCheckoutWrites;
+    private final Context backupContext;
+    private final java.nio.file.Path databasePath;
+    private DatabaseLifecycleLease lifecycleLease;
     public CatalogStore(Context context) { this(context, "preview-catalog.db"); }
     CatalogStore(Context context, String filename) { this(context,filename,false); }
     private CatalogStore(Context context,String filename,boolean fixtureCheckoutWrites) {
-        super(context,filename,null,22);this.fixtureCheckoutWrites=fixtureCheckoutWrites;
+        super(context,filename,null,22);this.fixtureCheckoutWrites=fixtureCheckoutWrites;this.backupContext=context.getApplicationContext();
+        this.databasePath=context.getDatabasePath(filename).toPath();
     }
     /** No production/ordinary preview API can record sales or consume stock through checkout.
      * Only a separately identified synthetic fixture database opts in to transaction experiments.
@@ -22,6 +26,41 @@ public final class CatalogStore extends SQLiteOpenHelper {
     static CatalogStore checkoutFixture(Context context,String fixtureId) {
         StockMath.validateRequestId(fixtureId);
         return new CatalogStore(context,"checkout-fixture-"+fixtureId+".db",true);
+    }
+    private void acquireLifecycle(){
+        if(!fixtureCheckoutWrites||lifecycleLease!=null)return;
+        try{
+            lifecycleLease=DatabaseLifecycleLease.open(databasePath,false);
+            if(NativeRestoreCoordinator.hasArtifacts(databasePath)){
+                try{lifecycleLease.close();}finally{lifecycleLease=null;}
+                try(DatabaseLifecycleLease recovery=DatabaseLifecycleLease.open(databasePath,true)){
+                    if(RestoreJournal.hasArtifacts(databasePath))new RestoreJournal(databasePath,recovery).recover();
+                }
+                lifecycleLease=DatabaseLifecycleLease.open(databasePath,false);
+                if(RestoreJournal.hasArtifacts(databasePath)){
+                    try{lifecycleLease.close();}finally{lifecycleLease=null;}
+                    throw new java.io.IOException("Interrupted restore requires rollback");
+                }
+            }
+        }
+        catch(java.io.IOException ex){throw new IllegalStateException("Training database is unavailable",ex);}
+    }
+    @Override public synchronized SQLiteDatabase getWritableDatabase(){
+        acquireLifecycle();
+        return super.getWritableDatabase();
+    }
+    @Override public synchronized SQLiteDatabase getReadableDatabase(){
+        acquireLifecycle();
+        return super.getReadableDatabase();
+    }
+    @Override public synchronized void close(){
+        // Do not release the lease if the underlying close failed.
+        super.close();
+        if(lifecycleLease!=null){
+            try{lifecycleLease.close();}
+            catch(java.io.IOException ex){throw new IllegalStateException("Unable to release database lifecycle",ex);}
+            finally{lifecycleLease=null;}
+        }
     }
     private void requireCheckoutFixture(){
         if(!fixtureCheckoutWrites)throw new IllegalStateException("Checkout recording disabled until native authentication and shift acceptance");
@@ -49,6 +88,10 @@ public final class CatalogStore extends SQLiteOpenHelper {
         db.setForeignKeyConstraintsEnabled(true);
     }
     @Override public void onCreate(SQLiteDatabase db) {
+        createSchemaThrough21(db);
+        QuoteProductionJournal.upgrade(db);
+    }
+    static void createSchemaThrough21(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE catalog (id TEXT PRIMARY KEY NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('SERVICE','MATERIAL')), name TEXT NOT NULL, unit TEXT NOT NULL, centavos INTEGER NOT NULL CHECK(centavos BETWEEN 0 AND 99999999999), revision INTEGER NOT NULL CHECK(revision >= 1), archived INTEGER NOT NULL CHECK(archived IN (0,1)))");
         db.execSQL("CREATE TABLE catalog_history (id TEXT NOT NULL REFERENCES catalog(id), revision INTEGER NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL, unit TEXT NOT NULL, centavos INTEGER NOT NULL, archived INTEGER NOT NULL, action TEXT NOT NULL CHECK(action IN ('CREATE','EDIT','ARCHIVE','RESTORE')), PRIMARY KEY(id,revision))");
         createStockLedger(db);
@@ -71,7 +114,6 @@ public final class CatalogStore extends SQLiteOpenHelper {
         QuotationJournal.upgradeCreditConversion(db);
         ProductionJournal.upgrade(db);
         ProductionPolicy.upgrade(db);
-        QuoteProductionJournal.upgrade(db);
     }
     private static void upgradeCreditSchema(SQLiteDatabase db){
         ReceivableJournal.createCandidate(db); CreditCashJournal.createCandidate(db); CreditCheckoutJournal.createCandidate(db);
@@ -394,6 +436,15 @@ public final class CatalogStore extends SQLiteOpenHelper {
         requireCheckoutFixture();SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
         try{T result=action.run(db);db.setTransactionSuccessful();return result;}
         finally{db.endTransaction();}
+    }
+    byte[] encryptedFixtureBackup(String token,char[] password){
+        return fixtureTransaction(db->{requireFixtureOwner(db,token);return NativeBackupSnapshot.create(db,backupContext.getCacheDir(),password);});
+    }
+    NativeBackupSnapshot.Review reviewEncryptedFixtureBackup(String token,byte[] archive,char[] password){
+        return fixtureTransaction(db->{requireFixtureOwner(db,token);return NativeBackupSnapshot.review(db,backupContext.getCacheDir(),archive,password);});
+    }
+    byte[] migrateEncryptedFixtureBackup(String token,byte[] archive,char[] password){
+        return fixtureTransaction(db->{requireFixtureOwner(db,token);return NativeBackupSnapshot.migrateV21(db,backupContext.getCacheDir(),archive,password);});
     }
     boolean fixtureInitialized(){
         return fixtureTransaction(CashierJournal::initialized);

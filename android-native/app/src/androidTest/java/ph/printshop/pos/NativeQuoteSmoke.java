@@ -93,7 +93,11 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "measured quote"; verifyMeasuredQuote(screen);
             phase = "native cashier training UI"; verifyCashierTrainingScreen(screen);
             phase = "native receipt PDF"; verifyReceiptPdf();
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_RECURRING_UI_PASS\nNATIVE_CUSTOMER_DIRECTORY_PASS\nNATIVE_CUSTOMER_CHECKOUT_PASS\nNATIVE_CREDIT_COLLECTION_API_PASS\nNATIVE_CREDIT_REPORT_PASS\nNATIVE_CREDIT_CHECKOUT_UI_PASS\nNATIVE_CREDIT_COLLECTION_UI_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\nNATIVE_SAVED_QUOTATION_PASS\nNATIVE_QUOTATION_CASH_CONVERSION_PASS\nNATIVE_QUOTATION_CREDIT_CONVERSION_PASS\nNATIVE_QUOTATION_UI_PASS\nNATIVE_PRODUCTION_JOURNAL_PASS\nNATIVE_PRODUCTION_UI_PASS\nNATIVE_PRODUCTION_POLICY_PASS\nNATIVE_QUOTE_PRODUCTION_PASS\nNATIVE_QUOTE_PRODUCTION_UI_PASS\nNATIVE_RECEIPT_PDF_PASS\nNATIVE_RECEIPT_REPRINT_PASS\n");
+            phase = "native encrypted backup snapshot"; verifyNativeBackupSnapshot();
+            phase = "native database lifecycle fence"; verifyDatabaseLifecycleFence();
+            phase = "native pre-restore recovery"; verifyPreRestoreRecovery();
+            phase = "native SQLite fixture restoration"; verifyNativeRestoreCoordinator();
+            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_RECURRING_UI_PASS\nNATIVE_CUSTOMER_DIRECTORY_PASS\nNATIVE_CUSTOMER_CHECKOUT_PASS\nNATIVE_CREDIT_COLLECTION_API_PASS\nNATIVE_CREDIT_REPORT_PASS\nNATIVE_CREDIT_CHECKOUT_UI_PASS\nNATIVE_CREDIT_COLLECTION_UI_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\nNATIVE_SAVED_QUOTATION_PASS\nNATIVE_QUOTATION_CASH_CONVERSION_PASS\nNATIVE_QUOTATION_CREDIT_CONVERSION_PASS\nNATIVE_QUOTATION_UI_PASS\nNATIVE_PRODUCTION_JOURNAL_PASS\nNATIVE_PRODUCTION_UI_PASS\nNATIVE_PRODUCTION_POLICY_PASS\nNATIVE_QUOTE_PRODUCTION_PASS\nNATIVE_QUOTE_PRODUCTION_UI_PASS\nNATIVE_RECEIPT_PDF_PASS\nNATIVE_RECEIPT_REPRINT_PASS\nNATIVE_BACKUP_SNAPSHOT_PASS\nNATIVE_BACKUP_MIGRATION_PASS\nNATIVE_BACKUP_MIGRATION_UI_PASS\nNATIVE_BACKUP_IMPORT_UI_PASS\nNATIVE_DATABASE_LIFECYCLE_PASS\nNATIVE_PRE_RESTORE_RECOVERY_PASS\nNATIVE_SQLITE_RESTORE_PASS\nNATIVE_RESTORE_UI_PASS\nNATIVE_RECOVERY_EXPORT_PASS\n"+(android.os.Build.VERSION.SDK_INT>=29?"NATIVE_BACKUP_CONTENT_PROVIDER_PASS\n":""));
             result = Activity.RESULT_OK;
         } catch (Throwable error) {
             evidence.putString("stream", failureDetails(phase, error));
@@ -219,6 +223,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             awaitText(first,"No open shift","cashier login failed");
             runOnMainChecked(()->{
                 require(setup.findViewById(R.id.cashier_add_staff)==null,"cashier visible owner-only action");
+                require(setup.findViewById(R.id.cashier_backup_import)==null&&setup.findViewById(R.id.cashier_backup_validate)==null&&setup.findViewById(R.id.cashier_recovery_list)==null,"cashier visible owner backup review");
                 require(setup.findViewById(R.id.cashier_inventory)==null,"cashier visible owner-only inventory");
                 require(setup.findViewById(R.id.cashier_manage_staff)==null,"cashier visible owner-only staff management");
                 require(setup.findViewById(R.id.cashier_admin_history)==null,"cashier visible owner-only audit");
@@ -404,10 +409,210 @@ public final class NativeQuoteSmoke extends Instrumentation {
             spinner.setSelection(position);
         });waitForIdleSync();
     }
+    @android.annotation.TargetApi(29)
+    private void verifyRecoveryContentProvider(Activity activity,String owner,String ownerPass,String fixtureId)
+            throws java.io.IOException,android.content.IntentFilter.MalformedMimeTypeException{
+        android.content.ContentResolver resolver=getTargetContext().getContentResolver();
+        android.content.ContentValues values=new android.content.ContentValues();
+        values.put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME,"synthetic-pos-"+java.util.UUID.randomUUID()+".psposbackup");
+        values.put(android.provider.MediaStore.MediaColumns.MIME_TYPE,"application/octet-stream");
+        values.put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH,android.os.Environment.DIRECTORY_DOWNLOADS+"/PrintshopSyntheticAcceptance");
+        values.put(android.provider.MediaStore.MediaColumns.IS_PENDING,1);
+        android.net.Uri target=resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI,values);
+        require(target!=null&&"content".equals(target.getScheme()),"MediaStore test document unavailable");
+        byte[] expected=null,output=null;
+        char[] secret="Synthetic-UI-Recovery-Archive-01".toCharArray();
+        try{
+            java.nio.file.Path scope=RecoveryArchive.fixtureDirectory(getTargetContext().getFilesDir().toPath(),fixtureId,false);
+            java.util.List<RecoveryArchive.Entry> retained=RecoveryArchive.list(scope);
+            require(!retained.isEmpty(),"content provider recovery missing");
+            expected=RecoveryArchive.read(scope,retained.get(0).name);
+            trainingClick(activity,R.id.cashier_recovery_list);
+            awaitText(activity,"Back to cashier","provider recovery list unavailable");
+            trainingClick(activity,R.id.cashier_recovery_first);
+            trainingField(activity,R.id.cashier_recovery_password,"Synthetic-UI-Recovery-Archive-01");
+            android.content.IntentFilter create=new android.content.IntentFilter(Intent.ACTION_CREATE_DOCUMENT);
+            create.addCategory(Intent.CATEGORY_OPENABLE);create.addDataType("application/octet-stream");
+            ActivityMonitor monitor=addMonitor(create,new ActivityResult(Activity.RESULT_OK,new Intent().setData(target)),true);
+            try{
+                trainingClick(activity,R.id.cashier_recovery_export);
+                long deadline=android.os.SystemClock.elapsedRealtime()+60000;
+                while(android.os.SystemClock.elapsedRealtime()<deadline){
+                    try(java.io.InputStream in=resolver.openInputStream(target)){
+                        output=BackupFileTransfer.read(in);
+                        if(output.length==expected.length)break;
+                        java.util.Arrays.fill(output,(byte)0);output=null;
+                    }catch(java.io.IOException empty){/* asynchronous writer has not finished */}
+                    android.os.SystemClock.sleep(100);
+                }
+                require(monitor.getHits()==1&&output!=null&&java.util.Arrays.equals(expected,output),"content provider export bytes differ");
+            }finally{removeMonitor(monitor);}
+            try(BackupEnvelope.Decoded opened=BackupEnvelope.open(output,22,secret)){
+                require(opened.schema==22,"provider export schema differs");
+            }
+            trainingClick(activity,R.id.cashier_back);
+            awaitText(activity,"No open shift","provider export return failed");
+            trainingClick(activity,R.id.cashier_backup_import);
+            android.content.IntentFilter open=new android.content.IntentFilter(Intent.ACTION_OPEN_DOCUMENT);
+            open.addCategory(Intent.CATEGORY_OPENABLE);open.addDataType("application/octet-stream");
+            ActivityMonitor importMonitor=addMonitor(open,new ActivityResult(Activity.RESULT_OK,new Intent().setData(target)),true);
+            try{
+                trainingClick(activity,R.id.cashier_backup_choose);
+                awaitText(activity,"Training sign in","provider import owner reauthentication missing");
+                require(importMonitor.getHits()==1,"provider import picker omitted");
+            }finally{removeMonitor(importMonitor);}
+            trainingLogin(activity,owner,ownerPass);
+            awaitText(activity,"Validate selected backup","provider archive not selected");
+            trainingClick(activity,R.id.cashier_backup_validate);
+            trainingField(activity,R.id.cashier_backup_password,"Synthetic-UI-Recovery-Archive-01");
+            trainingClick(activity,R.id.cashier_backup_review);
+            awaitText(activity,"Backup validated","provider archive reimport failed",60000);
+            trainingClick(activity,R.id.cashier_back);
+            awaitText(activity,"No open shift","provider review changed training shift");
+            require(!RecoveryArchive.list(scope).isEmpty(),"provider export removed retained original");
+        }finally{
+            if(expected!=null)java.util.Arrays.fill(expected,(byte)0);
+            if(output!=null)java.util.Arrays.fill(output,(byte)0);
+            java.util.Arrays.fill(secret,'\0');
+            resolver.delete(target,null,null); // delete only the synthetic item created above
+        }
+    }
+
     private void verifyOwnerCatalogWorkflow(Activity activity,String fixtureId,String owner,String ownerPass){
         // Earlier UI workflow has completed and its original financial invariants were checked.
         trainingLogin(activity,owner,ownerPass);
         awaitText(activity,"No open shift","owner login for catalog failed");
+        trainingClick(activity,R.id.cashier_backup_import);
+        awaitText(activity,"Review encrypted backup","owner backup import screen missing");
+        runOnMainChecked(()->require(activity.findViewById(R.id.cashier_backup_choose)!=null,"backup picker action missing"));
+        // Stub only the external picker result; the real activity, resolver, owner login,
+        // archive authentication, SQLite review and returned summary all run installed.
+        java.io.File archiveFile=null,legacyFile=null,legacyDb=null;char[] ownerSecret=ownerPass.toCharArray();
+        char[] archiveSecret="Synthetic-import-archive-01".toCharArray();
+        try{
+            archiveFile=java.io.File.createTempFile("synthetic-import-",".psposbackup",getTargetContext().getCacheDir());
+            legacyFile=java.io.File.createTempFile("synthetic-legacy-",".psposbackup",getTargetContext().getCacheDir());
+            legacyDb=java.io.File.createTempFile("synthetic-legacy-",".db",getTargetContext().getCacheDir());
+            try(CatalogStore store=CatalogStore.checkoutFixture(getTargetContext(),fixtureId)){
+                String token=store.signInFixture(owner,ownerSecret);
+                byte[] archive=store.encryptedFixtureBackup(token,archiveSecret);
+                try(BackupEnvelope.Decoded decoded=BackupEnvelope.open(archive,22,archiveSecret);
+                    java.io.FileOutputStream out=new java.io.FileOutputStream(legacyDb)){out.write(decoded.snapshot);}
+                finally{java.util.Arrays.fill(archive,(byte)0);store.signOutFixture(token);}
+            }
+            try(android.database.sqlite.SQLiteDatabase candidate=android.database.sqlite.SQLiteDatabase.openDatabase(legacyDb.getPath(),null,android.database.sqlite.SQLiteDatabase.OPEN_READWRITE)){
+                candidate.execSQL("DROP VIEW production_quote_current");
+                candidate.execSQL("DROP TABLE production_quote_events");
+                candidate.setVersion(21);
+            }
+            byte[] sourceBytes=java.nio.file.Files.readAllBytes(legacyDb.toPath());
+            byte[] old=BackupEnvelope.seal(sourceBytes,21,archiveSecret);
+            java.util.Arrays.fill(sourceBytes,(byte)0);
+            try{
+                try(java.io.FileOutputStream out=new java.io.FileOutputStream(legacyFile)){BackupFileTransfer.write(out,old);}
+                android.content.IntentFilter legacyFilter=new android.content.IntentFilter(Intent.ACTION_OPEN_DOCUMENT);
+                legacyFilter.addCategory(Intent.CATEGORY_OPENABLE);legacyFilter.addDataType("application/octet-stream");
+                ActivityMonitor legacyMonitor=addMonitor(legacyFilter,new ActivityResult(Activity.RESULT_OK,new Intent().setData(android.net.Uri.fromFile(legacyFile))),true);
+                try{
+                    trainingClick(activity,R.id.cashier_backup_choose);
+                    awaitText(activity,"Training sign in","legacy import owner reauthentication missing");
+                    require(legacyMonitor.getHits()==1,"legacy import picker omitted");
+                }finally{removeMonitor(legacyMonitor);}
+                trainingLogin(activity,owner,ownerPass);
+                awaitText(activity,"Validate selected backup","legacy file not selected");
+                trainingClick(activity,R.id.cashier_backup_validate);
+                trainingField(activity,R.id.cashier_backup_password,"Synthetic-import-archive-01");
+                android.content.IntentFilter createLegacy=new android.content.IntentFilter(Intent.ACTION_CREATE_DOCUMENT);
+                createLegacy.addCategory(Intent.CATEGORY_OPENABLE);createLegacy.addDataType("application/octet-stream");
+                ActivityMonitor createMonitor=addMonitor(createLegacy,new ActivityResult(Activity.RESULT_OK,new Intent().setData(android.net.Uri.fromFile(archiveFile))),true);
+                try{
+                    trainingClick(activity,R.id.cashier_backup_migrate);
+                    awaitText(activity,"Older backup converted","legacy conversion failed",60000);
+                    long deadline=android.os.SystemClock.elapsedRealtime()+60000;
+                    while(archiveFile.length()==0&&android.os.SystemClock.elapsedRealtime()<deadline)android.os.SystemClock.sleep(100);
+                    require(createMonitor.getHits()==1&&archiveFile.length()>0,"converted export picker/output missing");
+                }finally{removeMonitor(createMonitor);}
+                byte[] preserved=java.nio.file.Files.readAllBytes(legacyFile.toPath());
+                try{require(java.util.Arrays.equals(old,preserved),"legacy archive overwritten");}
+                finally{java.util.Arrays.fill(preserved,(byte)0);}
+                trainingClick(activity,R.id.cashier_back);
+                awaitText(activity,"No open shift","conversion changed current shift");
+                trainingClick(activity,R.id.cashier_backup_import);
+                awaitText(activity,"Review encrypted backup","converted import screen missing");
+            }finally{java.util.Arrays.fill(old,(byte)0);}
+            android.content.IntentFilter filter=new android.content.IntentFilter(Intent.ACTION_OPEN_DOCUMENT);
+            filter.addCategory(Intent.CATEGORY_OPENABLE);filter.addDataType("application/octet-stream");
+            Intent result=new Intent().setData(android.net.Uri.fromFile(archiveFile));
+            ActivityMonitor monitor=addMonitor(filter,new ActivityResult(Activity.RESULT_OK,result),true);
+            try{
+                trainingClick(activity,R.id.cashier_backup_choose);
+                awaitText(activity,"Training sign in","backup picker must require owner reauthentication");
+                require(monitor.getHits()==1,"backup document intent not observed");
+            }finally{removeMonitor(monitor);}
+            trainingLogin(activity,owner,ownerPass);
+            awaitText(activity,"Validate selected backup","selected archive not available after owner sign in");
+            trainingClick(activity,R.id.cashier_backup_validate);
+            trainingField(activity,R.id.cashier_backup_password,"Synthetic-import-archive-01");
+            trainingClick(activity,R.id.cashier_backup_review);
+            awaitText(activity,"Backup validated","read-only imported archive failed validation");
+            trainingClick(activity,R.id.cashier_restore_prepare);
+            awaitText(activity,"Confirm training database restoration","restore confirmation screen missing");
+            trainingClick(activity,R.id.cashier_restore_execute);
+            awaitText(activity,"Confirm the training data replacement first.","explicit restore consent not enforced");
+            trainingField(activity,R.id.cashier_restore_owner_password,ownerPass);
+            trainingField(activity,R.id.cashier_restore_source_password,"Synthetic-import-archive-01");
+            trainingField(activity,R.id.cashier_restore_recovery_password,"Synthetic-UI-Recovery-Archive-01");
+            trainingField(activity,R.id.cashier_restore_recovery_repeat,"Synthetic-UI-Recovery-Archive-01");
+            runOnMainChecked(()->((android.widget.CheckBox)activity.findViewById(R.id.cashier_restore_consent)).setChecked(true));
+            trainingClick(activity,R.id.cashier_restore_execute);
+            awaitText(activity,"Training restore completed. Encrypted recovery retained. Sign in again.","owner-confirmed restore did not complete",60000);
+            trainingLogin(activity,owner,ownerPass);
+            awaitText(activity,"No open shift","fresh login after restore failed");
+            runOnMainChecked(()->require(activity.findViewById(R.id.cashier_backup_validate)==null,"selected archive retained after review"));
+            trainingClick(activity,R.id.cashier_recovery_list);
+            awaitText(activity,"Retained encrypted recovery archives","recovery archive screen missing");
+            awaitText(activity,"Back to cashier","recovery list did not finish loading");
+            java.nio.file.Path scope=RecoveryArchive.fixtureDirectory(getTargetContext().getFilesDir().toPath(),fixtureId,false);
+            java.util.List<RecoveryArchive.Entry> retained=RecoveryArchive.list(scope);
+            require(!retained.isEmpty(),"recovery archive absent");
+            byte[] expectedRecovery=RecoveryArchive.read(scope,retained.get(0).name);
+            trainingClick(activity,R.id.cashier_recovery_first);
+            awaitText(activity,"Export retained recovery archive","retained archive confirmation missing");
+            trainingField(activity,R.id.cashier_recovery_password,"Synthetic-UI-Recovery-Archive-01");
+            java.io.File exported=java.io.File.createTempFile("synthetic-recovery-export-",".psbak",getTargetContext().getCacheDir());
+            try{
+                android.content.IntentFilter create=new android.content.IntentFilter(Intent.ACTION_CREATE_DOCUMENT);
+                create.addCategory(Intent.CATEGORY_OPENABLE);create.addDataType("application/octet-stream");
+                ActivityMonitor exportMonitor=addMonitor(create,new ActivityResult(Activity.RESULT_OK,new Intent().setData(android.net.Uri.fromFile(exported))),true);
+                try{
+                    trainingClick(activity,R.id.cashier_recovery_export);
+                    long deadline=android.os.SystemClock.elapsedRealtime()+60000;
+                    while(exported.length()!=expectedRecovery.length&&android.os.SystemClock.elapsedRealtime()<deadline)android.os.SystemClock.sleep(100);
+                    require(exportMonitor.getHits()==1&&exported.length()==expectedRecovery.length,"recovery export picker or output failed");
+                }finally{removeMonitor(exportMonitor);}
+                char[] recoverySecret="Synthetic-UI-Recovery-Archive-01".toCharArray();
+                byte[] output;
+                try(java.io.InputStream in=new java.io.FileInputStream(exported)){output=BackupFileTransfer.read(in);}
+                try(BackupEnvelope.Decoded decoded=BackupEnvelope.open(output,22,recoverySecret)){require(decoded.schema==22&&java.util.Arrays.equals(output,expectedRecovery),"recovery export bytes or schema");}
+                finally{java.util.Arrays.fill(output,(byte)0);java.util.Arrays.fill(recoverySecret,'\0');}
+                require(!RecoveryArchive.list(scope).isEmpty(),"export removed retained original");
+            }finally{java.util.Arrays.fill(expectedRecovery,(byte)0);exported.delete();}
+            trainingClick(activity,R.id.cashier_back);
+            awaitText(activity,"No open shift","retained export return failed");
+            // Exercise an actual Android content provider (rather than file://), retaining
+            // the intercepted chooser only to make the installed test deterministic.
+            if(android.os.Build.VERSION.SDK_INT>=29)verifyRecoveryContentProvider(activity,owner,ownerPass,fixtureId);
+
+        }catch(java.io.IOException|android.content.IntentFilter.MalformedMimeTypeException e){throw new AssertionError("synthetic picker fixture failed",e);}
+        finally{java.util.Arrays.fill(ownerSecret,'\0');java.util.Arrays.fill(archiveSecret,'\0');if(archiveFile!=null)archiveFile.delete();if(legacyFile!=null)legacyFile.delete();if(legacyDb!=null)android.database.sqlite.SQLiteDatabase.deleteDatabase(legacyDb);}
+        trainingClick(activity,R.id.cashier_backup);
+        awaitText(activity,"Encrypted backup export","owner backup screen missing");
+        trainingField(activity,R.id.cashier_backup_password,"Synthetic-export-password-01");
+        trainingField(activity,R.id.cashier_backup_confirm,"Synthetic-export-password-02");
+        trainingClick(activity,R.id.cashier_backup_create);
+        awaitText(activity,"Backup passphrases do not match.","backup mismatch not rejected");
+        trainingClick(activity,R.id.cashier_back);
+        awaitText(activity,"No open shift","backup screen return failed");
         trainingClick(activity,R.id.cashier_catalog_services);
         awaitText(activity,"Training services","owner services missing");
         runOnMainChecked(()->require(activity.findViewById(R.id.cashier_catalog_next)==null,"unnecessary page control"));
@@ -1391,6 +1596,216 @@ public final class NativeQuoteSmoke extends Instrumentation {
             require(trainingCount(f,"SELECT COUNT(*) FROM production_quote_current WHERE effective_status='CANCELLED'")==1,"cancelled quote job count");
             require(trainingCount(f,"SELECT COUNT(*) FROM production_quote_current WHERE receipt_id IS NOT NULL")==1,"converted quote job count");
         }
+    }
+
+    private void verifyDatabaseLifecycleFence() throws java.io.IOException{
+        android.content.Context context=getTargetContext();String fixture=stockId(),filename="checkout-fixture-"+fixture+".db";
+        java.nio.file.Path path=context.getDatabasePath(filename).toPath();
+        try{
+            try(CatalogStore first=CatalogStore.checkoutFixture(context,fixture);CatalogStore second=CatalogStore.checkoutFixture(context,fixture)){
+                first.getWritableDatabase();second.getReadableDatabase();
+                try(DatabaseLifecycleLease ignored=DatabaseLifecycleLease.open(path,true)){throw new AssertionError("Restore lease while helpers open");}
+                catch(java.io.IOException expected){}
+            }
+            try(DatabaseLifecycleLease exclusive=DatabaseLifecycleLease.open(path,true);CatalogStore blocked=CatalogStore.checkoutFixture(context,fixture)){
+                rejectStock(blocked::getWritableDatabase);
+                exclusive.requireExclusive(path);
+            }
+            try(CatalogStore reopened=CatalogStore.checkoutFixture(context,fixture)){
+                require(reopened.getReadableDatabase().getVersion()==22,"Database reopen after lifecycle exclusion");
+            }
+        }finally{context.deleteDatabase(filename);}
+    }
+
+    private void verifyPreRestoreRecovery() throws java.io.IOException{
+        android.content.Context context=getTargetContext();String fixture=stockId(),filename="checkout-fixture-"+fixture+".db";
+        java.nio.file.Path path=context.getDatabasePath(filename).toPath(),recovery=null;
+        char[] ownerPass="Synthetic-Recovery-Owner-01".toCharArray(),staffPass="Synthetic-Recovery-Staff-01".toCharArray(),
+            archivePass="Synthetic-Recovery-Archive-01".toCharArray(),wrong="Synthetic-Recovery-Wrong-01".toCharArray();
+        String owner,staff,shift=stockId();
+        try{
+            try(CatalogStore store=CatalogStore.checkoutFixture(context,fixture)){
+                store.bootstrapDemoFixtureOwner("recovery-owner",ownerPass);owner=store.signInFixture("recovery-owner",ownerPass);
+                store.createFixtureCashier(owner,"recovery-staff",staffPass);staff=store.signInFixture("recovery-staff",staffPass);
+                store.openFixtureShift(owner,shift,0);
+            }
+            try(DatabaseLifecycleLease lease=DatabaseLifecycleLease.open(path,true)){
+                try{NativePreRestoreRecovery.create(context,fixture,lease,staff,staffPass,archivePass);throw new AssertionError("Staff authorized recovery");}
+                catch(IllegalStateException expected){}
+                try{NativePreRestoreRecovery.create(context,fixture,lease,owner,wrong,archivePass);throw new AssertionError("Wrong owner proof accepted");}
+                catch(IllegalStateException expected){}
+                try{NativePreRestoreRecovery.create(context,fixture,lease,owner,ownerPass,archivePass);throw new AssertionError("Open shift recovery accepted");}
+                catch(IllegalStateException expected){}
+            }
+            try(CatalogStore store=CatalogStore.checkoutFixture(context,fixture)){
+                store.closeFixtureShift(owner,shift,0);
+            }
+            try(DatabaseLifecycleLease lease=DatabaseLifecycleLease.open(path,true)){
+                recovery=NativePreRestoreRecovery.create(context,fixture,lease,owner,ownerPass,archivePass);
+                require(java.nio.file.Files.isRegularFile(recovery),"Recovery archive not durable");
+            }
+            try(CatalogStore store=CatalogStore.checkoutFixture(context,fixture)){
+                byte[] archive=java.nio.file.Files.readAllBytes(recovery);
+                try{
+                    NativeBackupSnapshot.Review review=store.reviewEncryptedFixtureBackup(owner,archive,archivePass);
+                    require(review.schema==22&&review.openShifts==0&&review.pendingOperations==0,"Recovery contents invalid");
+                    require(trainingCount(store,"SELECT COUNT(*) FROM cashier_sessions")>=2,"Recovery altered source sessions");
+                    android.database.sqlite.SQLiteDatabase live=store.getWritableDatabase();
+                    live.beginTransaction();
+                    try{
+                        NativeBackupSnapshot.reviewForRestore(live,context.getCacheDir(),archive,archivePass,owner);
+                        rejectStock(()->NativeBackupSnapshot.reviewForRestore(live,context.getCacheDir(),archive,archivePass,staff));
+                        live.setTransactionSuccessful();
+                    }finally{live.endTransaction();}
+                    store.createFixtureCashier(owner,"recovery-new-staff",staffPass);
+                    live.beginTransaction();
+                    try{
+                        rejectStock(()->NativeBackupSnapshot.reviewForRestore(live,context.getCacheDir(),archive,archivePass,owner));
+                        live.setTransactionSuccessful();
+                    }finally{live.endTransaction();}
+                    store.reviewEncryptedFixtureBackup(owner,archive,archivePass);
+                }finally{java.util.Arrays.fill(archive,(byte)0);}
+            }
+        }finally{
+            if(recovery!=null)java.nio.file.Files.deleteIfExists(recovery);
+            java.util.Arrays.fill(ownerPass,'\0');java.util.Arrays.fill(staffPass,'\0');java.util.Arrays.fill(archivePass,'\0');java.util.Arrays.fill(wrong,'\0');
+            context.deleteDatabase(filename);
+        }
+    }
+
+    private void verifyNativeRestoreCoordinator() throws java.io.IOException{
+        android.content.Context context=getTargetContext();String fixture=stockId(),filename="checkout-fixture-"+fixture+".db";
+        java.nio.file.Path live=context.getDatabasePath(filename).toPath(),recovery=null;
+        char[] ownerPass="Synthetic-Restore-Owner-01".toCharArray(),archivePass="Synthetic-Restore-Archive-01".toCharArray(),
+            recoveryPass="Synthetic-Restore-Recovery-01".toCharArray();
+        byte[] archive=null;String owner;String earlierId,laterId;
+        try{
+            try(CatalogStore store=CatalogStore.checkoutFixture(context,fixture)){
+                store.bootstrapDemoFixtureOwner("restore-owner",ownerPass);owner=store.signInFixture("restore-owner",ownerPass);
+                earlierId=store.createAuthorizedFixtureCatalog(owner,CatalogEntry.Kind.SERVICE,"Synthetic earlier","page","2.00").id;
+                archive=store.encryptedFixtureBackup(owner,archivePass);
+                laterId=store.createAuthorizedFixtureCatalog(owner,CatalogEntry.Kind.SERVICE,"Synthetic later","page","3.00").id;
+            }
+            recovery=NativeRestoreCoordinator.restoreFixture(context,fixture,owner,ownerPass,archive,archivePass,recoveryPass);
+            require(java.nio.file.Files.isRegularFile(recovery),"Encrypted recovery missing");
+            require(!NativeRestoreCoordinator.hasArtifacts(live),"Restore artifacts remain after acceptance");
+            try(CatalogStore store=CatalogStore.checkoutFixture(context,fixture)){
+                rejectStock(()->store.fixturePrincipal(owner));
+                String fresh=store.signInFixture("restore-owner",ownerPass);
+                require(fresh!=null,"Owner cannot sign in after restore");
+                require(store.get(earlierId)!=null,"Original catalog missing");
+                rejectStock(()->store.get(laterId));
+                byte[] recoveryBytes=java.nio.file.Files.readAllBytes(recovery);
+                try{store.reviewEncryptedFixtureBackup(fresh,recoveryBytes,recoveryPass);}
+                finally{java.util.Arrays.fill(recoveryBytes,(byte)0);}
+            }
+            // Simulate interruption after atomic replacement but before acceptance.
+            byte[] recoveryBytes=java.nio.file.Files.readAllBytes(recovery);
+            try(DatabaseLifecycleLease lease=DatabaseLifecycleLease.open(live,true);
+                BackupEnvelope.Decoded decoded=BackupEnvelope.open(recoveryBytes,22,recoveryPass)){
+                try(android.database.sqlite.SQLiteDatabase db=android.database.sqlite.SQLiteDatabase.openDatabase(live.toString(),null,android.database.sqlite.SQLiteDatabase.OPEN_READWRITE)){
+                    NativeRestoreCoordinator.checkpoint(db);
+                }
+                RestoreJournal journal=new RestoreJournal(live,lease);
+                journal.prepare(decoded.snapshot);journal.replace();
+            }finally{java.util.Arrays.fill(recoveryBytes,(byte)0);}
+            // A normal helper open must automatically roll back the interrupted replacement.
+            try(CatalogStore reopened=CatalogStore.checkoutFixture(context,fixture)){
+                require(reopened.get(earlierId)!=null,"Startup rollback lost original catalog");
+                require(!NativeRestoreCoordinator.hasArtifacts(live),"Startup rollback left artifacts");
+                rejectStock(()->reopened.get(laterId));
+            }
+        }finally{
+            if(archive!=null)java.util.Arrays.fill(archive,(byte)0);
+            if(recovery!=null)java.nio.file.Files.deleteIfExists(recovery);
+            java.util.Arrays.fill(ownerPass,'\0');java.util.Arrays.fill(archivePass,'\0');java.util.Arrays.fill(recoveryPass,'\0');
+            if(!NativeRestoreCoordinator.hasArtifacts(live))context.deleteDatabase(filename);
+        }
+    }
+
+    private void verifyNativeBackupSnapshot() throws java.io.IOException{
+        android.content.Context context=getTargetContext();String fixture=stockId(),filename="checkout-fixture-"+fixture+".db";
+        char[] pass="Synthetic-Backup-Owner-01".toCharArray(),backup="Synthetic-Archive-Password-01".toCharArray(),staffPass="Synthetic-Backup-Staff-01".toCharArray();
+        java.io.File decoded=java.io.File.createTempFile("synthetic-backup-",".db",context.getCacheDir());
+        try(CatalogStore store=CatalogStore.checkoutFixture(context,fixture)){
+            store.setWriteAheadLoggingEnabled(true);
+            store.bootstrapDemoFixtureOwner("backup-owner",pass);String owner=store.signInFixture("backup-owner",pass);
+            store.createFixtureCashier(owner,"backup-staff",staffPass);String staff=store.signInFixture("backup-staff",staffPass);
+            rejectStock(()->store.encryptedFixtureBackup(staff,backup));
+            CatalogEntry service=store.createAuthorizedFixtureCatalog(owner,CatalogEntry.Kind.SERVICE,"Synthetic backup service","page","5.00");
+            String shift=stockId();store.openFixtureShift(owner,shift,0);
+            CheckoutPlan.Proposal plan=store.prepareCheckout(stockId(),service.id,1,0,0,new CheckoutPlan.Inputs(1,1,1,null,null,null,CheckoutPlan.UsageBasis.NONE,500));
+            store.stageAuthorizedFixtureCheckout(owner,shift,plan);store.applyAuthorizedFixtureCheckout(owner,plan.requestId,plan.fingerprint());
+            CheckoutPlan.Proposal pending=store.prepareCheckout(stockId(),service.id,1,0,0,new CheckoutPlan.Inputs(1,1,1,null,null,null,CheckoutPlan.UsageBasis.NONE,500));
+            store.stageAuthorizedFixtureCheckout(owner,shift,pending);
+            byte[] archive=store.encryptedFixtureBackup(owner,backup);
+            java.io.ByteArrayOutputStream destination=new java.io.ByteArrayOutputStream();
+            BackupFileTransfer.write(destination,archive);
+            byte[] transferred=BackupFileTransfer.read(new java.io.ByteArrayInputStream(destination.toByteArray()));
+            require(java.util.Arrays.equals(archive,transferred),"encrypted archive transfer changed bytes");
+            java.util.Arrays.fill(transferred,(byte)0);
+            NativeBackupSnapshot.Review review=store.reviewEncryptedFixtureBackup(owner,archive,backup);
+            require(review.schema==22&&review.sales==1&&review.pendingSales==1&&review.openShifts==1,"backup review totals");
+            require(review.pendingOperations==1&&review.currentOpenShifts==1&&review.currentPendingOperations==1,"restore readiness blockers missing");
+            java.io.File residual=new java.io.File(context.getCacheDir(),"native-backup-123456789.db");
+            try(java.io.FileOutputStream out=new java.io.FileOutputStream(residual)){out.write(1);}
+            NativeBackupSnapshot.cleanup(context.getCacheDir());
+            require(!residual.exists(),"legacy interrupted staging not cleaned");
+            rejectStock(()->store.reviewEncryptedFixtureBackup(staff,archive,backup));
+            char[] wrong="Synthetic-Wrong-Archive-Password".toCharArray();
+            try{rejectStock(()->store.reviewEncryptedFixtureBackup(owner,archive,wrong));}finally{java.util.Arrays.fill(wrong,'\0');}
+            byte[] bad=archive.clone();bad[bad.length-1]^=1;
+            rejectStock(()->store.reviewEncryptedFixtureBackup(owner,bad,backup));
+            byte[] malformed=BackupEnvelope.seal(new byte[]{1,2,3},22,backup);
+            rejectStock(()->store.reviewEncryptedFixtureBackup(owner,malformed,backup));
+            require(store.expectedFixtureCash(owner,shift)==500,"backup changed source cash");
+            require(trainingCount(store,"SELECT COUNT(*) FROM cashier_sessions")>=2,"backup removed source sessions");
+            try(BackupEnvelope.Decoded opened=BackupEnvelope.open(archive,22,backup)){
+                require(opened.schema==22,"backup schema mismatch");
+                try(java.io.FileOutputStream out=new java.io.FileOutputStream(decoded)){out.write(opened.snapshot);}
+            }
+            try(android.database.sqlite.SQLiteDatabase candidate=android.database.sqlite.SQLiteDatabase.openDatabase(decoded.getPath(),null,android.database.sqlite.SQLiteDatabase.OPEN_READONLY)){
+                NativeBackupSnapshot.validate(candidate);
+                require(candidate.getVersion()==22,"snapshot version mismatch");
+                try(android.database.Cursor c=candidate.rawQuery("SELECT COUNT(*) FROM checkout_requests WHERE state='APPLIED' OR state='PENDING'",null)){
+                    require(c.moveToFirst()&&c.getLong(0)==2,"committed WAL sale or pending request missing");
+                }
+                try(android.database.Cursor c=candidate.rawQuery("SELECT expected_cash FROM cashier_drawer_current WHERE shift_id=?",new String[]{shift})){
+                    require(c.moveToFirst()&&c.getLong(0)==500,"backup cash mismatch");
+                }
+            }
+            // Synthetic predecessor snapshot: remove only the five objects added at schema 22.
+            try(android.database.sqlite.SQLiteDatabase candidate=android.database.sqlite.SQLiteDatabase.openDatabase(decoded.getPath(),null,android.database.sqlite.SQLiteDatabase.OPEN_READWRITE)){
+                candidate.execSQL("DROP VIEW production_quote_current");
+                candidate.execSQL("DROP TABLE production_quote_events");
+                candidate.setVersion(21);
+            }
+            byte[] predecessor=java.nio.file.Files.readAllBytes(decoded.toPath());
+            byte[] oldArchive=BackupEnvelope.seal(predecessor,21,backup);
+            byte[] mislabeled=BackupEnvelope.seal(predecessor,20,backup);
+            java.util.Arrays.fill(predecessor,(byte)0);
+            rejectStock(()->store.migrateEncryptedFixtureBackup(staff,oldArchive,backup));
+            rejectStock(()->store.migrateEncryptedFixtureBackup(owner,mislabeled,backup));
+            rejectStock(()->store.migrateEncryptedFixtureBackup(owner,archive,backup));
+            byte[] migrated=store.migrateEncryptedFixtureBackup(owner,oldArchive,backup);
+            try{
+                NativeBackupSnapshot.Review migratedReview=store.reviewEncryptedFixtureBackup(owner,migrated,backup);
+                require(migratedReview.schema==22&&migratedReview.sales==1&&migratedReview.pendingSales==1&&migratedReview.openShifts==1,"migration changed ledger totals");
+                require(store.expectedFixtureCash(owner,shift)==500,"migration changed live cash");
+                try(BackupEnvelope.Decoded old=BackupEnvelope.open(oldArchive,22,backup)){require(old.schema==21,"original archive changed");}
+                try(android.database.sqlite.SQLiteDatabase candidate=android.database.sqlite.SQLiteDatabase.openDatabase(decoded.getPath(),null,android.database.sqlite.SQLiteDatabase.OPEN_READWRITE)){
+                    candidate.execSQL("CREATE TABLE unexpected_legacy_object (id INTEGER)");
+                }
+                byte[] altered=java.nio.file.Files.readAllBytes(decoded.toPath());
+                byte[] wrongSchema=BackupEnvelope.seal(altered,21,backup);
+                java.util.Arrays.fill(altered,(byte)0);
+                try{rejectStock(()->store.migrateEncryptedFixtureBackup(owner,wrongSchema,backup));}
+                finally{java.util.Arrays.fill(wrongSchema,(byte)0);}
+            }finally{
+                java.util.Arrays.fill(migrated,(byte)0);java.util.Arrays.fill(oldArchive,(byte)0);java.util.Arrays.fill(mislabeled,(byte)0);
+            }
+            java.util.Arrays.fill(archive,(byte)0);
+        }finally{java.util.Arrays.fill(pass,'\0');java.util.Arrays.fill(backup,'\0');java.util.Arrays.fill(staffPass,'\0');android.database.sqlite.SQLiteDatabase.deleteDatabase(decoded);context.deleteDatabase(filename);}
     }
 
     private void verifyReceiptPdf() throws java.io.IOException{
@@ -2763,8 +3178,11 @@ public final class NativeQuoteSmoke extends Instrumentation {
     private static void require(boolean ok, String description) {
         if (!ok) throw new AssertionError(description);
     }
-    private void awaitText(Activity activity,String expected,String failure) {
-        long deadline=android.os.SystemClock.elapsedRealtime()+10000;
+    private void awaitText(Activity activity,String expected,String failure){
+        awaitText(activity,expected,failure,10000);
+    }
+    private void awaitText(Activity activity,String expected,String failure,long timeoutMs) {
+        long deadline=android.os.SystemClock.elapsedRealtime()+timeoutMs;
         java.util.concurrent.atomic.AtomicBoolean found=new java.util.concurrent.atomic.AtomicBoolean();
         do{
             waitForIdleSync();

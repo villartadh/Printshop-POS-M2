@@ -2,6 +2,8 @@ package ph.printshop.pos;
 
 import android.app.Activity;
 import android.content.SharedPreferences;
+import android.content.Intent;
+import android.widget.Toast;
 import android.graphics.Color;
 import android.os.Bundle;
 import android.os.Handler;
@@ -36,8 +38,20 @@ public final class CashierPreviewActivity extends Activity {
     private final Handler handler=new Handler(Looper.getMainLooper());
     private final Runnable expiry=this::lockAndReload;
     private CatalogStore store;
+    private String fixtureId;
     // Worker confined, never serialized, never placed in a View or preferences.
     private String workerToken;
+    private static final int BACKUP_EXPORT=7101,BACKUP_IMPORT=7102;
+    private android.net.Uri pendingBackupImport;
+    private ReviewedBackup reviewedBackup;
+    private static final class ReviewedBackup {
+        final NativeBackupSnapshot.Review review;final byte[] archive;
+        ReviewedBackup(NativeBackupSnapshot.Review review,byte[] archive){this.review=review;this.archive=archive;}
+        void clear(){Arrays.fill(archive,(byte)0);}
+    }
+    // Only authenticated ciphertext crosses the external document-picker lifecycle.
+    private byte[] pendingBackupExport;
+    private android.net.Uri migrationExportSource;
     private LinearLayout page;
     private TextView status;
     private ScrollView scroll;
@@ -61,7 +75,7 @@ public final class CashierPreviewActivity extends Activity {
                 if(!preferences.edit().putString(FIXTURE_KEY,id).commit())throw new IllegalStateException("Fixture identity not saved");
             }
             StockMath.validateRequestId(id);
-            store=CatalogStore.checkoutFixture(this,id);
+            fixtureId=id;store=CatalogStore.checkoutFixture(this,id);
         }catch(RuntimeException ex){
             screen("Training unavailable","The isolated fixture could not be opened. No replacement or reset was attempted.");
         }
@@ -72,7 +86,7 @@ public final class CashierPreviewActivity extends Activity {
         else screen("Training unavailable","The isolated fixture could not be opened. No replacement or reset was attempted.");
     }
     @Override protected void onStop(){
-        active=false;epoch++;busy=false;signedIn=false;handler.removeCallbacks(expiry);
+        active=false;epoch++;busy=false;signedIn=false;pendingBackupImport=null;clearReviewedBackup();handler.removeCallbacks(expiry);
         // Do not keep credentials, pending proposal or receipt Views visible while backgrounded.
         page.removeAllViews();
         if(store!=null)worker.execute(this::logoutWorker);
@@ -80,6 +94,7 @@ public final class CashierPreviewActivity extends Activity {
     }
     @Override protected void onDestroy(){
         handler.removeCallbacks(expiry);
+        clearBackupExport();pendingBackupImport=null;clearReviewedBackup();
         if(store!=null)worker.execute(()->{logoutWorker();store.close();});
         worker.shutdown();super.onDestroy();
     }
@@ -101,7 +116,7 @@ public final class CashierPreviewActivity extends Activity {
             try{value=task.run();}catch(RuntimeException ex){failed=ex;}
             final Object output=value;final RuntimeException failure=failed;
             runOnUiThread(()->{
-                if(!active||epoch!=currentEpoch)return;
+                if(!active||epoch!=currentEpoch){if(output instanceof byte[])Arrays.fill((byte[])output,(byte)0);if(output instanceof ReviewedBackup)((ReviewedBackup)output).clear();return;}
                 busy=false;for(View v:paused)v.setEnabled(true);status.setText("");
                 if(failure==null){result.accept(output);return;}
                 String message=failure.getMessage();
@@ -137,6 +152,13 @@ public final class CashierPreviewActivity extends Activity {
             case "Use up to three decimal places.":return message;
             case "Enter a printable reason (1–160 characters).":return message;
             case "Owner authorization required":return message;
+            case "Only native schema 21 can migrate":return "Only native schema 21 archives can be converted. Choose Validate for schema 22.";
+            case "Older native schema requires isolated migration":return "Older archive: select it again and use Convert native schema 21 backup if applicable.";
+            case "Backup encryption or authentication failed":return "Backup authentication failed. Select the archive again and check its passphrase.";
+            case "Invalid version 21 native schema":
+            case "Migrated schema differs from current app":
+            case "Unable to migrate native backup":
+            case "Backup file cannot be read":return message;
             case "Original receipt changed or amount is invalid; review again":
             case "Authorized original cash receipt unavailable":
             case "Invalid customer details":return message;
@@ -277,7 +299,7 @@ public final class CashierPreviewActivity extends Activity {
     }
     private void loadEntry(){
         signedIn=false;mode="entry";screen("Training cashier","Checking the isolated workspace");
-        submit(()->store.fixtureInitialized(),v->{if((Boolean)v)showLogin("");else showSetup();});
+        submit(()->{NativeBackupSnapshot.cleanup(getCacheDir());return store.fixtureInitialized();},v->{if((Boolean)v)showLogin("");else showSetup();});
     }
     private void showSetup(){
         signedIn=false;mode="setup";screen("Set up training owner","Create a synthetic-only login. Do not use your real shop credentials. Training paper and a training print service will be created.");
@@ -303,7 +325,7 @@ public final class CashierPreviewActivity extends Activity {
     }
     private void lockAndReload(){
         if(!active||store==null)return;
-        epoch++;busy=false;signedIn=false;handler.removeCallbacks(expiry);
+        epoch++;busy=false;signedIn=false;pendingBackupImport=null;clearReviewedBackup();handler.removeCallbacks(expiry);
         screen("Training locked","Signing out…");
         worker.execute(this::logoutWorker);loadEntry();
     }
@@ -328,6 +350,7 @@ public final class CashierPreviewActivity extends Activity {
         return new Dashboard(actor,shift,expected,pending,drawer,drawer!=null&&store.isFixtureRefund(token,drawer.id),drawer!=null&&store.isFixtureRecurring(token,drawer.id),shift==null?null:store.pendingAuthorizedFixtureCreditCheckout(token,shift.id),shift==null?null:store.pendingAuthorizedFixtureCollection(token,shift.id));
     }
     private void refreshDashboard(){
+        clearReviewedBackup();
         submit(this::dashboard,v->showDashboard((Dashboard)v));
     }
     private void showDashboard(Dashboard d){
@@ -364,7 +387,15 @@ public final class CashierPreviewActivity extends Activity {
         button("Training collection history",R.id.cashier_collection_history,()->showCollectionHistory(0));
         button("Training drawer history",R.id.cashier_drawer_history,()->showDrawerHistory(0));
         button("Change my training passphrase",R.id.cashier_change_pass,()->showCredentialChange(false));
+        if(d.actor.role!=CashierSecurity.Role.OWNER)pendingBackupImport=null;
         if(d.actor.role==CashierSecurity.Role.OWNER){
+            button("Review encrypted training backup",R.id.cashier_backup_import,this::showBackupImport);
+            if(pendingBackupImport!=null){
+                button("Validate selected backup",R.id.cashier_backup_validate,this::showBackupValidation);
+                button("Discard selected backup",0,()->{pendingBackupImport=null;refreshDashboard();});
+            }
+            button("Encrypted training backup",R.id.cashier_backup,this::showBackupExport);
+            button("Export retained recovery archives",R.id.cashier_recovery_list,()->showRecoveryArchives(0));
             button("Training sale refunds / voids",R.id.cashier_refund_receipts,()->showRefundReceipts(0));
             button("Refund / void history",R.id.cashier_refund_history,()->showRefundHistory(0));
             button("Training customers",R.id.cashier_customers,()->showCustomers(true,"",0));
@@ -379,6 +410,226 @@ public final class CashierPreviewActivity extends Activity {
             button("Reset training cashier passphrase",R.id.cashier_reset_pass,()->showCredentialChange(true));
         }
         button("Lock / sign out",R.id.cashier_lock,this::lockAndReload);
+    }
+    private void clearReviewedBackup(){
+        if(reviewedBackup!=null)reviewedBackup.clear();
+        reviewedBackup=null;
+    }
+    private void clearBackupExport(){
+        if(pendingBackupExport!=null)Arrays.fill(pendingBackupExport,(byte)0);
+        pendingBackupExport=null;migrationExportSource=null;
+    }
+    private void showRecoveryArchives(int offset){
+        mode="recovery-list";screen("Retained encrypted recovery archives","Owner-only training recovery copies, newest first. Export an authenticated copy without deleting the private original.");
+        submit(()->{
+            if(store.fixturePrincipal(session()).role!=CashierSecurity.Role.OWNER)throw new IllegalStateException("Owner authorization required");
+            try{return RecoveryArchive.list(RecoveryArchive.fixtureDirectory(getFilesDir().toPath(),fixtureId,false));}
+            catch(java.io.IOException ex){throw new IllegalStateException("Recovery archives unavailable",ex);}
+        },value->{
+            @SuppressWarnings("unchecked") List<RecoveryArchive.Entry> entries=(List<RecoveryArchive.Entry>)value;
+            if(entries.isEmpty())label("No retained recovery archives for this training fixture.");
+            for(int i=offset;i<Math.min(entries.size(),offset+8);i++){
+                RecoveryArchive.Entry entry=entries.get(i);
+                String when=new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm",java.util.Locale.getDefault()).format(new java.util.Date(entry.modified));
+                button("Export recovery "+when+" · "+entry.name.substring(9,17),i==offset?R.id.cashier_recovery_first:0,()->showRecoveryExport(entry));
+            }
+            if(offset>0)button("Previous recovery archives",0,()->showRecoveryArchives(Math.max(0,offset-8)));
+            if(offset+8<entries.size())button("More recovery archives",0,()->showRecoveryArchives(offset+8));
+            back();
+        });
+    }
+    private void showRecoveryExport(RecoveryArchive.Entry entry){
+        mode="recovery-export";screen("Export retained recovery archive","Enter the archive's independent recovery passphrase. The private original remains unchanged; only verified encrypted bytes are exported.");
+        EditText password=credentialField("Recovery archive passphrase",R.id.cashier_recovery_password);
+        button("Verify and export recovery",R.id.cashier_recovery_export,()->{
+            char[] secret=takePassword(password);
+            boolean queued=submit(()->{
+                byte[] archive=null;
+                try{
+                    String token=session();
+                    if(store.fixturePrincipal(token).role!=CashierSecurity.Role.OWNER)throw new IllegalStateException("Owner authorization required");
+                    archive=RecoveryArchive.read(RecoveryArchive.fixtureDirectory(getFilesDir().toPath(),fixtureId,false),entry.name);
+                    store.reviewEncryptedFixtureBackup(token,archive,secret);
+                    byte[] validated=archive;archive=null;return validated;
+                }catch(java.io.IOException ex){throw new IllegalStateException("Recovery archive unavailable",ex);}
+                finally{Arrays.fill(secret,'\0');if(archive!=null)Arrays.fill(archive,(byte)0);}
+            },v->launchBackupExport((byte[])v));
+            if(!queued)Arrays.fill(secret,'\0');
+        });
+        back();
+    }
+    private void showBackupExport(){
+        clearBackupExport();mode="backup-export";screen("Encrypted backup export","Training data only. Choose a separate backup passphrase and keep it safe. Losing it makes the archive unreadable.");
+        EditText password=credentialField("Backup passphrase (12+ characters)",R.id.cashier_backup_password);
+        EditText confirmation=credentialField("Repeat backup passphrase",R.id.cashier_backup_confirm);
+        button("Create encrypted backup",R.id.cashier_backup_create,()->{
+            char[] first=takePassword(password),second=takePassword(confirmation);
+            if(!Arrays.equals(first,second)){Arrays.fill(first,'\0');Arrays.fill(second,'\0');status.setText("Backup passphrases do not match.");return;}
+            Arrays.fill(second,'\0');
+            boolean queued=submit(()->{try{return store.encryptedFixtureBackup(session(),first);}finally{Arrays.fill(first,'\0');}},v->launchBackupExport((byte[])v));
+            if(!queued)Arrays.fill(first,'\0');
+        });
+        back();
+    }
+    private void launchBackupExport(byte[] archive){launchBackupExport(archive,null);}
+    private void launchBackupExport(byte[] archive,android.net.Uri source){
+        clearBackupExport();pendingBackupExport=archive;migrationExportSource=source;
+        Intent picker=new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("application/octet-stream");
+        picker.putExtra(Intent.EXTRA_TITLE,"printshop-training-"+UUID.randomUUID()+".psposbackup");
+        try{startActivityForResult(picker,BACKUP_EXPORT);}
+        catch(RuntimeException e){clearBackupExport();status.setText("Unable to open backup destination. No archive exported.");}
+    }
+    private void showBackupImport(){
+        clearReviewedBackup();pendingBackupImport=null;mode="backup-import";
+        screen("Review encrypted backup","Training only. Select an encrypted archive. Sign in again as owner before reading it. Review never replaces the current database.");
+        button("Choose backup file",R.id.cashier_backup_choose,()->{
+            Intent picker=new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("application/octet-stream");
+            try{startActivityForResult(picker,BACKUP_IMPORT);}
+            catch(RuntimeException e){status.setText("Unable to open backup source.");}
+        });
+        back();
+    }
+    private void showBackupValidation(){
+        if(pendingBackupImport==null){refreshDashboard();return;}
+        mode="backup-validation";screen("Validate selected backup","Enter the separate archive passphrase. Validate current archives or convert an older native schema 21 archive to a new encrypted file. No data will be restored or changed.");
+        EditText password=credentialField("Backup passphrase",R.id.cashier_backup_password);
+        button("Validate read-only backup",R.id.cashier_backup_review,()->{
+            android.net.Uri source=pendingBackupImport;
+            if(source==null){refreshDashboard();return;}
+            char[] secret=takePassword(password);pendingBackupImport=null;
+            boolean queued=submit(()->{
+                byte[] archive=null;
+                try{
+                    String token=session();
+                    if(store.fixturePrincipal(token).role!=CashierSecurity.Role.OWNER)throw new IllegalStateException("Owner authorization required");
+                    try(java.io.InputStream in=getContentResolver().openInputStream(source)){archive=BackupFileTransfer.read(in);}
+                    catch(java.io.IOException e){throw new IllegalArgumentException("Backup file cannot be read",e);}
+                    NativeBackupSnapshot.Review review=store.reviewEncryptedFixtureBackup(token,archive,secret);
+                    ReviewedBackup reviewed=new ReviewedBackup(review,archive);
+                    archive=null;return reviewed;
+                }finally{Arrays.fill(secret,'\0');if(archive!=null)Arrays.fill(archive,(byte)0);}
+            },v->showBackupReview((ReviewedBackup)v));
+            if(!queued)Arrays.fill(secret,'\0');
+        });
+        button("Convert native schema 21 backup",R.id.cashier_backup_migrate,()->{
+            android.net.Uri source=pendingBackupImport;
+            if(source==null){refreshDashboard();return;}
+            char[] secret=takePassword(password);pendingBackupImport=null;
+            boolean queued=submit(()->{
+                byte[] archive=null,migrated=null;
+                try{
+                    String token=session();
+                    if(store.fixturePrincipal(token).role!=CashierSecurity.Role.OWNER)throw new IllegalStateException("Owner authorization required");
+                    try(java.io.InputStream in=getContentResolver().openInputStream(source)){archive=BackupFileTransfer.read(in);}
+                    catch(java.io.IOException e){throw new IllegalArgumentException("Backup file cannot be read",e);}
+                    migrated=store.migrateEncryptedFixtureBackup(token,archive,secret);
+                    byte[] output=migrated;migrated=null;return output;
+                }finally{
+                    Arrays.fill(secret,'\0');
+                    if(archive!=null)Arrays.fill(archive,(byte)0);
+                    if(migrated!=null)Arrays.fill(migrated,(byte)0);
+                }
+            },v->{
+                mode="backup-migrated";
+                screen("Older backup converted","The new schema 22 archive uses the same archive passphrase. Save it as a new file, then import and review it normally. Current training data remains unchanged.");
+                back();launchBackupExport((byte[])v,source);
+            });
+            if(!queued)Arrays.fill(secret,'\0');
+        });
+        button("Discard selected backup",R.id.cashier_back,()->{pendingBackupImport=null;refreshDashboard();});
+    }
+    private void showBackupReview(ReviewedBackup reviewed){
+        clearReviewedBackup();reviewedBackup=reviewed;
+        NativeBackupSnapshot.Review review=reviewed.review;
+        mode="backup-reviewed";screen("Backup validated","Read-only candidate passed integrity checks. The current training database was not changed.");
+        label("Schema version: "+review.schema);
+        label("Recorded cash sales: "+review.sales);
+        label("Pending sales requests: "+review.pendingSales);
+        label("Open shifts: "+review.openShifts);
+        label("Credit sources: "+review.creditSources);
+        label("Pending archive operations: "+review.pendingOperations);
+        label("Current open shifts: "+review.currentOpenShifts);
+        label("Current pending operations: "+review.currentPendingOperations);
+        if(review.openShifts+review.pendingOperations+review.currentOpenShifts+review.currentPendingOperations>0){
+            label("Restore readiness blocked: resolve shifts and pending operations.");
+            clearReviewedBackup();
+        }else button("Prepare training restore",R.id.cashier_restore_prepare,this::showRestoreConfirmation);
+        back();
+    }
+    private void showRestoreConfirmation(){
+        if(reviewedBackup==null){refreshDashboard();return;}
+        mode="restore-confirm";screen("Confirm training database restoration","Training only. The selected historical database will replace current training records. A separate encrypted recovery copy is kept on this device. All sessions will be invalidated. Keep the recovery passphrase safe.");
+        EditText owner=credentialField("Current owner synthetic passphrase",R.id.cashier_restore_owner_password);
+        EditText source=credentialField("Selected archive passphrase",R.id.cashier_restore_source_password);
+        EditText recovery=credentialField("Recovery archive passphrase (12+ characters)",R.id.cashier_restore_recovery_password);
+        EditText repeat=credentialField("Repeat recovery archive passphrase",R.id.cashier_restore_recovery_repeat);
+        CheckBox confirm=new CheckBox(this);confirm.setId(R.id.cashier_restore_consent);confirm.setSaveEnabled(false);
+        confirm.setText("I understand this replaces current synthetic training records and requires fresh sign-in.");page.addView(confirm);
+        button("Restore reviewed training backup",R.id.cashier_restore_execute,()->{
+            if(!confirm.isChecked()){status.setText("Confirm the training data replacement first.");return;}
+            if(reviewedBackup==null){refreshDashboard();return;}
+            char[] current=takePassword(owner),archivePass=takePassword(source),recoveryPass=takePassword(recovery),again=takePassword(repeat);
+            try{
+                CashierSecurity.validatePassword(current);CashierSecurity.validatePassword(archivePass);CashierSecurity.validatePassword(recoveryPass);
+                if(!Arrays.equals(recoveryPass,again)||Arrays.equals(current,recoveryPass))
+                    throw new IllegalArgumentException("Recovery passphrase must match and differ from owner passphrase");
+            }catch(IllegalArgumentException ex){
+                Arrays.fill(current,'\0');Arrays.fill(archivePass,'\0');Arrays.fill(recoveryPass,'\0');Arrays.fill(again,'\0');
+                status.setText("Enter valid matching recovery passphrases distinct from your owner passphrase.");return;
+            }
+            Arrays.fill(again,'\0');
+            ReviewedBackup selected=reviewedBackup;reviewedBackup=null;
+            handler.removeCallbacks(expiry);
+            boolean queued=submit(()->{
+                boolean success=false;
+                try{
+                    String token=session();
+                    // Single worker is the only owner of the helper; no queued mutation can race.
+                    store.close();
+                    NativeRestoreCoordinator.restoreFixture(this,fixtureId,token,current,selected.archive,archivePass,recoveryPass);
+                    success=true;
+                }catch(java.io.IOException|RuntimeException refused){/* Refuse and return to lock screen. */}
+                finally{
+                    selected.clear();Arrays.fill(current,'\0');Arrays.fill(archivePass,'\0');Arrays.fill(recoveryPass,'\0');
+                    logoutWorker();
+                    try{store.close();}catch(RuntimeException closeFailure){success=false;}
+                }
+                return success;
+            },v->showLogin((Boolean)v?"Training restore completed. Encrypted recovery retained. Sign in again.":"Training restore was not accepted. Sign in again to review current state."));
+            if(!queued){selected.clear();Arrays.fill(current,'\0');Arrays.fill(archivePass,'\0');Arrays.fill(recoveryPass,'\0');lockAndReload();}
+        });
+        back();
+    }
+    @Override protected void onActivityResult(int request,int result,Intent data){
+        super.onActivityResult(request,result,data);
+        if(request==BACKUP_IMPORT){
+            if(active)lockAndReload();
+            pendingBackupImport=result==RESULT_OK&&data!=null?data.getData():null;
+            return;
+        }
+        if(request!=BACKUP_EXPORT)return;
+        byte[] archive=pendingBackupExport;pendingBackupExport=null;
+        android.net.Uri migrationSource=migrationExportSource;migrationExportSource=null;
+        if(result!=RESULT_OK||data==null||data.getData()==null||archive==null){if(archive!=null)Arrays.fill(archive,(byte)0);return;}
+        android.net.Uri destination=data.getData();
+        if(destination.equals(migrationSource)){Arrays.fill(archive,(byte)0);Toast.makeText(this,"Choose a new file; original archive was not overwritten.",Toast.LENGTH_LONG).show();return;}
+        worker.execute(()->{
+            boolean saved=false;
+            try{
+                try(java.io.OutputStream out=getContentResolver().openOutputStream(destination,"w")){
+                    BackupFileTransfer.write(out,archive);
+                }
+                // Do not claim success until the provider has closed the write and a
+                // separate read returns exactly the authenticated ciphertext.
+                try(java.io.InputStream in=getContentResolver().openInputStream(destination)){
+                    BackupFileTransfer.verify(in,archive);
+                }
+                saved=true;
+            }catch(java.io.IOException|RuntimeException e){saved=false;}
+            finally{Arrays.fill(archive,(byte)0);}
+            final boolean success=saved;
+            runOnUiThread(()->Toast.makeText(this,success?"Encrypted training backup exported and verified.":"Backup export could not be verified. Keep the original and discard the unverified copy.",Toast.LENGTH_LONG).show());
+        });
     }
     private static String drawerLabel(ShiftMath.DrawerKind kind){
         switch(kind){case EXPENSE:return "Expense";case CASH_IN:return "Cash in";case CASH_OUT:return "Cash out";default:throw new IllegalArgumentException("Select a drawer activity");}
