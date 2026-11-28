@@ -44,3 +44,6 @@ A separate fixed-code Python subprocess obtains numeric system resolver results 
 
 ## Combined delivery budget (synthetic)
 The isolated orchestration helper derives the DNS and pinned HTTPS budgets from one monotonic deadline and rejects expired or late success. No caller-supplied addresses or cached observations are admitted by this helper. The transport also refuses truncated Content-Length responses; tests accept explicit length rejection or TLS read failure, neither can count as delivery. Tests cover deadline accounting and fail-closed paths, while the existing real synthetic TLS and child-process tests cover the component behavior. Not wired to any live subscription or external callback.
+
+## Durable subscription metadata (synthetic SQLite)
+The isolated store records principal-scoped identities, callback/event metadata and opaque secret references (not signing secrets), with idempotent creation, transactional generation checks, durable restart and terminal revocation. It records a trusted caller's verification observation; it does not authenticate that caller, perform the challenge or authorize delivery. Temporary test databases only. Production deployment requires an authenticated lifecycle, secure secret storage, delivery/revocation fencing and replay-safe events. No live subscription is created.
