@@ -26,7 +26,32 @@ db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
 export function initDatabase() {
+  const schemaVersion=Number(db.pragma('user_version',{simple:true}));
+  if(schemaVersion!==0&&schemaVersion!==1&&schemaVersion!==2)throw new Error('Unsupported Printshop POS database schema version: '+schemaVersion);
+  if(schemaVersion>=1){
+    const currentTables=["transaction_request_identities","inventory_mutation_results","applied_mutations","users","sessions","app_settings","categories","services","supply_categories","inventory_items","stock_movements","customers","transactions","order_conversions","print_jobs","expenses","cashier_shifts","transaction_reversals","drawer_movement_requests","balance_collection_requests","balance_collections","audit_logs","inventory_alert_epochs","inventory_alert_reads"];
+const criticalColumns={"transactions":["id","client_mutation_id","receipt_snapshot_json","payments_json","balance_due"],"inventory_items":["id","reserved_quantity","archived_at","archive_reason","minimum_threshold"],"stock_movements":["id","inventory_item_id","purchase_unit_cost","quantity_before","quantity_delta"],"transaction_request_identities":["mutation_id","actor_id","transaction_id","request_digest"],"balance_collection_requests":["mutation_id","actor_id","customer_id","amount","outstanding_after"],"drawer_movement_requests":["mutation_id","actor_id","shift_id","movement_type","amount","reason","movement_id","expected_after"],"inventory_mutation_results":["id","actor_id","request_json","result_json"],"balance_collections":["id","transaction_id","customer_id","shift_id","amount"],"inventory_alert_epochs":["item_id","epoch"],"inventory_alert_reads":["user_id","item_id","epoch"]};
+const requiredTriggers=['inventory_alert_insert','inventory_alert_transition'];
+    const tables=new Set((db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as {name:string}[]).map(r=>r.name));
+    if(schemaVersion===2){
+      currentTables.push('monetary_request_cancellations');
+      Object.assign(criticalColumns,{monetary_request_cancellations:['id','kind','actor_id','mutation_id','reason','created_at'],expenses:['id','client_mutation_id','request_digest','actor_id','voided_at','voided_by','void_reason']});
+    }
+    if(currentTables.some(t=>!tables.has(t)))throw new Error('Current database schema incomplete. Restore a verified backup; do not recreate missing tables.');
+    for(const [table,columns] of Object.entries(criticalColumns)){
+      const found=new Set((db.prepare('PRAGMA table_info('+table+')').all() as {name:string}[]).map(r=>r.name));
+      if(columns.some(c=>!found.has(c)))throw new Error('Current database schema missing required columns: '+table);
+    }
+    const triggers=new Set((db.prepare("SELECT name FROM sqlite_master WHERE type='trigger'").all() as {name:string}[]).map(r=>r.name));
+    if(requiredTriggers.some(t=>!triggers.has(t)))throw new Error('Current database schema missing required inventory alert triggers.');
+  }
   db.exec(`
+    CREATE TABLE IF NOT EXISTS transaction_request_identities (
+      mutation_id TEXT PRIMARY KEY,
+      actor_id TEXT NOT NULL,
+      transaction_id TEXT NOT NULL,
+      request_digest TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS inventory_mutation_results (
       id TEXT PRIMARY KEY, actor_id TEXT NOT NULL, request_json TEXT NOT NULL, result_json TEXT NOT NULL
     );
@@ -262,6 +287,20 @@ export function initDatabase() {
       actor_id TEXT NOT NULL, shift_id TEXT, cash_amount REAL NOT NULL,
       electronic_amount REAL NOT NULL, cancelled_receivable REAL NOT NULL, created_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS drawer_movement_requests (
+      mutation_id TEXT PRIMARY KEY, actor_id TEXT NOT NULL, shift_id TEXT NOT NULL,
+      movement_type TEXT NOT NULL, amount REAL NOT NULL, reason TEXT NOT NULL,
+      movement_id TEXT NOT NULL, expected_after REAL NOT NULL, created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS balance_collection_requests (
+      mutation_id TEXT PRIMARY KEY, actor_id TEXT NOT NULL, customer_id TEXT NOT NULL,
+      amount REAL NOT NULL, outstanding_after REAL NOT NULL, created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS monetary_request_cancellations (
+      id TEXT PRIMARY KEY, kind TEXT NOT NULL, actor_id TEXT NOT NULL,
+      mutation_id TEXT NOT NULL, reason TEXT NOT NULL, created_at TEXT NOT NULL,
+      UNIQUE(kind, actor_id, mutation_id)
+    );
     CREATE TABLE IF NOT EXISTS balance_collections (
       id TEXT PRIMARY KEY, transaction_id TEXT NOT NULL, customer_id TEXT NOT NULL,
       shift_id TEXT NOT NULL, amount REAL NOT NULL, actor_id TEXT NOT NULL, created_at TEXT NOT NULL
@@ -286,9 +325,20 @@ export function initDatabase() {
     }
   };
 
+  // Additive migration: preserve all existing expense rows, including legacy backups.
+  ensureColumn('expenses', 'client_mutation_id', 'TEXT');
+  ensureColumn('expenses', 'request_digest', 'TEXT');
+  ensureColumn('expenses', 'actor_id', 'TEXT');
+  ensureColumn('expenses', 'voided_at', 'TEXT');
+  ensureColumn('expenses', 'voided_by', "TEXT NOT NULL DEFAULT ''");
+  ensureColumn('expenses', 'void_reason', "TEXT NOT NULL DEFAULT ''");
+  ensureColumn('transactions', 'receipt_snapshot_json', 'TEXT');
   ensureColumn('inventory_items', 'barcode', "TEXT NOT NULL DEFAULT ''");
   ensureColumn('inventory_items', 'category_id', "TEXT NOT NULL DEFAULT ''");
   ensureColumn('inventory_items', 'reserved_quantity', 'REAL NOT NULL DEFAULT 0');
+  ensureColumn('inventory_items', 'archived_at', 'TEXT');
+  ensureColumn('inventory_items', 'archive_reason', "TEXT NOT NULL DEFAULT ''");
+  ensureColumn('inventory_items', 'minimum_threshold', 'REAL NOT NULL DEFAULT 0');
   ensureColumn('inventory_items', 'reorder_quantity', 'REAL NOT NULL DEFAULT 0');
   ensureColumn('inventory_items', 'supplier_contact', "TEXT NOT NULL DEFAULT ''");
   ensureColumn('inventory_items', 'supplier_sku', "TEXT NOT NULL DEFAULT ''");
@@ -298,20 +348,48 @@ export function initDatabase() {
   ensureColumn('inventory_items', 'created_at', "TEXT NOT NULL DEFAULT ''");
 
   ensureColumn('stock_movements', 'quantity_before', 'REAL NOT NULL DEFAULT 0');
+  ensureColumn('stock_movements', 'purchase_unit_cost', 'REAL');
   ensureColumn('stock_movements', 'unit_cost_at_movement', 'REAL NOT NULL DEFAULT 0');
   ensureColumn('stock_movements', 'reference_type', "TEXT NOT NULL DEFAULT 'manual'");
   ensureColumn('stock_movements', 'performed_by_id', "TEXT NOT NULL DEFAULT ''");
   ensureColumn('stock_movements', 'occurred_at', "TEXT NOT NULL DEFAULT ''");
 
   db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_expense_mutation ON expenses(client_mutation_id) WHERE client_mutation_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_sessions_user_expiry ON sessions(user_id, expires_at);
     CREATE INDEX IF NOT EXISTS idx_transactions_created ON transactions(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_transactions_customer ON transactions(customer_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_jobs_transaction ON print_jobs(transaction_id);
     CREATE INDEX IF NOT EXISTS idx_jobs_created ON print_jobs(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_stock_created ON stock_movements(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_stock_item_created ON stock_movements(inventory_item_id, created_at DESC, id DESC);
     CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_shifts_cashier_status ON cashier_shifts(cashier_id, status);
+  `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS inventory_alert_epochs (
+      item_id TEXT PRIMARY KEY REFERENCES inventory_items(id) ON DELETE CASCADE,
+      epoch TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS inventory_alert_reads (
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      item_id TEXT NOT NULL REFERENCES inventory_items(id) ON DELETE CASCADE,
+      epoch TEXT NOT NULL,
+      PRIMARY KEY(user_id,item_id)
+    );
+    INSERT OR IGNORE INTO inventory_alert_epochs(item_id,epoch)
+      SELECT id,lower(hex(randomblob(16))) FROM inventory_items;
+    CREATE TRIGGER IF NOT EXISTS inventory_alert_insert AFTER INSERT ON inventory_items
+    BEGIN
+      INSERT OR REPLACE INTO inventory_alert_epochs VALUES(NEW.id,lower(hex(randomblob(16))));
+    END;
+    CREATE TRIGGER IF NOT EXISTS inventory_alert_transition AFTER UPDATE ON inventory_items
+    WHEN (CASE WHEN OLD.archived_at IS NOT NULL THEN 'none' WHEN ROUND(MAX(0,OLD.quantity_on_hand-MAX(0,OLD.reserved_quantity)),2)<=0 THEN 'out' WHEN ROUND(MAX(0,OLD.quantity_on_hand-MAX(0,OLD.reserved_quantity)),2)>OLD.reorder_level THEN 'none' WHEN OLD.minimum_threshold>0 AND ROUND(MAX(0,OLD.quantity_on_hand-MAX(0,OLD.reserved_quantity)),2)<OLD.minimum_threshold THEN 'critical' ELSE 'reorder' END) <> (CASE WHEN NEW.archived_at IS NOT NULL THEN 'none' WHEN ROUND(MAX(0,NEW.quantity_on_hand-MAX(0,NEW.reserved_quantity)),2)<=0 THEN 'out' WHEN ROUND(MAX(0,NEW.quantity_on_hand-MAX(0,NEW.reserved_quantity)),2)>NEW.reorder_level THEN 'none' WHEN NEW.minimum_threshold>0 AND ROUND(MAX(0,NEW.quantity_on_hand-MAX(0,NEW.reserved_quantity)),2)<NEW.minimum_threshold THEN 'critical' ELSE 'reorder' END)
+      OR OLD.reorder_level <> NEW.reorder_level OR OLD.minimum_threshold <> NEW.minimum_threshold
+    BEGIN
+      INSERT OR REPLACE INTO inventory_alert_epochs VALUES(NEW.id,lower(hex(randomblob(16))));
+      DELETE FROM inventory_alert_reads WHERE item_id=NEW.id;
+    END;
   `);
   // Ensure default supply categories exist
   const supplyCatCount = (
@@ -344,6 +422,8 @@ export function initDatabase() {
   if (serviceCount === 0 && process.env.SEED_DEMO === 'true') {
     seedDemoDataset();
   }
+  // Stamp only after all additive migrations and initialization finish successfully.
+  db.pragma('user_version = 2');
 }
 
 export function seedDemoDataset() {

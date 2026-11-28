@@ -40,8 +40,16 @@ export function uninstallDistribution(source, home) {
   verifyRelease(target,installed);
   if (installed.version!==manifest.version) throw Error('Installed version mismatch.');
   const removed = path.join(home,'releases','.removed-'+randomUUID());
-  fs.renameSync(target,removed);
-  fs.rmSync(removed,{recursive:true});
+  // Windows can briefly retain executable or directory handles after exit.
+  // Keep the existing exclusive launcher guard held throughout this bounded retry.
+  for (let attempt=0;;attempt++) {
+    try { fs.renameSync(target,removed); break; }
+    catch (error) {
+      if (process.platform!=='win32' || !['EPERM','EBUSY','EACCES'].includes(error.code) || attempt>=9) throw error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,250*(attempt+1));
+    }
+  }
+  fs.rmSync(removed,{recursive:true,maxRetries:8,retryDelay:250});
 }
 
 export async function run(home) {

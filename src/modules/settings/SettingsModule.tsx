@@ -19,6 +19,7 @@ import type {
   UserRole,
 } from '../../shared/types.ts';
 import { Button, Card, Input, Select, StatusIndicator } from '../../components/ui/Primitives.tsx';
+import { validateSettings } from '../../shared/settingsValidation.ts';
 import { Modal } from '../../components/ui/Overlays.tsx';
 
 const MODULE_LABELS: Record<ModuleId, string> = {
@@ -46,7 +47,6 @@ export const SettingsModule: React.FC = () => {
     saveSettings,
     setThemeMode,
     setDensity,
-    resetSettingsToDefaults,
     syncNow,
     seedDemo,
     clearDemo,
@@ -61,6 +61,10 @@ export const SettingsModule: React.FC = () => {
     'branding' | 'appearance' | 'pos_tax' | 'users' | 'sync_data'
   >('branding');
   const [draft, setDraft] = useState<AppSettings>(settings);
+  const [base, setBase] = useState<AppSettings>(settings);
+  const [saving, setSaving] = useState(false);
+  const [conflict, setConflict] = useState(false);
+  const dirty = JSON.stringify(draft) !== JSON.stringify(base);
   const [sessionsList, setSessionsList] = useState<AuthorizedSessionRecord[]>([]);
 
   // New user modal
@@ -73,8 +77,13 @@ export const SettingsModule: React.FC = () => {
   const [newPin, setNewPin] = useState('');
 
   useEffect(() => {
-    setDraft(settings);
-  }, [settings]);
+    if (saving) return;
+    if (!dirty) {
+      if (base !== settings) { setDraft(settings); setBase(settings); }
+    } else if (settings.updatedAt !== base.updatedAt) {
+      setConflict(true);
+    }
+  }, [settings, base, dirty, saving]);
 
   const loadSessions = async () => {
     try {
@@ -94,7 +103,18 @@ export const SettingsModule: React.FC = () => {
       notify('Only managers or administrators can save store settings.', 'error');
       return;
     }
-    await saveSettings(draft);
+    if (saving || conflict) return;
+    setSaving(true);
+    try {
+      await saveSettings(draft);
+      setBase(draft);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to save settings.';
+      if (message.includes('Settings changed on another terminal')) setConflict(true);
+      notify(message, 'error');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -145,10 +165,10 @@ export const SettingsModule: React.FC = () => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `printshop-pos-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `printshop-pos-business-export-${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     URL.revokeObjectURL(url);
-    notify('Backup exported.', 'success');
+    notify('Business data exported. Use BACKUP.cmd for a restorable database.', 'success');
   };
 
   const handleExportConfig = () => {
@@ -168,10 +188,10 @@ export const SettingsModule: React.FC = () => {
     reader.onload = () => {
       try {
         const parsed = JSON.parse(String(reader.result || '{}')) as AppSettings;
-        if (parsed.branding && parsed.tokens) {
-          setDraft(parsed);
-          notify('Configuration loaded into editor. Click Save Settings to apply.', 'info');
-        }
+        const invalid = validateSettings(parsed);
+        if (invalid) throw new Error(invalid);
+        setDraft(prev => ({ ...parsed, updatedAt: prev.updatedAt }));
+        notify('Configuration loaded into editor. Review before saving.', 'info');
       } catch {
         notify('Invalid configuration JSON file.', 'error');
       }
@@ -194,15 +214,15 @@ export const SettingsModule: React.FC = () => {
               variant="outline"
               size="sm"
               onClick={() => {
-                resetSettingsToDefaults();
-                notify('Default settings restored locally. Click Save Changes to sync.', 'info');
+                setDraft(prev => ({ ...prev, themeMode: 'light', density: 'comfortable' }));
+                notify('Display defaults prepared. Business settings preserved. Click Save Changes to apply.', 'info');
               }}
             >
               <RotateCcw className="w-3.5 h-3.5" />
-              Reset Defaults
+              Reset Display Defaults
             </Button>
-            <Button size="sm" onClick={() => void handleSave()}>
-              Save Changes
+            <Button size="sm" disabled={saving || conflict} onClick={() => void handleSave()}>
+              {saving ? 'Saving…' : 'Save Changes'}
             </Button>
           </div>
         ) : (
@@ -218,6 +238,29 @@ export const SettingsModule: React.FC = () => {
           </Button>
         )}
       </div>
+
+      {canConfigure && conflict && (
+        <div role="alert" className="rounded-lg border border-amber-500 p-3 space-y-2 text-sm">
+          <p className="font-semibold">Configuration conflict</p>
+          <p>Another terminal has changed the configuration. Your unsaved draft is retained. Export it before reloading if you need to keep a copy.</p>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" size="sm" onClick={handleExportConfig}>Export unsaved draft</Button>
+            <Button variant="outline" size="sm" onClick={async () => {
+              try {
+                const fresh = await apiRequest<{settings: AppSettings}>('/api/bootstrap');
+                const invalid = validateSettings(fresh.settings);
+                if (invalid) throw new Error(invalid);
+                await refreshBootstrap();
+                setDraft(fresh.settings);
+                setBase(fresh.settings);
+                setConflict(false);
+              } catch (error) {
+                notify(error instanceof Error ? error.message : 'Reload failed.', 'error');
+              }
+            }}>Discard draft and reload server settings</Button>
+          </div>
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="flex flex-wrap items-center gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-lg">
@@ -860,7 +903,7 @@ export const SettingsModule: React.FC = () => {
           <Card className="space-y-3">
             <h2 className="text-sm font-semibold">Demonstration Data & Database Backup</h2>
             <p className="text-xs text-[var(--pos-text-muted)]">
-              Sample services, customers, and starter transactions are isolated as demonstration records and can be cleared anytime before production use.
+              Sample records are isolated. JSON exports are private review records, not backups. They exclude credentials, sessions, internal retry identities and notification acknowledgments, but contain customer and financial data. Use BACKUP.cmd for a complete, restorable SQLite database; keep exports and backups private.
             </p>
             <div className="flex flex-wrap gap-2">
               {canConfigure && (
@@ -884,7 +927,7 @@ export const SettingsModule: React.FC = () => {
               {isAdmin && (
                 <Button variant="secondary" size="sm" onClick={() => void handleExportBackup()}>
                   <Download className="w-3.5 h-3.5" />
-                  Export Business Data JSON (partial)
+                  Export Business Data JSON (not restorable)
                 </Button>
               )}
             </div>

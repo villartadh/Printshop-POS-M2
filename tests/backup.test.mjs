@@ -50,3 +50,17 @@ test('restore preserves the prior database and activates only a verified replace
  assert.deepEqual(read(backup),['first']);
  assert.ok(!fs.readdirSync(dir).some(name=>name.startsWith('.restore-')));
 });
+
+test('versioned incomplete and unknown future database schemas are rejected',()=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'pos-versioned-'));
+ try{
+  const file=path.join(dir,'incomplete.db'),db=new DatabaseSync(file);
+  try{
+   for(const table of ['users','transactions','inventory_items','stock_movements','app_settings','cashier_shifts','customers','print_jobs'])db.exec('CREATE TABLE '+table+'(id TEXT PRIMARY KEY)');
+   db.exec('PRAGMA user_version=1');
+  }finally{db.close();}
+  assert.throws(()=>verify(file),/missing required tables/);
+  const newer=new DatabaseSync(file);try{newer.exec('PRAGMA user_version=3');}finally{newer.close();}
+  assert.throws(()=>verify(file),/Unsupported/);
+ }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});

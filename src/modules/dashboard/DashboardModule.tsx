@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ArrowRight,
   ChevronDown,
@@ -9,13 +9,17 @@ import {
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext.tsx';
 import { formatCurrency } from '../../shared/pricingEngine.ts';
-import type { Transaction } from '../../shared/types.ts';
+import { apiRequest } from '../../services/apiClient.ts';
+import type { ExpenseRecord, Transaction } from '../../shared/types.ts';
 import { Button, Card, StatusIndicator } from '../../components/ui/Primitives.tsx';
 import { BreakdownBarList, SalesTrendChart } from '../../components/ui/Charts.tsx';
 import { InventorySupplierChart } from '../../components/dashboard/InventorySupplierChart.tsx';
 import { DataTable } from '../../components/ui/DataTable.tsx';
 import { Modal } from '../../components/ui/Overlays.tsx';
 import { ReceiptModal } from '../receipts/ReceiptModal.tsx';
+
+const businessDate = (date=new Date()) => new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Manila',year:'numeric',month:'2-digit',day:'2-digit'}).format(date);
+type DashboardReport = {transactions:Transaction[];expenses:ExpenseRecord[]};
 
 export const DashboardModule: React.FC = () => {
   const {
@@ -39,26 +43,38 @@ export const DashboardModule: React.FC = () => {
     [settings.dashboardWidgets],
   );
 
+  const [report,setReport]=useState<DashboardReport|null>(null);
+  const [reportError,setReportError]=useState('');
+  const [retry,setRetry]=useState(0);
+  const today=businessDate();
+  const monthStart=businessDate(new Date(Date.now()-29*86400000));
+  useEffect(()=>{
+    let active=true;
+    setReport(null);setReportError('');
+    apiRequest<DashboardReport>('/api/reports/finance?'+new URLSearchParams({from:monthStart,to:today}))
+      .then(data=>{if(active)setReport(data);})
+      .catch(e=>{if(active)setReportError(e instanceof Error?e.message:'Unable to retrieve financial data.');});
+    return ()=>{active=false;};
+  },[today,monthStart,transactions,expenses,retry]);
+
   const validSales = useMemo(
     () =>
-      transactions.filter(
+      (report?.transactions ?? []).filter(
         (t) => t.type === 'sale' && t.paymentStatus !== 'voided' && t.paymentStatus !== 'refunded',
       ),
-    [transactions],
+    [report],
   );
 
   const metrics = useMemo(() => {
-    const now = Date.now();
-    const startOfToday = new Date();
-    startOfToday.setHours(0, 0, 0, 0);
-    const todayMs = startOfToday.getTime();
-    const weekMs = now - 7 * 86400000;
-    const monthMs = now - 30 * 86400000;
+    const todayMs = Date.parse(today+'T00:00:00+08:00');
+    const weekMs = todayMs - 6 * 86400000;
+    const monthMs = todayMs - 29 * 86400000;
 
     let todaySales = 0;
     let weeklySales = 0;
     let monthlySales = 0;
     let totalCost = 0;
+    let selectedTax = 0;
 
     const serviceMap = new Map<string, { label: string; value: number; count: number }>();
     const paymentMap = new Map<string, number>();
@@ -73,6 +89,7 @@ export const DashboardModule: React.FC = () => {
         range === 'today' ? ts >= todayMs : range === 'week' ? ts >= weekMs : ts >= monthMs;
 
       if (inSelectedRange) {
+        selectedTax += t.taxAmount;
         for (const item of t.items) {
           totalCost += item.costTotal || 0;
           const prev = serviceMap.get(item.serviceName) || {
@@ -85,15 +102,18 @@ export const DashboardModule: React.FC = () => {
           serviceMap.set(item.serviceName, prev);
         }
         for (const p of t.payments) {
-          paymentMap.set(p.methodName, (paymentMap.get(p.methodName) || 0) + p.amount);
+          if(p.methodType !== 'credit_balance') paymentMap.set(p.methodName, (paymentMap.get(p.methodName) || 0) + p.amount);
         }
+        const cash=t.payments.find(p=>p.methodType==='cash');
+        if(cash) paymentMap.set(cash.methodName,(paymentMap.get(cash.methodName)||0)-t.changeAmount);
       }
     }
 
-    const totalExpenses = expenses.reduce((s, e) => s + e.amount, 0);
+    const selectedStart=businessDate(new Date(range==='today'?todayMs:range==='week'?weekMs:monthMs));
+    const totalExpenses = (report?.expenses??[]).filter(e=>e.expenseDate>=selectedStart&&e.expenseDate<=today).reduce((s,e)=>s+e.amount,0);
     const activeSalesTotal =
       range === 'today' ? todaySales : range === 'week' ? weeklySales : monthlySales;
-    const grossProfit = activeSalesTotal - totalCost;
+    const grossProfit = activeSalesTotal - selectedTax - totalCost;
     const netProfit = grossProfit - totalExpenses;
     const outstandingBalances = customers.reduce((s, c) => s + c.outstandingBalance, 0);
     const pendingJobsCount = printJobs.filter(
@@ -106,10 +126,10 @@ export const DashboardModule: React.FC = () => {
     const trendPoints: Array<{ label: string; value: number }> = [];
     for (let d = 6; d >= 0; d--) {
       const day = new Date(Date.now() - d * 86400000);
-      const dayStr = day.toISOString().slice(0, 10);
-      const label = day.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const dayStr = businessDate(day);
+      const label = day.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone:'Asia/Manila' });
       const sum = validSales
-        .filter((t) => t.createdAt.slice(0, 10) === dayStr)
+        .filter((t) => businessDate(new Date(t.createdAt)) === dayStr)
         .reduce((s, t) => s + t.totalAmount, 0);
       trendPoints.push({ label, value: sum });
     }
@@ -143,7 +163,7 @@ export const DashboardModule: React.FC = () => {
       topServices,
       paymentBreakdown,
     };
-  }, [validSales, expenses, customers, printJobs, inventory, range]);
+  }, [validSales, report, today, customers, printJobs, inventory, range]);
 
   const toggleWidget = async (id: string) => {
     const nextWidgets = settings.dashboardWidgets.map((w) =>
@@ -209,9 +229,11 @@ export const DashboardModule: React.FC = () => {
         </div>
       </div>
 
+      {!report&&<Card><p role="status" className="text-sm">{reportError||'Loading complete financial metrics…'}</p>{reportError&&<Button size="sm" onClick={()=>setRetry(v=>v+1)}>Retry financial metrics</Button>}</Card>}
       {/* Render Widgets in Configured Order */}
       {widgets.map((widget) => {
         if (!widget.visible) return null;
+        if (!report && ['kpis','sales_trend','top_services','payment_breakdown'].includes(widget.id)) return null;
 
         if (widget.id === 'kpis') {
           return (
@@ -222,20 +244,20 @@ export const DashboardModule: React.FC = () => {
                   {formatCurrency(metrics.todaySales, taxCurr)}
                 </div>
                 <div className="text-[11px] text-[var(--pos-text-muted)] mt-1">
-                  Weekly {formatCurrency(metrics.weeklySales, taxCurr)}
+                  Last 7 days {formatCurrency(metrics.weeklySales, taxCurr)}
                 </div>
               </Card>
               <Card>
-                <div className="text-xs text-[var(--pos-text-muted)]">Monthly Sales</div>
+                <div className="text-xs text-[var(--pos-text-muted)]">30-Day Sales</div>
                 <div className="text-xl font-bold font-mono-num text-[var(--pos-text)] mt-1">
                   {formatCurrency(metrics.monthlySales, taxCurr)}
                 </div>
                 <div className="text-[11px] text-[var(--pos-text-muted)] mt-1">
-                  {metrics.totalTransactions} completed sales
+                  {metrics.totalTransactions} non-reversed sales
                 </div>
               </Card>
               <Card>
-                <div className="text-xs text-[var(--pos-text-muted)]">Gross / Net Profit</div>
+                <div className="text-xs text-[var(--pos-text-muted)]">Estimated Gross / Net Profit</div>
                 <div className="text-xl font-bold font-mono-num text-[#16A34A] mt-1">
                   {formatCurrency(metrics.netProfit, taxCurr)}
                 </div>

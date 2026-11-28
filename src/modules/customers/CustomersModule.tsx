@@ -1,11 +1,13 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Plus, Wallet } from 'lucide-react';
+import {PendingFinancialCancellation} from '../../components/layout/PendingFinancialCancellation.tsx';
 import { useApp } from '../../context/AppContext.tsx';
 import { formatCurrency } from '../../shared/pricingEngine.ts';
 import type { Customer, CustomerGroup } from '../../shared/types.ts';
 import { Button, Card, Input, Select, StatusIndicator } from '../../components/ui/Primitives.tsx';
 import { DataTable } from '../../components/ui/DataTable.tsx';
 import { Modal } from '../../components/ui/Overlays.tsx';
+import {readPendingCollection,reservePendingCollection,type PendingBalanceCollection} from '../../services/offlineDb.ts';
 
 export const CustomersModule: React.FC = () => {
   const {
@@ -15,6 +17,8 @@ export const CustomersModule: React.FC = () => {
     printJobs,
     createCustomer,
     collectCustomerBalance,
+    session,
+    isOnline,
   } = useApp();
   const taxCurr = settings.taxAndCurrency;
 
@@ -23,6 +27,33 @@ export const CustomersModule: React.FC = () => {
   const [addOpen, setAddOpen] = useState(false);
   const [payAmount, setPayAmount] = useState('');
   const [collecting, setCollecting] = useState(false);
+  const [pending,setPending]=useState<PendingBalanceCollection|null>(null);
+  const [storageReady,setStorageReady]=useState(false);
+  const [collectionError,setCollectionError]=useState('');
+  const paymentLock=useRef(false);
+  const owner=session?.user.id;
+  const canSetDiscount=session?.user.role==='admin'||session?.user.role==='manager';
+  useEffect(()=>{
+    let cancelled=false;
+    setStorageReady(false);setPending(null);setCollectionError('');
+    if(owner)readPendingCollection(owner).then(record=>{if(!cancelled){setPending(record);setStorageReady(true);}}).catch(()=>{if(!cancelled)setCollectionError('Payment recovery storage is unavailable. Do not collect cash again.');});
+    return ()=>{cancelled=true;};
+  },[owner]);
+  const submitCollection=async(existing?:PendingBalanceCollection)=>{
+    if(paymentLock.current||!owner||!storageReady||!isOnline)return;
+    if(existing&&existing.ownerId!==owner)return;
+    if(!existing&&(!selected||pending))return;
+    paymentLock.current=true;setCollecting(true);setCollectionError('');
+    try{
+      const record=existing??await reservePendingCollection(owner,selected!.id,Number(payAmount));
+      setPending(record);
+      await collectCustomerBalance(record);
+      setPending(null);setSelected(null);
+    }catch(err){
+      setCollectionError(err instanceof Error?err.message:'Payment not confirmed.');
+      try{setPending(await readPendingCollection(owner));}catch{setStorageReady(false);}
+    }finally{paymentLock.current=false;setCollecting(false);}
+  };
 
   // Add customer form
   const [name, setName] = useState('');
@@ -52,8 +83,8 @@ export const CustomersModule: React.FC = () => {
       phone,
       email,
       address,
-      group,
-      discountPercent: Number(discountPercent) || 0,
+      group:canSetDiscount?group:'regular',
+      discountPercent:canSetDiscount?Number(discountPercent)||0:0,
       notes,
     });
     setName('');
@@ -88,6 +119,15 @@ export const CustomersModule: React.FC = () => {
         </Button>
       </div>
 
+      {collectionError&&<p role="alert" className="text-sm text-[var(--pos-error)]">{collectionError}</p>}
+      {pending&&pending.ownerId===owner&&<Card><div className="space-y-2">
+        <h2 className="font-semibold">Unconfirmed balance payment</h2>
+        <p className="text-sm">Customer: {customers.find(c=>c.id===pending.customerId)?.name||pending.customerId} · {formatCurrency(pending.amount,taxCurr)}</p>
+        <p className="text-xs break-all">Reference: {pending.clientMutationId}</p>
+        <p className="text-sm">Do not collect cash again. Retry the original reference to confirm the previous payment. Other collections on this terminal are blocked until confirmation.</p>
+        <Button size="sm" disabled={!isOnline||collecting||!storageReady} onClick={()=>void submitCollection(pending)}>Retry Original Balance Payment</Button>
+        <PendingFinancialCancellation key={pending.clientMutationId} request={{kind:'collection',record:pending}} disabled={!isOnline||collecting||!storageReady} onBusy={value=>{paymentLock.current=value;setCollecting(value);}} onResolved={async()=>{setPending(await readPendingCollection(owner!));setSelected(null);setCollectionError('');}} />
+      </div></Card>}
       <Input
         placeholder="Search customer name, phone, or email..."
         value={search}
@@ -150,7 +190,7 @@ export const CustomersModule: React.FC = () => {
       {/* Customer Detail Modal */}
       <Modal
         open={Boolean(selected)}
-        onClose={() => setSelected(null)}
+        onClose={() => {if(!collecting)setSelected(null);}}
         title={selected?.name || ''}
         subtitle={
           selected ? `${selected.group.toUpperCase()} · ${selected.discountPercent}% Group Discount` : ''
@@ -178,14 +218,14 @@ export const CustomersModule: React.FC = () => {
               </Card>
             </div>
 
+            {collectionError&&<p role="alert" className="text-sm text-[var(--pos-error)]">{collectionError}</p>}
+            {pending&&<p className="text-sm">Close this detail and review the unconfirmed balance payment before collecting more cash.</p>}
             {selected.outstandingBalance > 0 && (
               <form
                 onSubmit={async (e) => {
                   e.preventDefault();
-                  const amt = Number(payAmount) || 0;
-                  if (amt <= 0 || collecting) return;
-                  setCollecting(true);
-                  try { await collectCustomerBalance(selected.id, amt); setSelected(null); } catch (err) { window.alert(err instanceof Error ? err.message : String(err)); } finally { setCollecting(false); }
+                  if(Number(payAmount)<=0||Number(payAmount)>selected.outstandingBalance||collecting||pending||!isOnline||!storageReady)return;
+                  await submitCollection();
                 }}
                 className="p-3.5 rounded-lg border border-[var(--pos-border)] bg-slate-50/60 dark:bg-slate-900/40 flex flex-wrap items-end gap-3"
               >
@@ -193,14 +233,16 @@ export const CustomersModule: React.FC = () => {
                   <Input
                     label={`Collect Cash Balance Payment (${taxCurr.currencySymbol})`}
                     type="number"
-                    min="1"
+                    min="0.01"
                     step="0.01"
+                    required
+                    disabled={Boolean(pending)||collecting||!storageReady||!isOnline}
                     max={selected.outstandingBalance}
                     value={payAmount}
                     onChange={(e) => setPayAmount(e.target.value)}
                   />
                 </div>
-                <Button type="submit" disabled={collecting}>
+                <Button type="submit" disabled={collecting||Boolean(pending)||!storageReady||!isOnline}>
                   <Wallet className="w-4 h-4" />
                   Record Payment
                 </Button>
@@ -271,7 +313,8 @@ export const CustomersModule: React.FC = () => {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Select
               label="Customer Group"
-              value={group}
+              disabled={!canSetDiscount}
+              value={canSetDiscount?group:"regular"}
               onChange={(e) => setGroup(e.target.value as CustomerGroup)}
               options={[
                 { value: 'regular', label: 'Regular' },
@@ -283,10 +326,11 @@ export const CustomersModule: React.FC = () => {
             />
             <Input
               label="Default Discount (%)"
+              disabled={!canSetDiscount}
               type="number"
               min="0"
               max="100"
-              value={discountPercent}
+              value={canSetDiscount?discountPercent:"0"}
               onChange={(e) => setDiscountPercent(e.target.value)}
             />
           </div>

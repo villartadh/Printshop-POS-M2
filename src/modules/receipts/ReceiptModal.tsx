@@ -1,10 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Copy, Download, Printer } from 'lucide-react';
 import { useApp } from '../../context/AppContext.tsx';
 import { formatCurrency } from '../../shared/pricingEngine.ts';
 import type { PrintJob, ReceiptTemplateConfig, Transaction } from '../../shared/types.ts';
 import { Button, Select } from '../../components/ui/Primitives.tsx';
-import { paperLayout, documentKind } from '../../shared/printDocument.ts';
+import { paperLayout, documentKind, PILOT_DOCUMENT_NOTICE } from '../../shared/printDocument.ts';
 import { openPrintPreview, downloadPrintDocument } from '../../services/printService.ts';
 import { Modal } from '../../components/ui/Overlays.tsx';
 
@@ -24,6 +24,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
   reprint = false,
 }) => {
   const { settings, notify, session, voidTransaction, refundTransaction } = useApp();
+  const documentRef = useRef<HTMLDivElement>(null);
   const [reversing, setReversing] = useState(false);
   const [paperSize, setPaperSize] = useState<ReceiptTemplateConfig['defaultPaperSize']>(
     settings.receiptTemplate.defaultPaperSize,
@@ -59,10 +60,12 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
 
   const widthPx = Math.round(paperLayout(paperSize, settings.receiptTemplate.customWidthMm).width * 96 / 25.4);
   const isWide = widthPx >= 500;
-  const taxCurr = settings.taxAndCurrency;
+  const branding = transaction?.receiptSnapshot?.branding ?? settings.branding;
+  const taxCurr = transaction?.receiptSnapshot?.taxAndCurrency ?? settings.taxAndCurrency;
+  const legacyIdentity = Boolean(transaction && !transaction.receiptSnapshot && transaction.syncStatus === 'synced');
 
   const handlePrint = () => {
-    const el = document.getElementById('printable-document');
+    const el = documentRef.current;
     if (!el) return;
     try { openPrintPreview(docReference, el.innerHTML, paperSize, settings.receiptTemplate.customWidthMm); setPreviewOpened(true); }
     catch (err) { notify(err instanceof Error ? err.message : String(err), 'error'); }
@@ -71,9 +74,10 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
   const handleCopySummary = async () => {
     const total = transaction ? transaction.totalAmount : printJob?.totalAmount || 0;
     const customer = transaction?.customerName || printJob?.customerName || 'Customer';
-    const text = `${settings.branding.businessName}\n${transaction?.type === 'held' ? 'HELD ORDER — NOT A SALE' : docTitleMap[effectiveType]} #${docReference}\nCustomer: ${customer}\nTotal: ${formatCurrency(total, taxCurr)}`;
+    const text = `${PILOT_DOCUMENT_NOTICE}\n${branding.businessName}\n${transaction?.type === 'held' ? 'HELD ORDER — NOT A SALE' : docTitleMap[effectiveType]} #${docReference}\nCustomer: ${customer}\nTotal: ${formatCurrency(total, taxCurr)}`;
+    const status = transaction ? [legacyIdentity ? 'HISTORICAL IDENTITY UNAVAILABLE — CURRENT BUSINESS SETTINGS USED' : '',transaction.syncStatus !== 'synced' ? 'PROVISIONAL — SERVER CONFIRMATION PENDING' : '', ['voided','refunded'].includes(transaction.paymentStatus) ? transaction.paymentStatus.toUpperCase()+' — ORIGINAL SALE RECORD' : '', reprint || previewOpened ? 'REPRINT / COPY' : ''].filter(Boolean).join('\n') : '';
     try {
-      await navigator.clipboard.writeText(text);
+      await navigator.clipboard.writeText(status ? status+'\n'+text : text);
       notify('Receipt summary copied to clipboard.', 'success');
     } catch {
       notify('Unable to copy automatically in this browser.', 'error');
@@ -81,7 +85,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
   };
 
   const handleDownloadHtml = () => {
-    const el = document.getElementById('printable-document');
+    const el = documentRef.current;
     if (!el) return;
     try { downloadPrintDocument(docReference, el.innerHTML, paperSize, settings.receiptTemplate.customWidthMm); }
     catch (err) { notify(err instanceof Error ? err.message : String(err), 'error'); }
@@ -137,7 +141,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
             onChange={(e) => setDocType(e.target.value as typeof docType)}
             options={[
               { value: 'sales_receipt', label: 'Sales Receipt' },
-              { value: 'invoice', label: 'Invoice' },
+              { value: 'invoice', label: 'Non-tax invoice draft' },
               { value: 'quotation', label: 'Quotation' },
               { value: 'job_order_slip', label: 'Job Order Slip' },
               { value: 'payment_acknowledgment', label: 'Payment Acknowledgment' },
@@ -168,6 +172,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
 
         <div className="bg-slate-100 dark:bg-slate-900/70 p-4 rounded-xl flex justify-center overflow-x-auto border border-[var(--pos-border)]">
           <div
+            ref={documentRef}
             id="printable-document"
             style={{ width: `${widthPx}px` }}
             className={`bg-white text-slate-900 border border-slate-300 shadow-sm ${
@@ -175,27 +180,29 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
             } font-mono leading-relaxed`}
           >
             <div className="text-center border-b border-dashed border-slate-300 pb-3 mb-3">
-              {settings.branding.showLogoOnReceipt && settings.branding.logoDataUrl && (
+              {branding.showLogoOnReceipt && branding.logoDataUrl && (
                 <img
-                  src={settings.branding.logoDataUrl}
-                  alt={settings.branding.businessName}
+                  src={branding.logoDataUrl}
+                  alt={branding.businessName}
                   className="h-10 mx-auto mb-2 object-contain"
                   referrerPolicy="no-referrer"
                 />
               )}
-              <div className="font-bold text-sm">{settings.branding.businessName}</div>
-              <div className="text-slate-600">{settings.branding.address}</div>
+              <div className="font-bold text-sm">{branding.businessName}</div>
+              <div className="text-slate-600">{branding.address}</div>
               <div className="text-slate-600">
-                {settings.branding.phone} · {settings.branding.email}
+                {branding.phone} · {branding.email}
               </div>
-              {settings.branding.taxRegistrationNumber && (
+              {branding.taxRegistrationNumber && (
                 <div className="text-slate-600">
-                  {settings.branding.taxIdLabel}: {settings.branding.taxRegistrationNumber}
+                  {branding.taxIdLabel}: {branding.taxRegistrationNumber}
                 </div>
               )}
               <div className="mt-2 font-bold tracking-wide text-slate-900">
                 {transaction?.type === 'held' ? 'HELD ORDER — NOT A SALE' : docTitleMap[effectiveType]}
               </div>
+              <div className="font-bold border border-slate-700 mt-2 p-1">{PILOT_DOCUMENT_NOTICE}</div>
+              {legacyIdentity && <div className="font-bold border border-slate-700 mt-2 p-1">HISTORICAL IDENTITY UNAVAILABLE — CURRENT BUSINESS SETTINGS USED</div>}
               {transaction && transaction.syncStatus !== "synced" && <div className="font-bold border border-slate-700 mt-2 p-1">PROVISIONAL — SERVER CONFIRMATION PENDING</div>}
               {transaction && ['voided','refunded'].includes(transaction.paymentStatus) && <div className="font-bold border border-slate-700 mt-2 p-1">{transaction.paymentStatus.toUpperCase()} — ORIGINAL SALE RECORD</div>}
               <div className="text-[10px] text-slate-500">
@@ -214,7 +221,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
                 <span>
                   {new Date(
                     transaction?.createdAt || printJob?.createdAt || Date.now(),
-                  ).toLocaleString()}
+                  ).toLocaleString('en-PH', { timeZone: 'Asia/Manila' })}
                 </span>
               </div>
               <div className="flex justify-between">
@@ -355,9 +362,9 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
             )}
 
             <div className="text-center space-y-2 pt-1">
-              {settings.branding.showQrOnReceipt && <div>Reference: {docReference}</div>}
-              <div className="font-semibold">{settings.branding.receiptHeader}</div>
-              <div className="text-[10px] text-slate-600">{settings.branding.receiptFooter}</div>
+              {branding.showQrOnReceipt && <div>Reference: {docReference}</div>}
+              <div className="font-semibold">{branding.receiptHeader}</div>
+              <div className="text-[10px] text-slate-600">{branding.receiptFooter}</div>
             </div>
           </div>
         </div>

@@ -1,0 +1,168 @@
+name: Software acceptance
+on:
+  push:
+    branches: [develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+concurrency:
+  group: software-acceptance-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  acceptance:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-2022]
+    runs-on: ${{ fromJSON(matrix.os == 'windows-2022' && github.event.repository.private && vars.PRINTSHOP_POS_WINDOWS_RUNNER == 'isolated' && github.repository == 'villartadh/Printshop-POS-M2' && (((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/develop') || (github.event_name == 'pull_request' && github.base_ref == 'develop' && github.event.pull_request.head.repo.full_name == github.repository)) && '["self-hosted","Windows","X64","printshop-pos-isolated"]' || format('["{0}"]', matrix.os)) }}
+    timeout-minutes: 35
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # The generic Windows runner is deliberately ineligible. This opt-in lane is only
+      # for an isolated disposable test machine; these checks are not a sandbox.
+      - name: Confirm isolated Windows runner prerequisites
+        if: runner.environment == 'self-hosted'
+        shell: powershell
+        env:
+          POS_WINDOWS_RUNNER_MODE: ${{ vars.PRINTSHOP_POS_WINDOWS_RUNNER }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:POS_WINDOWS_RUNNER_MODE -ne 'isolated' -or
+              $env:PRINTSHOP_POS_ISOLATED_TEST_RUNNER -ne '1' -or
+              $env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
+            throw 'Isolated Windows runner opt-in and x64 identity required'
+          }
+          $root = $env:PRINTSHOP_POS_ISOLATED_TEST_ROOT
+          if ([string]::IsNullOrWhiteSpace($root) -or -not [IO.Path]::IsPathRooted($root)) {
+            throw 'Dedicated absolute runner work root required'
+          }
+          $root = [IO.Path]::GetFullPath($root).TrimEnd([char[]]@('\','/'))
+          $driveRoot = [IO.Path]::GetPathRoot($root + '\').TrimEnd([char[]]@('\','/'))
+          if ($root -eq $driveRoot -or -not (Test-Path -LiteralPath $root -PathType Container)) {
+            throw 'Dedicated existing runner work root required; never use a volume root'
+          }
+          if ((Get-Item -LiteralPath $root).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            throw 'Runner work root must not be a reparse point'
+          }
+          $prefix = $root + '\'
+          foreach ($candidate in @($env:GITHUB_WORKSPACE, $env:RUNNER_TEMP)) {
+            if ([string]::IsNullOrWhiteSpace($candidate) -or
+                -not [IO.Path]::GetFullPath($candidate).StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)) {
+              throw 'Workspace and temp must be inside the dedicated runner work root'
+            }
+          }
+          foreach ($tool in @('git.exe','pwsh.exe','bash.exe')) {
+            if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
+              throw ('Required executable missing: ' + $tool)
+            }
+          }
+          $drive = [IO.DriveInfo]::new([IO.Path]::GetPathRoot($root))
+          if ($drive.AvailableFreeSpace -lt 20GB) { throw 'At least 20 GiB of workspace free space required' }
+          Write-Output 'ISOLATED_WINDOWS_PREFLIGHT_PASS'
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - if: runner.os == 'Windows'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: npm ci
+      - run: npm test
+      - run: npm run lint
+      - run: npm run build
+      - run: npm run acceptance
+      - name: Checkout immutable v0.9.5 baseline
+        uses: actions/checkout@v4
+        with:
+          ref: 255518ed388bcee3d63ee211e17c199ba984547e
+          path: .baseline-v095
+          persist-credentials: false
+      - run: npm ci --prefix .baseline-v095
+      - name: Verify actual baseline database upgrade and restoration
+        run: node scripts/upgrade-acceptance.mjs .baseline-v095
+      - name: Build pinned baseline Windows distribution
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npm run build --prefix .baseline-v095
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $nodeDir = Split-Path (Get-Command node.exe).Source
+          node .baseline-v095/scripts/stage-windows.mjs $nodeDir windows-baseline-stage
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Remove baseline checkout before packaging
+        run: rm -rf .baseline-v095
+      - if: runner.os == 'Linux'
+        run: npx playwright install --with-deps chromium
+      - if: runner.os == 'Windows'
+        run: npx playwright install chromium
+      - run: npm run acceptance:browser
+      - if: runner.os == 'Linux'
+        run: npm run acceptance:https
+      - name: Create versioned source package
+        if: runner.os == 'Linux' && success()
+        run: |
+          node scripts/package-source.mjs release-output/source
+          cd release-output/source
+          zip -q -r ../Printshop-POS-v0.9.7-Source.zip .
+          cd ..
+          sha256sum Printshop-POS-v0.9.7-Source.zip > SOURCE-SHA256SUMS.txt
+          sha256sum -c SOURCE-SHA256SUMS.txt
+      - name: Upload versioned source candidate
+        if: runner.os == 'Linux' && success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v0.9.7-source-candidate
+          path: |
+            release-output/Printshop-POS-v0.9.7-Source.zip
+            release-output/SOURCE-SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+      - name: Stage and verify Windows runtime
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $nodeDir = Split-Path (Get-Command node.exe).Source
+          node scripts/stage-windows.mjs $nodeDir windows-stage
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Push-Location windows-stage
+          try {
+            & .\runtime\node.exe --input-type=commonjs -e "const db = new (require('better-sqlite3'))(':memory:'); if(db.prepare('SELECT 1 AS ok').get().ok !== 1) process.exit(1); db.close();"
+            if ($LASTEXITCODE -ne 0) { throw 'Bundled SQLite test failed' }
+            & .\runtime\node.exe --input-type=module -e "import fs from 'node:fs'; import {verifyRelease} from './scripts/install.mjs'; verifyRelease(process.cwd(), JSON.parse(fs.readFileSync('RELEASE-MANIFEST.json')));"
+            if ($LASTEXITCODE -ne 0) { throw 'Release manifest verification failed' }
+          } finally { Pop-Location }
+          node scripts/windows/package-smoke.mjs windows-stage
+          if ($LASTEXITCODE -ne 0) { throw 'Isolated packaged application smoke test failed' }
+          node scripts/windows/package-upgrade.mjs windows-baseline-stage windows-stage
+          if ($LASTEXITCODE -ne 0) { throw 'Bundled Windows upgrade and restoration gate failed' }
+          Compress-Archive -Path windows-stage\* -DestinationPath Printshop-POS-v0.9.7-Windows-x64.zip
+          $hash = (Get-FileHash Printshop-POS-v0.9.7-Windows-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content -Encoding ascii SHA256SUMS.txt "$hash  Printshop-POS-v0.9.7-Windows-x64.zip"
+      - name: Upload Windows candidate
+        if: runner.os == 'Windows' && success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v0.9.7-windows-x64-candidate
+          path: |
+            Printshop-POS-v0.9.7-Windows-x64.zip
+            SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: software-evidence-${{ runner.os }}
+          path: .ldc/
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14

@@ -9,7 +9,7 @@ function discount(type: string, value: number) {
 }
 export function verifyCatalogPricing(t: Transaction, lookup: (id: string) => PrintService | undefined, settings: AppSettings, role: string): Transaction {
   const tax = settings.taxAndCurrency;
-  if (!tax || ![0,1,2,3,4].includes(tax.decimalPlaces) || !finite(tax.taxRatePercent) || tax.taxRatePercent > 100 || !['none','nearest_0_25','nearest_1'].includes(tax.roundingMode)) fail('Invalid business tax settings.');
+  if (!tax || ![0,1,2].includes(tax.decimalPlaces) || !finite(tax.taxRatePercent) || tax.taxRatePercent > 100 || !['none','nearest_0_25','nearest_1'].includes(tax.roundingMode)) fail('Invalid business tax settings.');
   const privileged = role === 'admin' || role === 'manager';
   const items = t.items.map((item): CartItem => {
     const c = item.config;

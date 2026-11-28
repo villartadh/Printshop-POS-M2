@@ -275,13 +275,13 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         typeof next === 'function' ? next(settingsRef.current) : next;
       const normalized = mergeSettingsWithDefaults({
         ...resolved,
-        updatedAt: resolved.updatedAt || new Date().toISOString(),
+        updatedAt: resolved.updatedAt,
       });
       settingsRef.current = normalized;
       setSettingsInternal(normalized);
       if (savePersistedAppSettings(normalized)) {
         setHasLocalCustomizations(true);
-        setLastLocalSavedAt(normalized.updatedAt);
+        setLastLocalSavedAt(new Date().toISOString());
       }
       return normalized;
     },
@@ -293,7 +293,6 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       setSettingsState((prev) => ({
         ...prev,
         branding: { ...prev.branding, ...patch },
-        updatedAt: new Date().toISOString(),
       })),
     [setSettingsState],
   );
@@ -303,7 +302,6 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       setSettingsState((prev) => ({
         ...prev,
         tokens: { ...prev.tokens, ...patch },
-        updatedAt: new Date().toISOString(),
       })),
     [setSettingsState],
   );
@@ -313,7 +311,6 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       setSettingsState((prev) => ({
         ...prev,
         themeMode,
-        updatedAt: new Date().toISOString(),
       })),
     [setSettingsState],
   );
@@ -323,7 +320,6 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       setSettingsState((prev) => ({
         ...prev,
         density,
-        updatedAt: new Date().toISOString(),
       })),
     [setSettingsState],
   );
@@ -336,7 +332,6 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           ...prev.shellPreferences,
           sidebarCollapsed,
         },
-        updatedAt: new Date().toISOString(),
       })),
     [setSettingsState],
   );
@@ -344,7 +339,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const resetSettingsToDefaults = useCallback(() => {
     const defaults = mergeSettingsWithDefaults({
       ...DEFAULT_SETTINGS,
-      updatedAt: new Date().toISOString(),
+      updatedAt: settingsRef.current.updatedAt,
     });
     return setSettingsState(defaults);
   }, [setSettingsState]);

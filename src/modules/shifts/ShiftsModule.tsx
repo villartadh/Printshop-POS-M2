@@ -1,10 +1,12 @@
-import React, { useState } from 'react';
+import React, { useEffect,useRef,useState } from 'react';
 import { ArrowDownLeft, ArrowUpRight, CheckCircle2, Play } from 'lucide-react';
+import {PendingFinancialCancellation} from '../../components/layout/PendingFinancialCancellation.tsx';
 import { useApp } from '../../context/AppContext.tsx';
 import { formatCurrency } from '../../shared/pricingEngine.ts';
 import { Button, Card, Input, Select, StatusIndicator } from '../../components/ui/Primitives.tsx';
 import { DataTable } from '../../components/ui/DataTable.tsx';
 import { Modal } from '../../components/ui/Overlays.tsx';
+import {readPendingDrawerMovement,reserveDrawerMovement,type PendingDrawerMovement} from '../../services/offlineDb.ts';
 
 export const ShiftsModule: React.FC = () => {
   const {
@@ -14,6 +16,7 @@ export const ShiftsModule: React.FC = () => {
     startShift,
     recordCashMovement,
     closeShift,
+    session,isOnline,
   } = useApp();
   const taxCurr = settings.taxAndCurrency;
 
@@ -22,6 +25,27 @@ export const ShiftsModule: React.FC = () => {
   const [moveType, setMoveType] = useState<'cash_in' | 'cash_out'>('cash_out');
   const [moveAmount, setMoveAmount] = useState('');
   const [moveReason, setMoveReason] = useState('');
+  const [pending,setPending]=useState<PendingDrawerMovement|null>(null);
+  const [storageReady,setStorageReady]=useState(false);
+  const [busy,setBusy]=useState(false);
+  const [error,setError]=useState('');
+  const lock=useRef(false);
+  const owner=session?.user.id;
+  useEffect(()=>{
+    let cancelled=false;setStorageReady(false);setPending(null);setError('');
+    if(owner)readPendingDrawerMovement(owner).then(record=>{if(!cancelled){setPending(record);setStorageReady(true);}}).catch(()=>{if(!cancelled)setError('Drawer recovery storage unavailable. Do not repeat cash adjustments.');});
+    return ()=>{cancelled=true;};
+  },[owner]);
+  const submitMovement=async(existing?:PendingDrawerMovement)=>{
+    if(lock.current||!owner||!storageReady||!isOnline||(!existing&&(!activeShift||pending))||(existing&&existing.ownerId!==owner))return;
+    lock.current=true;setBusy(true);setError('');
+    try{
+      const record=existing??await reserveDrawerMovement(owner,activeShift!.id,moveType,Number(moveAmount),moveReason);
+      setPending(record);await recordCashMovement(record);
+      setPending(null);setMoveAmount('');setMoveReason('');setMovementOpen(false);
+    }catch(e){setError(e instanceof Error?e.message:'Drawer adjustment unconfirmed.');try{setPending(await readPendingDrawerMovement(owner));}catch{setStorageReady(false);}}
+    finally{lock.current=false;setBusy(false);}
+  };
 
   const [closeOpen, setCloseOpen] = useState(false);
   const [actualCash, setActualCash] = useState('');
@@ -29,7 +53,7 @@ export const ShiftsModule: React.FC = () => {
 
   const handleStart = async (e: React.FormEvent) => {
     e.preventDefault();
-    await startShift(Math.max(0, Number(openingCash) || 0));
+    setError('');try{await startShift(Number(openingCash));}catch(e){setError(e instanceof Error?e.message:'Shift could not be opened.');}
   };
 
   return (
@@ -43,6 +67,15 @@ export const ShiftsModule: React.FC = () => {
         </div>
       </div>
 
+      {error&&<p role="alert" className="text-sm text-[var(--pos-error)]">{error}</p>}
+      {pending&&pending.ownerId===owner&&<Card><div className="space-y-2">
+        <h2 className="font-semibold">Unconfirmed drawer adjustment</h2>
+        <p className="text-sm">{pending.type==='cash_in'?'Cash In':'Cash Out'} · {formatCurrency(pending.amount,taxCurr)} · {pending.reason}</p>
+        <p className="text-xs break-all">Reference: {pending.clientMutationId}</p>
+        <p className="text-sm">Do not move the cash again. Confirm the original reference before further drawer adjustments or shift closure on this terminal.</p>
+        <Button size="sm" disabled={!isOnline||busy||!storageReady} onClick={()=>void submitMovement(pending)}>Retry Original Drawer Adjustment</Button>
+        <PendingFinancialCancellation key={pending.clientMutationId} request={{kind:'drawer',record:pending}} disabled={!isOnline||busy||!storageReady} onBusy={value=>{lock.current=value;setBusy(value);}} onResolved={async()=>{setPending(await readPendingDrawerMovement(owner!));setMovementOpen(false);setError('');}} />
+      </div></Card>}
       {activeShift ? (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <Card className="lg:col-span-2 space-y-4">
@@ -87,13 +120,14 @@ export const ShiftsModule: React.FC = () => {
             </div>
 
             <div className="flex flex-wrap gap-2.5 pt-2">
-              <Button variant="outline" size="sm" onClick={() => setMovementOpen(true)}>
+              <Button variant="outline" size="sm" disabled={!storageReady||!isOnline||!!pending||busy} onClick={() => {setError('');setMovementOpen(true);}}>
                 <ArrowUpRight className="w-4 h-4" />
                 Cash In / Cash Out
               </Button>
               <Button
                 variant="danger"
                 size="sm"
+                disabled={!storageReady||!isOnline||!!pending||busy}
                 onClick={() => {
                   setActualCash(String(activeShift.expectedCash));
                   setCloseOpen(true);
@@ -237,22 +271,20 @@ export const ShiftsModule: React.FC = () => {
       {/* Cash Movement Modal */}
       <Modal
         open={movementOpen}
-        onClose={() => setMovementOpen(false)}
+        onClose={() => {if(!busy)setMovementOpen(false);}}
         title="Cash In / Cash Out"
         maxWidth="sm"
       >
         <form
           onSubmit={async (e) => {
             e.preventDefault();
-            if (!activeShift) return;
-            await recordCashMovement(activeShift.id, moveType, Number(moveAmount) || 0, moveReason);
-            setMoveAmount('');
-            setMoveReason('');
-            setMovementOpen(false);
+            await submitMovement();
           }}
           className="space-y-3"
         >
+          {error&&<p role="alert" className="text-sm text-[var(--pos-error)]">{error}</p>}
           <Select
+            disabled={busy||!!pending}
             label="Movement Type"
             value={moveType}
             onChange={(e) => setMoveType(e.target.value as 'cash_in' | 'cash_out')}
@@ -264,24 +296,27 @@ export const ShiftsModule: React.FC = () => {
           <Input
             label={`Amount (${taxCurr.currencySymbol})`}
             type="number"
-            min="1"
+            min="0.01"
             step="0.01"
+            disabled={busy||!!pending}
             value={moveAmount}
             onChange={(e) => setMoveAmount(e.target.value)}
             required
           />
           <Input
             label="Reason"
+            disabled={busy||!!pending}
+            maxLength={500}
             placeholder="e.g. Safe drop or change replenishment"
             value={moveReason}
             onChange={(e) => setMoveReason(e.target.value)}
             required
           />
           <div className="flex justify-end gap-2 pt-2">
-            <Button variant="secondary" type="button" onClick={() => setMovementOpen(false)}>
+            <Button variant="secondary" type="button" disabled={busy} onClick={() => setMovementOpen(false)}>
               Cancel
             </Button>
-            <Button type="submit">Record</Button>
+            <Button type="submit" disabled={busy||!!pending||!storageReady||!isOnline}>Record</Button>
           </div>
         </form>
       </Modal>
@@ -297,8 +332,7 @@ export const ShiftsModule: React.FC = () => {
           onSubmit={async (e) => {
             e.preventDefault();
             if (!activeShift) return;
-            await closeShift(activeShift.id, Number(actualCash) || 0, reconciliationNote);
-            setCloseOpen(false);
+            setError('');try{await closeShift(activeShift.id,Number(actualCash),reconciliationNote);setCloseOpen(false);}catch(e){setError(e instanceof Error?e.message:'Shift closure failed.');}
           }}
           className="space-y-3"
         >
@@ -308,6 +342,7 @@ export const ShiftsModule: React.FC = () => {
               {formatCurrency(activeShift?.expectedCash || 0, taxCurr)}
             </span>
           </div>
+          {error&&<p role="alert" className="text-sm text-[var(--pos-error)]">{error}</p>}
           <Input
             label={`Actual Counted Cash (${taxCurr.currencySymbol})`}
             type="number"

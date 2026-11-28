@@ -333,6 +333,7 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
           const threshold = item.reorderThreshold ?? item.reorderLevel;
           const status = getInventoryStockStatus({
             quantityOnHand: stockCount,
+            reservedQuantity: item.reservedQuantity,
             reorderLevel: threshold,
           });
           const avail = getAvailableStock({
@@ -390,6 +391,7 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
           const suggested = getSuggestedRestockQuantity({
             quantityOnHand: stockCount,
             reorderLevel: threshold,
+            reservedQuantity: item.reservedQuantity,
             reorderQuantity: item.reorderQuantity,
           });
           return (
@@ -397,6 +399,7 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
               <div className="font-mono-num text-sm font-medium text-[var(--pos-text)]">
                 {threshold} {item.unit}
               </div>
+              {(item.minimumThreshold ?? 0) > 0 && <div className="text-xs text-[var(--pos-text-muted)]">Min: {item.minimumThreshold}</div>}
               <div className="text-[11px] text-[var(--pos-text-muted)] font-mono-num mt-0.5">
                 {suggested > 0
                   ? `Restock +${suggested}`
@@ -427,8 +430,9 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
         render: (item) => {
           const stockCount = item.currentStock ?? item.quantityOnHand;
           const threshold = item.reorderThreshold ?? item.reorderLevel;
-          const isLowStock = stockCount <= threshold;
-          const isOutOfStock = stockCount <= 0;
+          const available = getAvailableStock(item);
+          const isLowStock = available <= threshold;
+          const isOutOfStock = available <= 0;
 
           if (!isLowStock) {
             return <StatusIndicator tone="success" label="In Stock" />;
@@ -563,10 +567,10 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
     const isSelected = selectedIds.has(item.id);
     const selectedRing = isSelected ? 'ring-1 ring-inset ring-[var(--pos-primary)]/45' : '';
 
-    if (stockCount <= 0) {
+    if (getAvailableStock(item) <= 0) {
       return `bg-[var(--pos-error)]/[0.07] hover:bg-[var(--pos-error)]/[0.12] ${selectedRing}`;
     }
-    if (stockCount <= threshold) {
+    if (getAvailableStock(item) <= threshold) {
       return `bg-[var(--pos-warning)]/[0.08] hover:bg-[var(--pos-warning)]/[0.14] ${selectedRing}`;
     }
     if (isSelected) {

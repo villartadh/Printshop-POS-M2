@@ -42,11 +42,19 @@ import {
   enqueueOfflineMutation,
   getOutboxMutations,
   loadOfflineSnapshot,
-  removeOutboxMutation,
+  commitSyncAcknowledgments,
+  retryOutboxConflict,
+  acknowledgePendingCollection,
+  type PendingBalanceCollection,
+  type PendingDrawerMovement,
+  acknowledgeDrawerMovement,
+  acknowledgeExpense,
+  type PendingExpense,
+  readPendingDrawerMovement,
   saveOfflineSnapshot,
-  updateOutboxMutation,
 } from '../services/offlineDb.ts';
-import { pendingBatch, mutationOwner } from '../shared/offlinePolicy.ts';
+import {validatePurchaseCost,weightedPurchaseCost} from '../shared/purchaseCost.ts';
+import { pendingBatch, mutationOwner, validateSyncResults } from '../shared/offlinePolicy.ts';
 import { useOnlineStatus } from '../hooks/usePWAInstall.ts';
 
 export interface QuickUserInfo {
@@ -113,6 +121,9 @@ interface AppContextValue {
   lastSyncedAt: string | null;
   outbox: OfflineMutation[];
   syncNow: () => Promise<void>;
+  retrySyncConflict: (id:string) => Promise<void>;
+  refreshSyncQueue: () => Promise<void>;
+  syncError: string | null;
 
   // Data stores
   loadingData: boolean;
@@ -193,11 +204,11 @@ interface AppContextValue {
   getInventoryItemById: (id: string) => InventoryItem | undefined;
   getItemStockMovements: (inventoryItemId: string) => StockMovement[];
   createCustomer: (customer: Partial<Customer>) => Promise<Customer>;
-  collectCustomerBalance: (id: string, amount: number) => Promise<void>;
-  createExpense: (expense: Partial<ExpenseRecord>) => Promise<void>;
-  deleteExpense: (id: string) => Promise<void>;
+  collectCustomerBalance: (record: PendingBalanceCollection) => Promise<void>;
+  createExpense: (expense: PendingExpense) => Promise<void>;
+  deleteExpense: (id: string, reason: string) => Promise<void>;
   startShift: (openingCash: number) => Promise<void>;
-  recordCashMovement: (shiftId: string, type: 'cash_in' | 'cash_out', amount: number, reason: string) => Promise<void>;
+  recordCashMovement: (record:PendingDrawerMovement) => Promise<void>;
   closeShift: (shiftId: string, actualCash: number, reconciliationNote: string) => Promise<void>;
   seedDemo: () => Promise<void>;
   clearDemo: () => Promise<void>;
@@ -214,7 +225,6 @@ export function useApp() {
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const {
     settings,
-    hasLocalCustomizations,
     setSettingsState,
     updateBranding,
     updateTokens,
@@ -257,6 +267,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const syncLock = useRef(false);
   const [outbox, setOutbox] = useState<OfflineMutation[]>([]);
+  const [syncError,setSyncError]=useState<string|null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
@@ -275,14 +286,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const applyBootstrapData = useCallback(
     (data: BootstrapPayload) => {
-      const serverTs = Date.parse(data.settings?.updatedAt || '') || 0;
-      const localTs = Date.parse(settings.updatedAt || '') || 0;
-      if (!hasLocalCustomizations || serverTs > localTs) {
-        setSettingsState((prev) => ({
-          ...data.settings,
-          shellPreferences: data.settings.shellPreferences ?? prev.shellPreferences,
-        }));
-      }
+      setSettingsState((prev) => ({
+        ...data.settings,
+        themeMode: prev.themeMode,
+        density: prev.density,
+        shellPreferences: prev.shellPreferences ?? data.settings.shellPreferences,
+      }));
       setCategories(data.categories);
       if (Array.isArray(data.supplyCategories) && data.supplyCategories.length > 0) {
         setSupplyCategories(data.supplyCategories);
@@ -302,7 +311,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setUsers(data.users);
       setAuditLogs(data.auditLogs);
     },
-    [hasLocalCustomizations, setSettingsState, settings.updatedAt],
+    [setSettingsState],
   );
 
   const refreshBootstrap = useCallback(async () => {
@@ -360,6 +369,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!session || !isOnline || syncLock.current) return;
     syncLock.current = true;
     setIsSyncing(true);
+    setSyncError(null);
     try {
       const queue = pendingBatch(await getOutboxMutations(), session.user.id);
       if (!queue.length) return;
@@ -371,29 +381,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         body: JSON.stringify({ mutations: queue }),
       });
 
-      let appliedCount = 0;
-      for (const item of res.results) {
-        const mut = queue.find((q) => q.clientMutationId === item.clientMutationId);
-        if (!mut) continue;
-        if (item.status === 'applied' || item.status === 'duplicate') {
-          await removeOutboxMutation(mut.id);
-          appliedCount++;
-        } else {
-          await updateOutboxMutation({
-            ...mut,
-            status: 'conflict',
-            retryCount: mut.retryCount + 1,
-            errorMessage: item.error || 'Sync conflict',
-          });
-        }
-      }
+      const results = validateSyncResults(queue, res);
+      await commitSyncAcknowledgments(queue,res);
+      const appliedCount=results.filter(r=>r.status==='applied'||r.status==='duplicate').length;
+      const conflictCount=results.filter(r=>r.status==='error'&&!r.retryable).length;
       setOutbox(await getOutboxMutations());
       setLastSyncedAt(res.syncedAt);
       if (appliedCount > 0) {
         notify(`Synchronized ${appliedCount} offline record(s).`, 'success');
       }
+      if (conflictCount > 0) notify(`${conflictCount} offline record(s) need reconciliation. Records retained in the offline queue.`, 'error');
       await refreshBootstrap();
     } catch (err) {
+      setSyncError('Synchronization could not be confirmed. Records remain queued for safe retry.');
+      try {setOutbox(await getOutboxMutations());} catch {setSyncError('Offline storage could not be read. Do not clear browser data.');}
       void appendDiagnosticLog({
         level: 'warn',
         category: 'sync',
@@ -405,6 +406,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [isOnline, notify, refreshBootstrap, session]);
 
+  const refreshSyncQueue=useCallback(async()=>{
+    try{setOutbox(await getOutboxMutations());}
+    catch{setSyncError('Offline storage could not be read. Do not clear browser data.');}
+  },[]);
+  const retrySyncConflict=useCallback(async(id:string)=>{
+    if(!session||!isOnline||syncLock.current)throw new Error('Connect and wait for synchronization to finish before retrying.');
+    syncLock.current=true;
+    setIsSyncing(true);
+    try{await retryOutboxConflict(id,session.user.id);await refreshSyncQueue();setSyncError(null);}
+    finally{syncLock.current=false;setIsSyncing(false);}
+    await syncNow();
+  },[session,isOnline,refreshSyncQueue,syncNow]);
+
   useEffect(() => {
     if (!isOnline || !session || !pendingBatch(outbox, session.user.id).length) return;
     const timer = window.setInterval(() => void syncNow(), 15000);
@@ -415,12 +429,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     async (authSession: AuthSession) => {
       setMemoryToken(authSession.token);
       setSession(authSession);
+      setSyncError(null);
+      await refreshSyncQueue();
       setIsLocked(false);
       setNeedsSetup(false);
       await refreshBootstrap();
       setActiveModule(authSession.user.preferredLandingModule || settings.defaultLandingModule || 'pos');
     },
-    [refreshBootstrap, settings.defaultLandingModule],
+    [refreshBootstrap, settings.defaultLandingModule,refreshSyncQueue],
   );
 
   const setupAdmin = async (payload: {
@@ -472,36 +488,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const saveSettings = async (next: AppSettings) => {
-    const stamped: AppSettings = {
-      ...next,
-      updatedAt: new Date().toISOString(),
-    };
-    const persisted = setSettingsState(stamped);
-
-    const canSyncServer =
-      isOnline &&
-      session &&
-      (session.user.role === 'admin' || session.user.role === 'manager');
-
-    if (canSyncServer) {
-      try {
-        const updated = await apiRequest<AppSettings>('/api/settings', {
-          method: 'PUT',
-          body: JSON.stringify(persisted),
-        });
-        setSettingsState(updated);
-        notify('Settings saved and synced.', 'success');
-        return;
-      } catch (err) {
-        if (!(err instanceof TypeError)) {
-          throw err;
-        }
-        notify('Settings saved locally (offline).', 'info');
-        return;
-      }
+    if (!session || !['admin','manager'].includes(session.user.role)) {
+      throw new Error('Only managers or administrators can save business settings.');
     }
-
-    notify('Preferences saved locally on this device.', 'success');
+    if (!isOnline) throw new Error('Connect to the store server before saving business settings.');
+    const updated = await apiRequest<AppSettings>('/api/settings', {
+      method: 'PUT',
+      body: JSON.stringify(next),
+    });
+    setSettingsState(updated);
+    notify('Settings saved and synced.', 'success');
   };
 
   const submitTransaction = async (txn: Transaction) => {
@@ -803,6 +799,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       throw new Error(validation.error);
     }
 
+    validatePurchaseCost(payload.purchaseUnitCost,payload.movementType,session?.user.role || '');
     const mutationId = `inv_adj_${crypto.randomUUID()}`;
     const applyOptimisticOffline = async (): Promise<StockMovement> => {
       if (!session) throw new Error("Cashier session required.");
@@ -816,7 +813,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       );
       const qtyBefore = Number(target.quantityOnHand) || 0;
       const nextQty = Number((qtyBefore + signedDelta).toFixed(2));
-      if (nextQty < 0) throw new Error("Insufficient stock.");
+      if (nextQty < 0 || (signedDelta < 0 && nextQty < (target.reservedQuantity ?? 0))) throw new Error("Insufficient unreserved stock.");
       const now = new Date().toISOString();
       const occurredAt = payload.occurredAt || now;
       const restockedAt =
@@ -828,6 +825,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const updatedItem = normalizeInventoryItem({
         ...target,
         quantityOnHand: nextQty,
+        unitCost: weightedPurchaseCost(qtyBefore,target.unitCost,signedDelta,payload.purchaseUnitCost),
         lastRestockedAt: restockedAt,
         updatedAt: now,
       });
@@ -839,7 +837,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         quantityBefore: qtyBefore,
         quantityDelta: signedDelta,
         balanceAfter: nextQty,
-        unitCostAtMovement: target.unitCost,
+        unitCostAtMovement: payload.purchaseUnitCost ?? target.unitCost,
+        purchaseUnitCost: payload.purchaseUnitCost,
         referenceType: payload.referenceType || inferReferenceType(payload.movementType),
         reference: payload.reference || '',
         performedById: session?.user.id || '',
@@ -933,28 +932,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return created;
   };
 
-  const collectCustomerBalance = async (id: string, amount: number) => {
-    await apiRequest(`/api/customers/${id}/pay-balance`, {
-      method: 'POST',
-      body: JSON.stringify({ amount }),
+  const collectCustomerBalance = async (record:PendingBalanceCollection) => {
+    if(!session||record.ownerId!==session.user.id||!isOnline)throw new Error('Connect and sign in as the original operator to confirm this collection.');
+    const result=await apiRequest<{id:string;clientMutationId:string;amount:number;outstandingBalance:number;duplicate:boolean}>(`/api/customers/${encodeURIComponent(record.customerId)}/pay-balance`,{
+      method:'POST',body:JSON.stringify({amount:record.amount,clientMutationId:record.clientMutationId}),
     });
+    if(result.id!==record.customerId||result.clientMutationId!==record.clientMutationId||result.amount!==record.amount||typeof result.duplicate!=='boolean'||!Number.isFinite(result.outstandingBalance)||result.outstandingBalance<0)throw new Error('Payment confirmation could not be verified. Retry the original reference.');
+    await acknowledgePendingCollection(record);
     await refreshBootstrap();
-    notify('Customer balance payment recorded.', 'success');
+    notify(result.duplicate?'Original balance payment confirmed.':'Customer balance payment recorded.','success');
   };
 
-  const createExpense = async (expense: Partial<ExpenseRecord>) => {
-    const created = await apiRequest<ExpenseRecord>('/api/expenses', {
-      method: 'POST',
-      body: JSON.stringify(expense),
-    });
-    setExpenses((prev) => [created, ...prev]);
-    notify('Expense recorded.', 'success');
+  const createExpense = async (expense: PendingExpense) => {
+    if(!session||expense.ownerId!==session.user.id||!isOnline)throw new Error('Connect and sign in as the original operator to confirm the expense.');
+    const {ownerId,createdAt,...payload}=expense;
+    const created=await apiRequest<ExpenseRecord & {clientMutationId:string;duplicate:boolean;voided:boolean}>('/api/expenses',{method:'POST',body:JSON.stringify(payload)});
+    if(created.clientMutationId!==expense.clientMutationId||typeof created.id!=='string'||!created.id||created.category!==expense.category||created.description!==expense.description||created.amount!==expense.amount||created.vendor!==expense.vendor||created.expenseDate!==expense.expenseDate||typeof created.duplicate!=='boolean'||typeof created.voided!=='boolean')throw new Error('Expense confirmation could not be verified. Retry the original reference.');
+    await acknowledgeExpense(expense);
+    setExpenses(prev=>created.voided?prev.filter(e=>e.id!==created.id):[created,...prev.filter(e=>e.id!==created.id)]);
+    notify(created.voided?'Original expense confirmed; it was subsequently voided.':created.duplicate?'Original expense confirmed.':'Expense recorded.','success');
   };
 
-  const deleteExpense = async (id: string) => {
-    await apiRequest(`/api/expenses/${id}`, { method: 'DELETE' });
+  const deleteExpense = async (id: string, reason: string) => {
+    await apiRequest(`/api/expenses/${encodeURIComponent(id)}`, { method: 'DELETE', body: JSON.stringify({reason}) });
     setExpenses((prev) => prev.filter((e) => e.id !== id));
-    notify('Expense removed.', 'info');
+    notify('Expense voided; original record retained.', 'info');
   };
 
   const startShift = async (openingCash: number) => {
@@ -966,21 +968,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     notify('Cashier shift started.', 'success');
   };
 
-  const recordCashMovement = async (
-    shiftId: string,
-    type: 'cash_in' | 'cash_out',
-    amount: number,
-    reason: string,
-  ) => {
-    await apiRequest(`/api/shifts/${shiftId}/movement`, {
-      method: 'POST',
-      body: JSON.stringify({ type, amount, reason }),
+  const recordCashMovement=async(record:PendingDrawerMovement)=>{
+    if(!session||record.ownerId!==session.user.id||!isOnline)throw new Error('Connect and sign in as the original operator to confirm the adjustment.');
+    const result=await apiRequest<{id:string;clientMutationId:string;type:string;amount:number;reason:string;movementId:string;expectedCash:number;duplicate:boolean}>(`/api/shifts/${encodeURIComponent(record.shiftId)}/movement`,{
+      method:'POST',body:JSON.stringify({type:record.type,amount:record.amount,reason:record.reason,clientMutationId:record.clientMutationId}),
     });
-    await refreshBootstrap();
-    notify(`Recorded ${type === 'cash_in' ? 'Cash In' : 'Cash Out'}.`, 'success');
+    if(result.id!==record.shiftId||result.clientMutationId!==record.clientMutationId||result.type!==record.type||result.amount!==record.amount||result.reason!==record.reason||typeof result.movementId!=='string'||!result.movementId||typeof result.duplicate!=='boolean'||!Number.isFinite(result.expectedCash)||result.expectedCash<0)throw new Error('Drawer confirmation could not be verified. Retry the original reference.');
+    await acknowledgeDrawerMovement(record);await refreshBootstrap();
+    notify(result.duplicate?'Original drawer adjustment confirmed.':'Drawer adjustment recorded.','success');
   };
 
   const closeShift = async (shiftId: string, actualCash: number, reconciliationNote: string) => {
+    if(!session||await readPendingDrawerMovement(session.user.id))throw new Error('Confirm the outstanding drawer adjustment before closing the shift.');
     await apiRequest(`/api/shifts/${shiftId}/close`, {
       method: 'POST',
       body: JSON.stringify({ actualCash, reconciliationNote }),
@@ -1049,6 +1048,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     lastSyncedAt,
     outbox: outbox.filter(m => session && mutationOwner(m) === session.user.id),
     syncNow,
+    retrySyncConflict,
+    refreshSyncQueue,
+    syncError,
     loadingData,
     dataError,
     settings,

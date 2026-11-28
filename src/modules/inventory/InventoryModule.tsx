@@ -26,6 +26,10 @@ import {
   type InventoryItemFormValues,
 } from '../../components/inventory/InventoryItemDialog.tsx';
 import { InventoryTable } from '../../components/inventory/InventoryTable.tsx';
+import { ReorderRequestModal } from '../../components/inventory/ReorderRequestModal.tsx';
+import { InventoryHistory } from '../../components/inventory/InventoryHistory.tsx';
+import { ArchivedInventory } from '../../components/inventory/ArchivedInventory.tsx';
+import { apiRequest } from '../../services/apiClient.ts';
 
 type InventoryTab = 'items' | 'low_stock' | 'movements';
 type InventorySortKey = Extract<
@@ -42,6 +46,8 @@ const STOCK_STATUS_RANK: Record<StockStatus, number> = {
 export const InventoryModule: React.FC = () => {
   const {
     session,
+    isOnline,
+    outbox,
     settings,
     inventoryState,
     loadInventory,
@@ -81,9 +87,12 @@ export const InventoryModule: React.FC = () => {
 
   // Modals
   const [itemModalOpen, setItemModalOpen] = useState(false);
+  const [reorderOpen,setReorderOpen]=useState(false);
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
   const [adjustTarget, setAdjustTarget] = useState<InventoryItem | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<InventoryItem | null>(null);
+  const [archiveOpen,setArchiveOpen]=useState(false);
+  const [archiveReason,setArchiveReason]=useState('');
   const [detailItemId, setDetailItemId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -91,6 +100,7 @@ export const InventoryModule: React.FC = () => {
   // Stock adjustment form
   const [movementType, setMovementType] = useState<StockMovementType>('purchase');
   const [delta, setDelta] = useState('50');
+  const [purchasePrice,setPurchasePrice] = useState('');
   const [reference, setReference] = useState('');
   const [note, setNote] = useState('');
 
@@ -205,6 +215,7 @@ export const InventoryModule: React.FC = () => {
     const suggested = getSuggestedRestockQuantity(item);
     setAdjustTarget(item);
     setMovementType('purchase');
+    setPurchasePrice('');
     setDelta(String(suggested > 0 ? suggested : 50));
     setReference('');
     setNote('');
@@ -224,6 +235,7 @@ export const InventoryModule: React.FC = () => {
         itemType: values.itemType,
         unit: values.unit,
         reorderLevel: values.reorderLevel,
+        minimumThreshold: values.minimumThreshold,
         reorderQuantity: values.reorderQuantity,
         unitCost: values.unitCost,
         supplier: values.supplier,
@@ -257,6 +269,7 @@ export const InventoryModule: React.FC = () => {
       await trackStockChange(adjustTarget.id, {
         movementType,
         quantityDelta: Number(delta) || 0,
+        ...(movementType==='purchase' && canEditCatalog && purchasePrice.trim()!==''?{purchaseUnitCost:Number(purchasePrice)}:{}),
         reference,
         note,
       });
@@ -268,6 +281,18 @@ export const InventoryModule: React.FC = () => {
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const pendingForTarget=Boolean(deleteTarget&&outbox.some(m=>m.type==='ADJUST_INVENTORY'&&(m.payload as {inventoryItemId?:string})?.inventoryItemId===deleteTarget.id));
+  const handleArchive=async()=>{
+    if(!deleteTarget||!isOnline||pendingForTarget||!archiveReason.trim())return;
+    setDeleting(true);
+    try{
+      await apiRequest('/api/inventory/'+encodeURIComponent(deleteTarget.id)+'/archive',{method:'POST',body:JSON.stringify({reason:archiveReason.trim()})});
+      setDeleteTarget(null);setDetailItemId(null);setArchiveReason('');
+      await loadInventory();notify('Inventory item archived; movement history retained.','success');
+    }catch(e){notify(e instanceof Error?e.message:'Archive failed','error');}
+    finally{setDeleting(false);}
   };
 
   const handleConfirmDelete = async () => {
@@ -331,6 +356,10 @@ export const InventoryModule: React.FC = () => {
         </div>
       )}
 
+      {canEditCatalog && <Button variant="outline" size="sm" onClick={()=>setReorderOpen(true)}>Create Reorder Request</Button>}
+      {reorderOpen && canEditCatalog && <ReorderRequestModal onClose={()=>setReorderOpen(false)}/>}
+      {canEditCatalog&&<Button size="sm" variant="outline" onClick={()=>setArchiveOpen(true)}>Archived Inventory</Button>}
+      {archiveOpen&&canEditCatalog&&<ArchivedInventory onClose={()=>setArchiveOpen(false)}/>}
       {/* KPI Strip */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <Card>
@@ -362,7 +391,7 @@ export const InventoryModule: React.FC = () => {
           </div>
         </Card>
         <Card>
-          <div className="text-xs font-medium text-[var(--pos-text-muted)]">Inventory Valuation</div>
+          <div className="text-xs font-medium text-[var(--pos-text-muted)]">Estimated Inventory Valuation</div>
           <div className="text-2xl font-bold font-mono-num text-[var(--pos-text)] mt-1">
             {formatCurrency(totalValuation, taxCurr)}
           </div>
@@ -534,7 +563,7 @@ export const InventoryModule: React.FC = () => {
           taxAndCurrency={taxCurr}
           canEdit={canEditCatalog}
           onEdit={openEditItemModal}
-          onDelete={(item) => setDeleteTarget(item)}
+          onDelete={(item) => {setArchiveReason('');setDeleteTarget(item);}}
           onAdjustStock={openAdjustModal}
           onBulkUpdate={bulkUpdateInventoryItems}
           onRowClick={(item) => setDetailItemId(item.id)}
@@ -692,6 +721,7 @@ export const InventoryModule: React.FC = () => {
                   <div className="text-[11px] text-[var(--pos-text-muted)]">Reorder Level</div>
                   <div className="text-lg font-bold font-mono-num text-[var(--pos-text)] mt-0.5">
                     {detailItem.reorderLevel} {detailItem.unit}
+                    <div className="text-xs font-normal">Critical minimum: {detailItem.minimumThreshold || 'Disabled'}</div>
                   </div>
                 </div>
                 <div
@@ -758,70 +788,7 @@ export const InventoryModule: React.FC = () => {
                 </div>
               </div>
 
-              <div>
-                <div className="text-xs font-semibold text-[var(--pos-text)] mb-2">
-                  Recent Stock Movements ({detailMovements.length})
-                </div>
-                <DataTable
-                  rows={detailMovements.slice(0, 12)}
-                  rowKey={(m) => m.id}
-                  emptyTitle="No movement history for this item"
-                  emptyDescription="Restocks, print job deductions, and manual counts will appear here."
-                  columns={[
-                    {
-                      key: 'type',
-                      label: 'Movement',
-                      render: (m) => (
-                        <div>
-                          <div className="text-xs font-medium text-[var(--pos-text)]">
-                            {STOCK_MOVEMENT_LABELS[m.movementType] || m.movementType}
-                          </div>
-                          <div className="text-[11px] text-[var(--pos-text-muted)]">
-                            {m.performedBy}
-                            {m.reference ? ` · ${m.reference}` : ''}
-                            {m.note ? ` · ${m.note}` : ''}
-                          </div>
-                        </div>
-                      ),
-                    },
-                    {
-                      key: 'date',
-                      label: 'Date',
-                      render: (m) => (
-                        <span className="font-mono-num text-xs text-[var(--pos-text-muted)]">
-                          {new Date(m.occurredAt || m.createdAt).toLocaleString()}
-                        </span>
-                      ),
-                    },
-                    {
-                      key: 'delta',
-                      label: 'Delta',
-                      align: 'right',
-                      render: (m) => (
-                        <span
-                          className={`font-mono-num font-semibold text-xs ${
-                            m.quantityDelta >= 0
-                              ? 'text-[var(--pos-success)]'
-                              : 'text-[var(--pos-error)]'
-                          }`}
-                        >
-                          {m.quantityDelta >= 0 ? `+${m.quantityDelta}` : m.quantityDelta}
-                        </span>
-                      ),
-                    },
-                    {
-                      key: 'balance',
-                      label: 'Balance',
-                      align: 'right',
-                      render: (m) => (
-                        <span className="font-mono-num text-xs font-semibold text-[var(--pos-text)]">
-                          {m.balanceAfter} {detailItem.unit}
-                        </span>
-                      ),
-                    },
-                  ]}
-                />
-              </div>
+              <InventoryHistory key={detailItem.id} item={detailItem} currency={taxCurr} online={isOnline}/>
             </div>
           );
         })()}
@@ -874,6 +841,10 @@ export const InventoryModule: React.FC = () => {
             onChange={(e) => setDelta(e.target.value)}
             required
           />
+          {movementType==='purchase' && canEditCatalog && <div className="space-y-1">
+            <Input label={`Supplier purchase price per unit (${taxCurr.currencySymbol})`} type="number" min="0" max="1000000000" step="0.0001" placeholder="Optional — leave blank to keep current cost" value={purchasePrice} onChange={e=>setPurchasePrice(e.target.value)}/>
+            <p className="text-xs text-[var(--pos-text-muted)]">Current estimated unit cost: {formatCurrency(adjustTarget?.unitCost ?? 0,taxCurr)}. Entering a supplier price records the actual purchase price and recalculates the weighted-average estimate when accepted by the server. Offline values are provisional.</p>
+          </div>}
           <Input
             label="Reference # (PO / Job / Receipt)"
             placeholder="e.g. PO-2026-042 or JO-261124-102"
@@ -908,7 +879,7 @@ export const InventoryModule: React.FC = () => {
         onClose={() => {
           if (!deleting) setDeleteTarget(null);
         }}
-        title="Delete Inventory Item"
+        title="Discontinue Inventory Item"
         subtitle={
           deleteTarget ? `${deleteTarget.name} · ${deleteTarget.sku}` : ''
         }
@@ -927,20 +898,25 @@ export const InventoryModule: React.FC = () => {
               variant="danger"
               type="button"
               loading={deleting}
+              disabled={!isOnline||pendingForTarget||Boolean(deleteTarget && ((deleteTarget.currentStock ?? deleteTarget.quantityOnHand) > 0 || getItemStockMovements(deleteTarget.id).length > 0))}
               onClick={() => void handleConfirmDelete()}
             >
               <Trash2 className="w-3.5 h-3.5" />
               Delete Item
             </Button>
+            <Button size="sm" loading={deleting} disabled={!isOnline||pendingForTarget||!archiveReason.trim()||Boolean(deleteTarget&&(deleteTarget.quantityOnHand!==0||(deleteTarget.reservedQuantity??0)!==0))} onClick={()=>void handleArchive()}>Archive Item</Button>
           </>
         }
       >
         {deleteTarget && (
           <div className="space-y-3 text-sm text-[var(--pos-text)]">
             <p>
-              Are you sure you want to permanently remove{' '}
+              Archive or permanently remove{' '}
               <strong className="font-semibold">{deleteTarget.name}</strong> from inventory?
             </p>
+            <p className="text-xs text-[var(--pos-text-muted)]">Archiving preserves all movement history. Reconcile stock and reservations, remove service bindings, and synchronize all terminals first. Permanent deletion is restricted to unused items.</p>
+            <Input label="Archive reason" value={archiveReason} onChange={e=>setArchiveReason(e.target.value)} maxLength={500}/>
+            {pendingForTarget&&<p role="alert">This terminal has pending or conflicted stock adjustments for this item. Reconcile them first.</p>}
             {(deleteTarget.currentStock ?? deleteTarget.quantityOnHand) > 0 && (
               <div
                 style={{ borderRadius: 'var(--pos-radius)' }}
@@ -952,7 +928,7 @@ export const InventoryModule: React.FC = () => {
                   <strong className="font-mono-num">
                     {deleteTarget.currentStock ?? deleteTarget.quantityOnHand} {deleteTarget.unit}
                   </strong>{' '}
-                  on hand. Deleting it will also remove its associated stock movement history.
+                  on hand. Items with physical stock cannot be deleted. Reconcile the stock before discontinuing this item.
                 </span>
               </div>
             )}

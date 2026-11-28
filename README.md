@@ -1,4 +1,6 @@
-# Printshop POS 0.9.5 candidate
+# Printshop POS 0.9.7 expanded acceptance candidate
+
+**Continuing development? Start with [HANDOFF-README.md](HANDOFF-README.md), then read the latest [development queue checkpoint](DEVELOPMENT_QUEUE.md).**
 
 Use the separately staged Windows x64 distribution for installation and the [operator guide](OPERATOR-GUIDE.md) for setup, backups and device checks. The software acceptance checks use synthetic data. Windows, actual devices, a physical printer and BIR review require independent acceptance.
 
@@ -8,7 +10,7 @@ On a source checkout, use Node 22.12+ in the 22 series and run `node validate.mj
 
 Use a disposable English Windows 11 x64 console session with a single monitor that offers 100%, 125% and 150% scaling. Install the source workspace's locked development dependencies and Playwright Chromium on that test machine. This setup is for release acceptance. Operator installations use the bundled runtime.
 
-Set `POS_WINDOWS_ACCEPTANCE=disposable-desktop`, then run `node scripts/windows/native-acceptance.mjs OLD_RELEASE NEW_RELEASE NEW_EVIDENCE_DIR`. Supply the extracted 0.9.4 and 0.9.5 Windows packages. The harness checks the bundled runtime, installs into temporary LocalAppData, uses synthetic transactions and captures PNGs and native DPI measurements. It restores the original scaling in its cleanup. The runner must permit execution of the checked-in PowerShell script under its normal execution policy.
+Set `POS_WINDOWS_ACCEPTANCE=disposable-desktop`, then run `node scripts/windows/native-acceptance.mjs OLD_RELEASE NEW_RELEASE NEW_EVIDENCE_DIR`. Supply the extracted 0.9.5 baseline and 0.9.6 candidate Windows packages. The harness checks the bundled runtime, installs into temporary LocalAppData, uses synthetic transactions and captures PNGs and native DPI measurements. It restores the original scaling in its cleanup. The runner must permit execution of the checked-in PowerShell script under its normal execution policy.
 
 ## Historical notes
 
@@ -104,3 +106,7 @@ Run `node scripts/readiness.mjs` for a fail-closed evidence report in `.ldc/rele
 
 ## v0.9.2 — Automatic startup
 After installing, open RUN-POS.cmd to validate, build, start and open the Windows browser application automatically. Keep its console open; Ctrl+C stops the supervised server. INSTALLED-LDC.cmd remains available for diagnostics. The source START-PRINTSHOP-POS.cmd uses the source data location unless POS_DATA_DIR is supplied. Initial npm provisioning still needs network access and a compatible Node.js 22 runtime. No production acceptance is claimed.
+
+The GitHub Actions artifacts are the tested distribution, not the raw development checkout. The versioned source archive contains its regenerated SHA-256 release manifest. The Windows distribution includes Node.js and SQLite; installation does not require npm. Physical acceptance remains deferred. See [feature matrix](FEATURE-MATRIX.md).
+
+The verified v0.9.6 software pilot is preserved at pilot/v0.9.6; v0.9.7 extends automated deferred acceptance. Virtual print evidence is not physical printer evidence.

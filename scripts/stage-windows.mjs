@@ -31,7 +31,9 @@ for (const entry of selected) {
   copy(entry,entry,root,{filter: filename => {
     const local = path.relative(path.join(root,entry),filename).split(path.sep);
     if (local[0]==='node_modules') return false;
-    if (entry==='node_modules/better-sqlite3' && local[0]==='build') return false;
+    if (entry==='node_modules/better-sqlite3' && local[0]==='build') {
+      return process.platform==='win32' && process.arch==='x64' && ['build','build/Release','build/Release/better_sqlite3.node'].includes(local.join('/'));
+    }
     if (entry==='node_modules/better-sqlite3' && local[0]==='prebuilds' && local.length>1) return local[1]==='win32-x64.node';
     return true;
   }});
@@ -47,6 +49,8 @@ for (const [source, destination] of Object.entries({
 }
 copy('node.exe','runtime/node.exe',runtime);
 copy('LICENSE','runtime/LICENSE',runtime);
+const sqliteRoot = path.join(target,'node_modules','better-sqlite3');
+if (!['prebuilds/win32-x64.node','build/Release/better_sqlite3.node'].some(file=>fs.existsSync(path.join(sqliteRoot,file)))) throw Error('Missing Windows x64 SQLite native binary');
 const files = Object.fromEntries(fs.readdirSync(target,{recursive:true,withFileTypes:true})
   .filter(entry=>entry.isFile())
   .map(entry=>path.join(entry.parentPath,entry.name))

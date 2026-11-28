@@ -25,6 +25,7 @@ export interface InventoryItemFormValues {
   unit: string;
   quantityOnHand: number;
   reorderLevel: number;
+  minimumThreshold: number;
   reorderQuantity: number;
   unitCost: number;
   supplier: string;
@@ -68,6 +69,7 @@ export const InventoryItemDialog: React.FC<InventoryItemDialogProps> = ({
 
   const [quantityOnHand, setQuantityOnHand] = useState('100');
   const [reorderLevel, setReorderLevel] = useState('50');
+  const [minimumThreshold,setMinimumThreshold] = useState('0');
   const [reorderQuantity, setReorderQuantity] = useState('200');
   const [unitCost, setUnitCost] = useState('1.50');
   const [storageLocation, setStorageLocation] = useState('');
@@ -103,6 +105,7 @@ export const InventoryItemDialog: React.FC<InventoryItemDialogProps> = ({
       setUnit(item.unit);
       setQuantityOnHand(String(item.quantityOnHand));
       setReorderLevel(String(item.reorderLevel));
+      setMinimumThreshold(String(item.minimumThreshold ?? 0));
       setReorderQuantity(
         String(item.reorderQuantity ?? Math.max(item.reorderLevel * 2, 0)),
       );
@@ -123,6 +126,7 @@ export const InventoryItemDialog: React.FC<InventoryItemDialogProps> = ({
       setUnit(firstCat?.defaultUnit || 'sheet');
       setQuantityOnHand('100');
       setReorderLevel('50');
+      setMinimumThreshold('0');
       setReorderQuantity('200');
       setUnitCost('1.50');
       setStorageLocation('');
@@ -169,6 +173,7 @@ export const InventoryItemDialog: React.FC<InventoryItemDialogProps> = ({
 
     const numQty = Number(quantityOnHand);
     const numReorder = Number(reorderLevel);
+    const numMinimum = Number(minimumThreshold);
     const numReorderQty = Number(reorderQuantity);
     const numCost = Number(unitCost);
     const numLeadTime = Number(leadTimeDays);
@@ -193,6 +198,7 @@ export const InventoryItemDialog: React.FC<InventoryItemDialogProps> = ({
       unit,
       quantityOnHand: numQty,
       reorderLevel: numReorder,
+      minimumThreshold: numMinimum,
       unitCost: numCost,
     });
 
@@ -234,6 +240,7 @@ export const InventoryItemDialog: React.FC<InventoryItemDialogProps> = ({
         unit: unit.trim(),
         quantityOnHand: Number(numQty.toFixed(2)),
         reorderLevel: Number(numReorder.toFixed(2)),
+        minimumThreshold: Number(numMinimum.toFixed(2)),
         reorderQuantity: Math.max(
           0,
           Number((Number.isNaN(numReorderQty) ? 0 : numReorderQty).toFixed(2)),
@@ -433,6 +440,16 @@ export const InventoryItemDialog: React.FC<InventoryItemDialogProps> = ({
               onChange={(e) => setReorderLevel(e.target.value)}
               error={fieldErrors.reorderLevel}
               required
+            />
+            <Input
+              id={`${formId}-minimum`}
+              label="Critical Minimum (0 = disabled)"
+              type="number"
+              min="0"
+              step="0.01"
+              value={minimumThreshold}
+              onChange={(e) => setMinimumThreshold(e.target.value)}
+              error={fieldErrors.minimumThreshold}
             />
             <Input
               id={`${formId}-reorder-qty`}

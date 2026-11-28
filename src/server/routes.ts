@@ -1,5 +1,8 @@
+import {transactionRequestDigest} from './transactionIdentity.ts';
+import {isLedgerMoney,cents,sumCents,fromCents} from '../shared/money.ts';
 import { attemptGate, validPassword, validPin, removesLastAdmin } from '../shared/securityPolicy.ts';
-import { validateSyncEnvelope } from '../shared/offlinePolicy.ts';
+import { validateSyncEnvelope, isRetryableSyncError } from '../shared/offlinePolicy.ts';
+import {validatePurchaseCost,weightedPurchaseCost} from '../shared/purchaseCost.ts';
 import { recordOrderConversion } from './orderConversion.ts';
 import { validateJobPatch } from '../shared/jobWorkflow.ts';
 import { reverseSale, collectBalance } from './reversal.ts';
@@ -39,7 +42,9 @@ import type {
 import { verifyCatalogPricing } from '../shared/authoritativePricing.ts';
 import { validateTransaction } from '../shared/transactionValidation.ts';
 import { DEFAULT_SETTINGS } from '../shared/defaults.ts';
+import { validateSettings } from '../shared/settingsValidation.ts';
 import {
+  buildInventoryAlerts,
   computeSignedStockDelta,
   inferReferenceType,
   validateInventoryItemInput,
@@ -91,6 +96,9 @@ function mapInventoryItemRow(i: Record<string, unknown>): InventoryItem {
     reservedQuantity: Number(i.reserved_quantity) || 0,
     reorderLevel,
     reorderThreshold: reorderLevel,
+    minimumThreshold: Number(i.minimum_threshold) || 0,
+    archivedAt: i.archived_at ? String(i.archived_at) : undefined,
+    archiveReason: i.archive_reason ? String(i.archive_reason) : undefined,
     reorderQuantity: Number(i.reorder_quantity) || Math.max(reorderLevel * 2, 0),
     unitCost: Number(i.unit_cost) || 0,
     supplier,
@@ -126,6 +134,7 @@ function mapStockMovementRow(m: Record<string, unknown>): StockMovement {
     quantityDelta: delta,
     balanceAfter,
     unitCostAtMovement: Number(m.unit_cost_at_movement) || 0,
+    purchaseUnitCost: m.purchase_unit_cost == null ? undefined : Number(m.purchase_unit_cost),
     referenceType: (m.reference_type
       ? String(m.reference_type)
       : inferReferenceType(movementType)) as StockMovement['referenceType'],
@@ -170,6 +179,7 @@ function mapServiceRow(row: Record<string, unknown>): PrintService {
 
 function mapTransactionRow(row: Record<string, unknown>): Transaction {
   return {
+    receiptSnapshot: row.receipt_snapshot_json ? parseJsonSafe(String(row.receipt_snapshot_json), undefined) : undefined,
     id: String(row.id),
     receiptNumber: String(row.receipt_number),
     clientMutationId: String(row.client_mutation_id),
@@ -497,7 +507,7 @@ apiRouter.patch('/auth/users/:id', requireAuth, requireRole(['admin']), (req: Au
 
 // ---------- BOOTSTRAP ----------
 
-apiRouter.get('/bootstrap', requireAuth, (_req, res) => {
+apiRouter.get('/bootstrap', requireAuth, (req:AuthenticatedRequest, res) => {
   const settingsRow = db.prepare('SELECT value_json FROM app_settings WHERE key = ?').get('app_settings') as
     | { value_json: string }
     | undefined;
@@ -536,7 +546,7 @@ apiRouter.get('/bootstrap', requireAuth, (_req, res) => {
   }));
 
   const inventory = (
-    db.prepare('SELECT * FROM inventory_items ORDER BY name ASC').all() as Array<
+    db.prepare('SELECT * FROM inventory_items WHERE archived_at IS NULL ORDER BY name ASC').all() as Array<
       Record<string, unknown>
     >
   ).map(mapInventoryItemRow);
@@ -578,7 +588,7 @@ apiRouter.get('/bootstrap', requireAuth, (_req, res) => {
   ).map(mapPrintJobRow);
 
   const expenses = (
-    db.prepare('SELECT * FROM expenses ORDER BY expense_date DESC, created_at DESC LIMIT 200').all() as Array<
+    db.prepare('SELECT * FROM expenses WHERE voided_at IS NULL ORDER BY expense_date DESC, created_at DESC LIMIT 200').all() as Array<
       Record<string, unknown>
     >
   ).map((e) => ({
@@ -646,10 +656,31 @@ apiRouter.get('/bootstrap', requireAuth, (_req, res) => {
     printJobs,
     expenses,
     shifts,
-    users,
-    auditLogs,
+    users:req.authUser!.role==='admin'?users:users.map(u=>u.id===req.authUser!.id?u:{...u,email:''}),
+    auditLogs:['admin','manager'].includes(req.authUser!.role)?auditLogs:[],
     serverTime: new Date().toISOString(),
   });
+});
+
+// ---------- DATE-RANGE FINANCIAL REPORTS ----------
+apiRouter.get('/reports/finance', requireAuth, (req, res) => {
+  const from = req.query.from;
+  const to = req.query.to;
+  const valid = (v: unknown): v is string => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) &&
+    Number.isFinite(Date.parse(v)) && new Date(v).toISOString().slice(0,10) === v;
+  if (!valid(from) || !valid(to) || from > to) return res.status(400).json({error:'Valid reporting date range required.'});
+  const start = new Date(from+'T00:00:00+08:00').toISOString();
+  const end = new Date(Date.parse(to+'T00:00:00+08:00') + 86400000).toISOString();
+  const result = db.transaction(() => {
+    const transactions = (db.prepare("SELECT * FROM transactions WHERE type = 'sale' AND created_at >= ? AND created_at < ? ORDER BY created_at DESC, id DESC").all(start,end) as Record<string,unknown>[]).map(mapTransactionRow);
+    const expenses = (db.prepare('SELECT * FROM expenses WHERE voided_at IS NULL AND expense_date >= ? AND expense_date <= ? ORDER BY expense_date DESC, created_at DESC').all(from,to) as Record<string,unknown>[]).map(e=>({
+      id:String(e.id), category:e.category as ExpenseRecord['category'], description:String(e.description),
+      amount:Number(e.amount)||0, vendor:String(e.vendor||''), recordedBy:String(e.recorded_by),
+      expenseDate:String(e.expense_date), isDemo:e.is_demo===1, createdAt:String(e.created_at),
+    }));
+    return {from,to,transactions,expenses,generatedAt:new Date().toISOString()};
+  })();
+  res.json(result);
 });
 
 // ---------- SETTINGS ----------
@@ -660,25 +691,23 @@ apiRouter.put(
   requireRole(['admin', 'manager']),
   (req: AuthenticatedRequest, res) => {
     const incoming = req.body as AppSettings;
-    if (!incoming || !incoming.branding || !incoming.tokens) {
-      return res.status(400).json({ error: 'Invalid settings payload.' });
-    }
-    const updated: AppSettings = {
-      ...incoming,
-      updatedAt: new Date().toISOString(),
-    };
-    db.prepare(
-      'INSERT OR REPLACE INTO app_settings (key, value_json, updated_at) VALUES (?, ?, ?)',
-    ).run('app_settings', JSON.stringify(updated), updated.updatedAt);
-
-    writeAuditLog(
-      req.authUser!.id,
-      req.authUser!.fullName,
-      'SETTINGS_UPDATED',
-      'app_settings',
-      'app_settings',
-      'Updated business branding, layout, and system settings',
-    );
+    const invalid = validateSettings(incoming);
+    if (invalid) return res.status(400).json({ error: invalid });
+    const updated = db.transaction(() => {
+      const row = db.prepare('SELECT value_json FROM app_settings WHERE key = ?').get('app_settings') as { value_json: string } | undefined;
+      const current = row ? parseJsonSafe(row.value_json, DEFAULT_SETTINGS) : DEFAULT_SETTINGS;
+      if (incoming.updatedAt !== current.updatedAt) return null;
+      const next: AppSettings = {
+        ...incoming,
+        updatedAt: new Date(Math.max(Date.now(), (Date.parse(current.updatedAt) || 0) + 1)).toISOString(),
+      };
+      db.prepare('INSERT OR REPLACE INTO app_settings (key, value_json, updated_at) VALUES (?, ?, ?)')
+        .run('app_settings', JSON.stringify(next), next.updatedAt);
+      writeAuditLog(req.authUser!.id, req.authUser!.fullName, 'SETTINGS_UPDATED', 'app_settings', 'app_settings',
+        'Updated business branding, layout, and system settings');
+      return next;
+    })();
+    if (!updated) return res.status(409).json({ error: 'Settings changed on another terminal. Reload settings and review your changes before saving again.' });
     res.json(updated);
   },
 );
@@ -719,6 +748,11 @@ apiRouter.delete(
   },
 );
 
+function hasInactiveConsumable(bindings: unknown): boolean {
+  if(bindings===undefined)return false;
+  return !Array.isArray(bindings)||bindings.some(b=>!b||typeof b.inventoryItemId!=='string'||!db.prepare('SELECT id FROM inventory_items WHERE id=? AND archived_at IS NULL').get(b.inventoryItemId));
+}
+
 apiRouter.post(
   '/services',
   requireAuth,
@@ -728,6 +762,7 @@ apiRouter.post(
     if (!s.name || !s.categoryId || !s.pricingMethod) {
       return res.status(400).json({ error: 'Service name, category, and pricing method are required.' });
     }
+    if(hasInactiveConsumable(s.consumables))return res.status(409).json({error:'Service consumables must reference active inventory items.'});
     const id = s.id || genId('srv');
     const now = new Date().toISOString();
     db.prepare(`
@@ -786,6 +821,7 @@ apiRouter.put(
     const s = req.body as Partial<PrintService>;
     const existing = db.prepare('SELECT id FROM services WHERE id = ?').get(id);
     if (!existing) return res.status(404).json({ error: 'Service not found.' });
+    if(hasInactiveConsumable(s.consumables))return res.status(409).json({error:'Service consumables must reference active inventory items.'});
 
     const now = new Date().toISOString();
     db.prepare(`
@@ -856,13 +892,19 @@ function applyTransactionCreation(
   actorRole: string,
 ): { transaction: Transaction; duplicate: boolean } {
   validateTransaction(payload);
+  const digest=transactionRequestDigest(payload);
+  const identity=db.prepare('SELECT * FROM transaction_request_identities WHERE mutation_id=?').get(payload.clientMutationId) as {actor_id:string;transaction_id:string;request_digest:string}|undefined;
   const existing = db
     .prepare('SELECT * FROM transactions WHERE client_mutation_id = ?')
     .get(payload.clientMutationId) as Record<string, unknown> | undefined;
 
-  if (existing) {
-    if (existing.cashier_id !== actorId) throw Object.assign(new Error("Mutation belongs to another cashier."), {statusCode:409});
-    return { transaction: mapTransactionRow(existing), duplicate: true };
+  if(identity||existing){
+    const conflict=(message:string):never=>{throw Object.assign(new Error(message),{statusCode:409});};
+    if((identity&&identity.actor_id!==actorId)||(existing&&existing.cashier_id!==actorId))return conflict('Mutation belongs to another cashier.');
+    if(!identity)return conflict('Legacy transaction already exists; original request identity is unavailable. Reconcile with the recorded receipt.');
+    if(!existing||existing.id!==identity.transaction_id)return conflict('Original transaction no longer exists. Do not recreate this mutation.');
+    if(digest!==identity.request_digest)return conflict('Transaction mutation identity conflict. Retry only the unchanged original request.');
+    return {transaction:mapTransactionRow(existing),duplicate:true};
   }
 
   const settingsRow = db.prepare('SELECT value_json FROM app_settings WHERE key = ?').get('app_settings') as { value_json: string } | undefined;
@@ -922,6 +964,9 @@ function applyTransactionCreation(
       now,
     );
 
+    db.prepare('INSERT INTO transaction_request_identities(mutation_id,actor_id,transaction_id,request_digest) VALUES (?,?,?,?)').run(payload.clientMutationId,actorId,txId,digest);
+    db.prepare('UPDATE transactions SET receipt_snapshot_json = ? WHERE id = ?').run(JSON.stringify({branding:pricingSettings.branding,taxAndCurrency:pricingSettings.taxAndCurrency}),txId);
+
     // If this is a real completed or partial sale (not held or quotation), deduct inventory consumables, update customer, and update shift
     if (payload.type === 'sale') {
       const items = (payload.items || []) as CartItem[];
@@ -932,14 +977,14 @@ function applyTransactionCreation(
           const deductQty = Number((binding.quantityPerUnit * item.effectiveQuantity).toFixed(2));
           if (deductQty <= 0) continue;
           const invRow = db
-            .prepare('SELECT id, name, quantity_on_hand, unit_cost FROM inventory_items WHERE id = ?')
+            .prepare('SELECT id, name, quantity_on_hand, reserved_quantity, unit_cost FROM inventory_items WHERE id = ? AND archived_at IS NULL')
             .get(binding.inventoryItemId) as
-            | { id: string; name: string; quantity_on_hand: number; unit_cost: number }
+            | { id: string; name: string; quantity_on_hand: number; reserved_quantity: number; unit_cost: number }
             | undefined;
           if (!invRow) throw Object.assign(new Error("Configured consumable not found."), { statusCode: 409 });
           if (invRow) {
             const qtyBefore = Number(invRow.quantity_on_hand) || 0;
-            if (deductQty > qtyBefore) throw Object.assign(new Error(`Insufficient stock: ${invRow.name}`), { statusCode: 409 });
+            if (!Number.isFinite(deductQty) || deductQty > Number((qtyBefore - Math.max(0,Number(invRow.reserved_quantity)||0)).toFixed(2))) throw Object.assign(new Error(`Insufficient stock: ${invRow.name}`), { statusCode: 409 });
             const nextQty = Number((qtyBefore - deductQty).toFixed(2));
             db.prepare('UPDATE inventory_items SET quantity_on_hand = ?, updated_at = ? WHERE id = ?').run(
               nextQty,
@@ -1023,9 +1068,9 @@ function applyTransactionCreation(
         const pointsEarned = Math.floor(Number(payload.amountPaid) / 10);
         db.prepare(`
           UPDATE customers
-          SET total_spent = total_spent + ?,
+          SET total_spent = ROUND(total_spent + ?,2),
               loyalty_points = loyalty_points + ?,
-              outstanding_balance = outstanding_balance + ?
+              outstanding_balance = ROUND(outstanding_balance + ?,2)
           WHERE id = ?
         `).run(
           Number(payload.amountPaid) || 0,
@@ -1037,19 +1082,14 @@ function applyTransactionCreation(
 
       // Update active cashier shift if linked
       if (payload.shiftId) {
-        const cashPaid = (payload.payments || [])
-          .filter((p) => p.methodType === 'cash')
-          .reduce((s, p) => s + Number(p.amount), 0);
-        const netCashAdded = Math.max(0, cashPaid - (Number(payload.changeAmount) || 0));
-        const electronicPaid = (payload.payments || [])
-          .filter((p) => p.methodType !== 'cash' && p.methodType !== 'credit_balance')
-          .reduce((s, p) => s + Number(p.amount), 0);
+        const netCashAdded=fromCents(sumCents(payload.payments.filter(p=>p.methodType==='cash').map(p=>p.amount))-cents(payload.changeAmount));
+        const electronicPaid=fromCents(sumCents(payload.payments.filter(p=>p.methodType!=='cash').map(p=>p.amount)));
 
         db.prepare(`
           UPDATE cashier_shifts
-          SET cash_sales = cash_sales + ?,
-              electronic_sales = electronic_sales + ?,
-              expected_cash = expected_cash + ?
+          SET cash_sales = ROUND(cash_sales + ?,2),
+              electronic_sales = ROUND(electronic_sales + ?,2),
+              expected_cash = ROUND(expected_cash + ?,2)
           WHERE id = ? AND status = 'open'
         `).run(netCashAdded, electronicPaid, netCashAdded, payload.shiftId);
       }
@@ -1080,8 +1120,18 @@ apiRouter.post('/transactions', requireAuth, (req: AuthenticatedRequest, res) =>
 });
 
 apiRouter.delete('/transactions/:id/held', requireAuth, (req: AuthenticatedRequest, res) => {
-  db.prepare("DELETE FROM transactions WHERE id = ? AND type = 'held' AND NOT EXISTS (SELECT 1 FROM order_conversions WHERE source_id=transactions.id)").run(String(req.params.id));
-  res.json({ ok: true });
+  const actor=req.authUser!,id=String(req.params.id);
+  db.transaction(()=>{
+    const fail=(message:string,statusCode:number):never=>{throw Object.assign(new Error(message),{statusCode});};
+    const record=db.prepare("SELECT cashier_id,type,receipt_number FROM transactions WHERE id=?").get(id) as {cashier_id:string;type:string;receipt_number:string}|undefined;
+    if(!record)return;
+    if(record.type!=='held')return fail('Only held orders may be deleted.',409);
+    if(record.cashier_id!==actor.id&&!['admin','manager'].includes(actor.role))return fail('Only the original cashier or a manager may delete this held order.',403);
+    if(db.prepare('SELECT 1 FROM order_conversions WHERE source_id=?').get(id))return fail('Converted orders cannot be deleted.',409);
+    db.prepare('DELETE FROM transactions WHERE id=?').run(id);
+    writeAuditLog(actor.id,actor.fullName,'HELD_ORDER_DELETED','transaction',id,`Deleted held order ${record.receipt_number}`);
+  })();
+  res.json({ok:true});
 });
 
 for (const action of ['void', 'refund'] as const) {
@@ -1209,6 +1259,96 @@ apiRouter.patch('/print-jobs/:id', requireAuth, (req: AuthenticatedRequest, res)
 
 // ---------- INVENTORY ----------
 
+function currentInventoryAlerts(userId:string){
+  const rows=db.prepare('SELECT i.*,e.epoch,r.epoch AS read_epoch FROM inventory_items i JOIN inventory_alert_epochs e ON e.item_id=i.id LEFT JOIN inventory_alert_reads r ON r.item_id=i.id AND r.user_id=? WHERE i.archived_at IS NULL').all(userId) as Record<string,unknown>[];
+  const byId=new Map(rows.map(row=>[String(row.id),row]));
+  return buildInventoryAlerts(rows.map(mapInventoryItemRow)).map(a=>{
+    const row=byId.get(a.item.id)!;
+    return {signature:a.signature,itemId:a.item.id,epoch:String(row.epoch),read:row.epoch===row.read_epoch};
+  });
+}
+apiRouter.get('/inventory/alerts',requireAuth,(req:AuthenticatedRequest,res)=>{
+  res.setHeader('Cache-Control','no-store');
+  res.json({alerts:currentInventoryAlerts(req.authUser!.id)});
+});
+apiRouter.post('/inventory/alerts/read',requireAuth,(req:AuthenticatedRequest,res)=>{
+  const entries=req.body?.alerts;
+  if(!Array.isArray(entries)||entries.length<1||entries.length>1000||entries.some(a=>!a||typeof a.itemId!=='string'||typeof a.epoch!=='string'||!(/^[a-f0-9]{32}$/).test(a.epoch)))return res.status(400).json({error:'Invalid alert acknowledgment.'});
+  const result=db.transaction(()=>{
+    const active=currentInventoryAlerts(req.authUser!.id);
+    const lookup=new Map(active.map(a=>[a.itemId,a.epoch]));
+    if(entries.some(a=>lookup.get(a.itemId)!==a.epoch))return null;
+    const stmt=db.prepare('INSERT INTO inventory_alert_reads(user_id,item_id,epoch) VALUES(?,?,?) ON CONFLICT(user_id,item_id) DO UPDATE SET epoch=excluded.epoch');
+    for(const a of entries)stmt.run(req.authUser!.id,a.itemId,a.epoch);
+    return currentInventoryAlerts(req.authUser!.id);
+  })();
+  if(!result)return res.status(409).json({error:'Stock alerts changed. Refresh before acknowledging.'});
+  res.json({alerts:result});
+});
+
+apiRouter.get('/inventory/archived',requireAuth,requireRole(['admin','manager']),(_req,res)=>{
+  res.setHeader('Cache-Control','no-store');
+  res.json({items:(db.prepare('SELECT * FROM inventory_items WHERE archived_at IS NOT NULL ORDER BY archived_at DESC,id').all() as Record<string,unknown>[]).map(mapInventoryItemRow)});
+});
+
+apiRouter.post('/inventory/:id/archive',requireAuth,requireRole(['admin','manager']),(req:AuthenticatedRequest,res)=>{
+  const id=String(req.params.id);
+  const reason=req.body?.reason;
+  if(typeof reason!=='string'||!reason.trim()||reason.trim().length>500)return res.status(400).json({error:'An archive reason of 1–500 characters is required.'});
+  const result=db.transaction(()=>{
+    const item=db.prepare('SELECT * FROM inventory_items WHERE id=?').get(id) as Record<string,unknown>|undefined;
+    if(!item)return {status:404,error:'Inventory item not found.'};
+    if(item.archived_at)return {status:200,item:mapInventoryItemRow(item)};
+    if(Number(item.quantity_on_hand)!==0||Number(item.reserved_quantity)!==0)return {status:409,error:'Reconcile all physical and reserved stock before archiving.'};
+    const linked=(db.prepare('SELECT consumables_json FROM services').all() as {consumables_json:string}[]).some(s=>{
+      const bindings=parseJsonSafe<unknown>(s.consumables_json,[]);
+      return !Array.isArray(bindings)||bindings.some(b=>b?.inventoryItemId===id);
+    });
+    if(linked)return {status:409,error:'Remove all service bindings before archiving.'};
+    const now=new Date().toISOString();
+    db.prepare('UPDATE inventory_items SET archived_at=?,archive_reason=?,updated_at=? WHERE id=?').run(now,reason.trim(),now,id);
+    writeAuditLog(req.authUser!.id,req.authUser!.fullName,'INVENTORY_ITEM_ARCHIVED','inventory_item',id,reason.trim());
+    return {status:200,item:mapInventoryItemRow(db.prepare('SELECT * FROM inventory_items WHERE id=?').get(id) as Record<string,unknown>)};
+  })();
+  res.status(result.status).json(result.item??{error:result.error});
+});
+apiRouter.post('/inventory/:id/restore',requireAuth,requireRole(['admin','manager']),(req:AuthenticatedRequest,res)=>{
+  const id=String(req.params.id);
+  const result=db.transaction(()=>{
+    const item=db.prepare('SELECT * FROM inventory_items WHERE id=?').get(id) as Record<string,unknown>|undefined;
+    if(!item)return null;
+    if(item.archived_at){
+      db.prepare("UPDATE inventory_items SET archived_at=NULL,archive_reason='',updated_at=? WHERE id=?").run(new Date().toISOString(),id);
+      writeAuditLog(req.authUser!.id,req.authUser!.fullName,'INVENTORY_ITEM_RESTORED','inventory_item',id,'Restored discontinued inventory item.');
+    }
+    return mapInventoryItemRow(db.prepare('SELECT * FROM inventory_items WHERE id=?').get(id) as Record<string,unknown>);
+  })();
+  if(!result)return res.status(404).json({error:'Inventory item not found.'});
+  res.json(result);
+});
+
+apiRouter.get('/inventory/:id/history', requireAuth, (req,res)=>{
+  const id=String(req.params.id);
+  const integer=(v:unknown,defaultValue:number,max:number)=>v===undefined?defaultValue:typeof v==='string'&&/^\d+$/.test(v)&&Number.isSafeInteger(Number(v))&&Number(v)<=max?Number(v):NaN;
+  const offset=integer(req.query.offset,0,Number.MAX_SAFE_INTEGER);
+  const limit=integer(req.query.limit,50,100);
+  const requestedSnapshot=integer(req.query.snapshot,0,Number.MAX_SAFE_INTEGER);
+  if(!Number.isFinite(offset)||!Number.isFinite(limit)||limit<1||!Number.isFinite(requestedSnapshot))return res.status(400).json({error:'Invalid history pagination.'});
+  const data=db.transaction(()=>{
+    if(!db.prepare('SELECT id FROM inventory_items WHERE id=?').get(id))return null;
+    const maximum=(db.prepare('SELECT COALESCE(MAX(rowid),0) AS n FROM stock_movements WHERE inventory_item_id=?').get(id) as {n:number}).n;
+    const snapshot=req.query.snapshot===undefined?maximum:Math.min(requestedSnapshot,maximum);
+    const total=(db.prepare('SELECT COUNT(*) AS n FROM stock_movements WHERE inventory_item_id=? AND rowid<=?').get(id,snapshot) as {n:number}).n;
+    const movements=(db.prepare('SELECT * FROM stock_movements WHERE inventory_item_id=? AND rowid<=? ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?').all(id,snapshot,limit,offset) as Record<string,unknown>[]).map(mapStockMovementRow);
+    const summary=db.prepare("SELECT COUNT(*) AS count, MIN(purchase_unit_cost) AS minimum, MAX(purchase_unit_cost) AS maximum FROM stock_movements WHERE inventory_item_id=? AND rowid<=? AND movement_type='purchase' AND purchase_unit_cost IS NOT NULL").get(id,snapshot);
+    const purchasePoints=(db.prepare("SELECT * FROM stock_movements WHERE inventory_item_id=? AND rowid<=? AND movement_type='purchase' AND purchase_unit_cost IS NOT NULL ORDER BY created_at DESC,id DESC LIMIT 200").all(id,snapshot) as Record<string,unknown>[]).reverse().map(mapStockMovementRow);
+    return {snapshot,total,offset,limit,movements,summary,purchasePoints};
+  })();
+  if(!data)return res.status(404).json({error:'Inventory item not found.'});
+  res.setHeader('Cache-Control','no-store');
+  res.json(data);
+});
+
 apiRouter.get('/inventory', requireAuth, (_req, res) => {
   const supplyCategories: SupplyCategory[] = (
     db.prepare('SELECT * FROM supply_categories ORDER BY sort_order ASC, name ASC').all() as Array<
@@ -1224,7 +1364,7 @@ apiRouter.get('/inventory', requireAuth, (_req, res) => {
   }));
 
   const items = (
-    db.prepare('SELECT * FROM inventory_items ORDER BY name ASC').all() as Array<
+    db.prepare('SELECT * FROM inventory_items WHERE archived_at IS NULL ORDER BY name ASC').all() as Array<
       Record<string, unknown>
     >
   ).map(mapInventoryItemRow);
@@ -1262,6 +1402,7 @@ apiRouter.post(
         ? Math.max(0, Number(i.reorderQuantity) || 0)
         : Math.max(reorderLevel * 2, 0);
     const unitCost = Math.max(0, Number(i.unitCost) || 0);
+    if (Number(i.reservedQuantity ?? 0) > initialQty) return res.status(400).json({error:'Reserved stock cannot exceed stock on hand.'});
     const itemName = i.name!.trim();
 
     const supplierDetails = i.supplierDetails ?? i.supplierInfo;
@@ -1274,9 +1415,9 @@ apiRouter.post(
       db.prepare(`
         INSERT INTO inventory_items (
           id, sku, barcode, name, category_id, category, item_type, unit, quantity_on_hand, reserved_quantity,
-          reorder_level, reorder_quantity, unit_cost, supplier, supplier_contact, supplier_sku,
+          reorder_level, minimum_threshold, reorder_quantity, unit_cost, supplier, supplier_contact, supplier_sku,
           lead_time_days, storage_location, last_restocked_at, is_demo, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
       `).run(
         id,
         (i.sku || '').trim() || `MAT-${Date.now().toString().slice(-4)}`,
@@ -1289,6 +1430,7 @@ apiRouter.post(
         initialQty,
         Math.max(0, Number(i.reservedQuantity) || 0),
         reorderLevel,
+        i.minimumThreshold ?? 0,
         reorderQuantity,
         unitCost,
         supplierName,
@@ -1397,6 +1539,7 @@ apiRouter.patch(
       .prepare(`SELECT * FROM inventory_items WHERE id IN (${placeholders})`)
       .all(...ids) as Array<Record<string, unknown>>;
 
+    if(existingRows.some(row=>row.archived_at))return res.status(409).json({error:'Restore archived items before editing.'});
     if (existingRows.length === 0) {
       return res.status(404).json({ error: 'No matching inventory items found.' });
     }
@@ -1508,7 +1651,11 @@ apiRouter.patch(
     if (!existing) {
       return res.status(404).json({ error: 'Inventory item not found.' });
     }
+    if(existing.archived_at)return res.status(409).json({error:'Restore archived items before editing.'});
     const patch = req.body as Partial<InventoryItem>;
+    const validation = validateInventoryItemInput({...mapInventoryItemRow(existing),...patch,reorderLevel:patch.reorderLevel ?? patch.reorderThreshold ?? Number(existing.reorder_level)});
+    if (validation.valid === false) return res.status(400).json({error:validation.error});
+    if (patch.reservedQuantity !== undefined && Number(patch.reservedQuantity)>Number(existing.quantity_on_hand)) return res.status(400).json({error:'Reserved stock cannot exceed stock on hand.'});
     const now = new Date().toISOString();
 
     const patchDetails = patch.supplierDetails ?? patch.supplierInfo;
@@ -1542,7 +1689,7 @@ apiRouter.patch(
     db.prepare(`
       UPDATE inventory_items
       SET sku = ?, barcode = ?, name = ?, category_id = ?, category = ?, item_type = ?, unit = ?,
-          reserved_quantity = ?, reorder_level = ?, reorder_quantity = ?, unit_cost = ?,
+          reserved_quantity = ?, reorder_level = ?, minimum_threshold = ?, reorder_quantity = ?, unit_cost = ?,
           supplier = ?, supplier_contact = ?, supplier_sku = ?, lead_time_days = ?,
           storage_location = ?, updated_at = ?
       WHERE id = ?
@@ -1564,6 +1711,7 @@ apiRouter.patch(
       patchReorder !== undefined
         ? Math.max(0, Number(patchReorder) || 0)
         : Number(existing.reorder_level) || 0,
+      patch.minimumThreshold ?? Number(existing.minimum_threshold ?? 0),
       patch.reorderQuantity !== undefined
         ? Math.max(0, Number(patch.reorderQuantity) || 0)
         : Number(existing.reorder_quantity) || 0,
@@ -1592,15 +1740,20 @@ apiRouter.delete(
   requireRole(['admin', 'manager']),
   (req: AuthenticatedRequest, res) => {
     const id = String(req.params.id);
-    const existing = db.prepare('SELECT id, name, sku, quantity_on_hand FROM inventory_items WHERE id = ?').get(id) as
-      | { id: string; name: string; sku: string; quantity_on_hand: number }
+    const existing = db.prepare('SELECT id, name, sku, quantity_on_hand, archived_at FROM inventory_items WHERE id = ?').get(id) as
+      | { id: string; name: string; sku: string; quantity_on_hand: number; archived_at: string|null }
       | undefined;
     if (!existing) {
       return res.status(404).json({ error: 'Inventory item not found.' });
     }
 
+    if(existing.archived_at)return res.status(409).json({error:'Archived items cannot be permanently deleted. Restore the item first.'});
+    if (existing.quantity_on_hand !== 0 || db.prepare('SELECT 1 FROM stock_movements WHERE inventory_item_id = ? LIMIT 1').get(id)) {
+      return res.status(409).json({error:'Inventory with stock or movement history cannot be deleted.'});
+    }
+    const linked = (db.prepare('SELECT consumables_json FROM services').all() as {consumables_json:string}[]).some(s=>parseJsonSafe<{inventoryItemId:string}[]>(s.consumables_json,[]).some(b=>b.inventoryItemId===id));
+    if (linked) return res.status(409).json({error:'Inventory is linked to a service. Remove the binding first.'});
     const run = db.transaction(() => {
-      db.prepare('DELETE FROM stock_movements WHERE inventory_item_id = ?').run(id);
       db.prepare('DELETE FROM inventory_items WHERE id = ?').run(id);
       writeAuditLog(
         req.authUser!.id,
@@ -1622,6 +1775,7 @@ function applyInventoryAdjustment(
   payload: {
     movementType?: StockMovementType;
     quantityDelta?: number;
+    purchaseUnitCost?: number;
     note?: string;
     reference?: string;
     referenceType?: StockMovement['referenceType'];
@@ -1637,11 +1791,12 @@ function applyInventoryAdjustment(
     throw Object.assign(new Error('Inventory item not found.'), { statusCode: 404 });
   }
 
+  if(existing.archived_at)throw Object.assign(new Error('Restore archived items before adjusting stock.'),{statusCode:409});
   const resolvedMovementType: StockMovementType = (payload.movementType ||
     'adjustment') as StockMovementType;
   const validation = validateStockMovementInput({
     movementType: resolvedMovementType,
-    quantityDelta: Number(payload.quantityDelta) || 0,
+    quantityDelta: payload.quantityDelta,
   });
   if (validation.valid === false) {
     throw Object.assign(new Error(validation.error), { statusCode: 400 });
@@ -1653,7 +1808,7 @@ function applyInventoryAdjustment(
   );
   const qtyBefore = Number(existing.quantity_on_hand) || 0;
   const nextQty = Number((qtyBefore + signedDelta).toFixed(2));
-  if (nextQty < 0) throw Object.assign(new Error("Insufficient inventory quantity."), { statusCode: 409 });
+  if (!Number.isFinite(nextQty) || nextQty < 0 || (signedDelta < 0 && nextQty < (Number(existing.reserved_quantity)||0))) throw Object.assign(new Error('Insufficient unreserved inventory quantity.'), { statusCode: 409 });
   const now = new Date().toISOString();
   const effectiveTimestamp =
     typeof payload.occurredAt === 'string' && payload.occurredAt ? payload.occurredAt : now;
@@ -1664,19 +1819,21 @@ function applyInventoryAdjustment(
         ? String(existing.last_restocked_at)
         : null;
 
+  const previousCost = Number(existing.unit_cost) || 0;
+  const nextCost = weightedPurchaseCost(qtyBefore,previousCost,signedDelta,payload.purchaseUnitCost);
   const movementId = genId('mov');
   const resolvedRefType = payload.referenceType || inferReferenceType(resolvedMovementType);
 
   const run = db.transaction(() => {
     db.prepare(
-      'UPDATE inventory_items SET quantity_on_hand = ?, last_restocked_at = ?, updated_at = ? WHERE id = ?',
-    ).run(nextQty, restockedAt, now, id);
+      'UPDATE inventory_items SET quantity_on_hand = ?, unit_cost = ?, last_restocked_at = ?, updated_at = ? WHERE id = ?',
+    ).run(nextQty, nextCost, restockedAt, now, id);
     db.prepare(`
       INSERT INTO stock_movements (
         id, inventory_item_id, item_name, movement_type, quantity_before, quantity_delta,
-        balance_after, unit_cost_at_movement, reference_type, reference, performed_by_id,
+        balance_after, unit_cost_at_movement, purchase_unit_cost, reference_type, reference, performed_by_id,
         performed_by, note, occurred_at, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       movementId,
       id,
@@ -1685,7 +1842,8 @@ function applyInventoryAdjustment(
       qtyBefore,
       signedDelta,
       nextQty,
-      Number(existing.unit_cost) || 0,
+      payload.purchaseUnitCost ?? previousCost,
+      payload.purchaseUnitCost ?? null,
       resolvedRefType,
       payload.reference || '',
       actorId,
@@ -1716,7 +1874,8 @@ function applyInventoryAdjustment(
   };
 }
 
-function applyInventoryOnce(id: string, payload: Parameters<typeof applyInventoryAdjustment>[1], actorId: string, actorName: string, mutationId: string) {
+function applyInventoryOnce(id: string, payload: Parameters<typeof applyInventoryAdjustment>[1], actorId: string, actorName: string, mutationId: string, actorRole: string) {
+  validatePurchaseCost(payload.purchaseUnitCost,payload.movementType || 'adjustment',actorRole);
   if (typeof mutationId !== 'string' || !mutationId || mutationId.length > 200) throw new Error('Invalid stock mutation ID');
   const { clientMutationId: _ignored, inventoryItemId: _item, ...fields } = payload as typeof payload & {clientMutationId?: string; inventoryItemId?: string};
   const request = JSON.stringify([id, Object.entries(fields).sort(([a],[b]) => a.localeCompare(b))]);
@@ -1741,6 +1900,7 @@ apiRouter.post('/inventory/:id/adjust', requireAuth, (req: AuthenticatedRequest,
       req.authUser!.id,
       req.authUser!.fullName,
       req.body?.clientMutationId,
+      req.authUser!.role,
     );
     res.json(result.result);
   } catch (err) {
@@ -1752,10 +1912,13 @@ apiRouter.post('/inventory/:id/adjust', requireAuth, (req: AuthenticatedRequest,
 // ---------- CUSTOMERS ----------
 
 apiRouter.post('/customers', requireAuth, (req: AuthenticatedRequest, res) => {
-  const c = req.body as Partial<Customer>;
-  if (!c.name || !String(c.name).trim()) {
-    return res.status(400).json({ error: 'Customer name is required.' });
-  }
+  const c=(req.body??{}) as Partial<Customer>;
+  if(typeof c.name!=='string'||!c.name.trim()||c.name.trim().length>200||['phone','email','address','notes'].some(k=>{
+    const value=c[k as keyof Customer];return value!==undefined&&(typeof value!=='string'||value.length>2000);
+  }))return res.status(400).json({error:'Valid customer name and contact details are required.'});
+  const group=c.group??'regular',discount=c.discountPercent??0;
+  if(!['regular','vip','corporate','student','reseller'].includes(group)||typeof discount!=='number'||!Number.isFinite(discount)||discount<0||discount>100||(c.loyaltyPoints!==undefined&&c.loyaltyPoints!==0))return res.status(400).json({error:'Invalid customer group, discount or opening loyalty points.'});
+  if(!['admin','manager'].includes(req.authUser!.role)&&(group!=='regular'||discount!==0))return res.status(403).json({error:'Only managers may assign customer groups and discounts.'});
   const id = genId('cust');
   const now = new Date().toISOString();
   db.prepare(`
@@ -1769,9 +1932,9 @@ apiRouter.post('/customers', requireAuth, (req: AuthenticatedRequest, res) => {
     c.phone || '',
     c.email || '',
     c.address || '',
-    c.group || 'regular',
-    Number(c.discountPercent) || 0,
-    Number(c.loyaltyPoints) || 0,
+    group,
+    discount,
+    0,
     c.notes || '',
     now,
   );
@@ -1781,9 +1944,9 @@ apiRouter.post('/customers', requireAuth, (req: AuthenticatedRequest, res) => {
     phone: c.phone || '',
     email: c.email || '',
     address: c.address || '',
-    group: c.group || 'regular',
-    discountPercent: Number(c.discountPercent) || 0,
-    loyaltyPoints: Number(c.loyaltyPoints) || 0,
+    group,
+    discountPercent:discount,
+    loyaltyPoints:0,
     outstandingBalance: 0,
     totalSpent: 0,
     notes: c.notes || '',
@@ -1792,52 +1955,106 @@ apiRouter.post('/customers', requireAuth, (req: AuthenticatedRequest, res) => {
   });
 });
 
+
+type MonetaryRequestKind = 'collection'|'drawer'|'expense';
+const monetaryRequestSources = {
+  collection: 'SELECT actor_id FROM balance_collection_requests WHERE mutation_id=?',
+  drawer: 'SELECT actor_id FROM drawer_movement_requests WHERE mutation_id=?',
+  expense: 'SELECT actor_id FROM expenses WHERE client_mutation_id=?',
+} as const;
+function monetaryCancellation(kind:MonetaryRequestKind,actorId:string,reference:string){
+  return db.prepare('SELECT id,reason FROM monetary_request_cancellations WHERE kind=? AND actor_id=? AND mutation_id=?')
+    .get(kind,actorId,reference) as {id:string;reason:string}|undefined;
+}
+function assertMonetaryNotCancelled(kind:MonetaryRequestKind,actorId:string,reference:string){
+  if(monetaryCancellation(kind,actorId,reference))throw Object.assign(new Error('This original reference was cancelled. Confirm the cancellation in recovery; do not resend the payment.'),{statusCode:409});
+}
+
+// Cancellation is an audited, irreversible reservation outcome, not a refund or void.
+// It can only resolve a request that has never committed, and it fences late retries.
+apiRouter.post('/financial-requests/cancel',requireAuth,(req:AuthenticatedRequest,res)=>{
+  const {kind,clientMutationId,reason,confirmedNoFundsMoved}=req.body||{};
+  if(!['collection','drawer','expense'].includes(kind)||typeof clientMutationId!=='string'||!clientMutationId.trim()||clientMutationId.length>200||
+     typeof reason!=='string'||!reason.trim()||reason.trim().length>500||confirmedNoFundsMoved!==true)
+    return res.status(400).json({error:'Original reference, manager-reviewed reason and confirmation that no funds moved are required.'});
+  const requestKind=kind as MonetaryRequestKind,actor=req.authUser!;
+  const result=db.transaction(()=>{
+    const previous=monetaryCancellation(requestKind,actor.id,clientMutationId);
+    if(previous)return {status:200,body:{kind:requestKind,clientMutationId,ownerId:actor.id,status:'cancelled',reason:previous.reason,duplicate:true}};
+    const existing=db.prepare(monetaryRequestSources[requestKind]).get(clientMutationId) as {actor_id:string}|undefined;
+    if(existing)return {status:409,body:{error:'The reference is already recorded or conflicts with an existing request. Retry the original reference or ask the manager to reconcile it.'}};
+    const id=genId('cancel'),note=reason.trim();
+    db.prepare('INSERT INTO monetary_request_cancellations(id,kind,actor_id,mutation_id,reason,created_at) VALUES (?,?,?,?,?,?)')
+      .run(id,requestKind,actor.id,clientMutationId,note,new Date().toISOString());
+    writeAuditLog(actor.id,actor.fullName,'FINANCIAL_REQUEST_CANCELLED','financial_request',id,requestKind+' — no funds moved attested by operator; '+note);
+    return {status:200,body:{kind:requestKind,clientMutationId,ownerId:actor.id,status:'cancelled',reason:note,duplicate:false}};
+  }).immediate();
+  res.setHeader('Cache-Control','no-store');
+  return res.status(result.status).json(result.body);
+});
+
 apiRouter.post('/customers/:id/pay-balance', requireAuth, (req: AuthenticatedRequest, res) => {
   const id = String(req.params.id);
   const amount = req.body?.amount;
   const actor = req.authUser!;
-  const outstandingBalance = db.transaction(() => {
-    const balance = collectBalance(db,id,amount,actor.id);
-    writeAuditLog(actor.id,actor.fullName,'CUSTOMER_BALANCE_PAYMENT','customer',id,`Collected cash ${amount}`);
-    return balance;
-  })();
-  res.json({id,outstandingBalance});
+  const mutationId=req.body?.clientMutationId;
+  if(typeof mutationId!=='string'||!mutationId.trim()||mutationId.length>200||typeof amount!=='number'||!Number.isFinite(amount)||amount<=0||amount>1e9||Math.abs(amount-Math.round(amount*100)/100)>0.000001)return res.status(400).json({error:'A valid payment reference and positive amount in cents are required.'});
+  const result=db.transaction(()=>{
+    const existing=db.prepare('SELECT * FROM balance_collection_requests WHERE mutation_id=?').get(mutationId) as {actor_id:string;customer_id:string;amount:number;outstanding_after:number}|undefined;
+    if(existing){
+      if(existing.actor_id!==actor.id||existing.customer_id!==id||existing.amount!==amount)throw Object.assign(new Error('Payment reference belongs to a different collection.'),{statusCode:409});
+      return {outstandingBalance:existing.outstanding_after,duplicate:true};
+    }
+    assertMonetaryNotCancelled('collection',actor.id,mutationId);
+    const balance=collectBalance(db,id,amount,actor.id);
+    db.prepare('INSERT INTO balance_collection_requests(mutation_id,actor_id,customer_id,amount,outstanding_after,created_at) VALUES (?,?,?,?,?,?)').run(mutationId,actor.id,id,amount,balance,new Date().toISOString());
+    writeAuditLog(actor.id,actor.fullName,'CUSTOMER_BALANCE_PAYMENT','customer',id,`Collected cash ${amount}; reference ${mutationId}`);
+    return {outstandingBalance:balance,duplicate:false};
+  }).immediate();
+  res.setHeader('Cache-Control','no-store');
+  res.json({id,clientMutationId:mutationId,amount,...result});
 });
 
 // ---------- EXPENSES ----------
 
 apiRouter.post('/expenses', requireAuth, (req: AuthenticatedRequest, res) => {
-  const e = req.body as Partial<ExpenseRecord>;
-  if (!e.description || !(Number(e.amount) > 0)) {
-    return res.status(400).json({ error: 'Description and positive amount are required.' });
+  const e = (req.body ?? {}) as Partial<ExpenseRecord>;
+  const amount = e.amount;
+  const reference=req.body?.clientMutationId;
+  if(typeof reference!=='string'||!reference.trim()||reference.length>200)return res.status(400).json({error:'Valid expense reference required.'});
+  const categories = ['electricity','ink_toner','printing_materials','maintenance','equipment','labor','rent','other'];
+  if (typeof e.description !== 'string' || !e.description.trim() || e.description.trim().length > 500 ||
+      !isLedgerMoney(amount) || amount <= 0 ||
+      (e.category !== undefined && !categories.includes(e.category)) ||
+      (e.vendor !== undefined && (typeof e.vendor !== 'string' || e.vendor.trim().length > 500))) {
+    return res.status(400).json({ error: 'Valid description, category and positive numeric centavo amount required (maximum 500 characters per text field).' });
   }
-  const id = genId('exp');
+  const id = genId('exp'), actor=req.authUser!;
   const now = new Date().toISOString();
-  const expenseDate = e.expenseDate || now.slice(0, 10);
-  db.prepare(`
-    INSERT INTO expenses (id, category, description, amount, vendor, recorded_by, expense_date, is_demo, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)
-  `).run(
-    id,
-    e.category || 'other',
-    e.description,
-    Number(e.amount),
-    e.vendor || '',
-    req.authUser!.fullName,
-    expenseDate,
-    now,
-  );
-  res.status(201).json({
-    id,
-    category: e.category || 'other',
-    description: e.description,
-    amount: Number(e.amount),
-    vendor: e.vendor || '',
-    recordedBy: req.authUser!.fullName,
-    expenseDate,
-    isDemo: false,
-    createdAt: now,
-  });
+  const businessDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(now));
+  const expenseDate = e.expenseDate ?? businessDate;
+  if (typeof expenseDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(expenseDate) ||
+      !Number.isFinite(Date.parse(expenseDate)) || new Date(expenseDate).toISOString().slice(0,10) !== expenseDate) {
+    return res.status(400).json({ error: 'Valid expense date is required (YYYY-MM-DD).' });
+  }
+  const record={id,category:e.category||'other',description:e.description.trim(),amount:fromCents(cents(amount)),vendor:e.vendor?.trim()||'',recordedBy:actor.fullName,expenseDate,isDemo:false,createdAt:now};
+  const digest=crypto.createHash('sha256').update(JSON.stringify([record.category,record.description,record.amount,record.vendor,e.expenseDate??null])).digest('hex');
+  const result=db.transaction(()=>{
+    const existing=db.prepare('SELECT * FROM expenses WHERE client_mutation_id=?').get(reference) as Record<string,unknown>|undefined;
+    if(existing){
+      if(existing.actor_id!==actor.id||existing.request_digest!==digest)return {status:409,body:{error:'Expense reference belongs to a different request.'}};
+      return {status:200,body:{id:existing.id,category:existing.category,description:existing.description,amount:existing.amount,vendor:existing.vendor,recordedBy:existing.recorded_by,expenseDate:existing.expense_date,isDemo:false,createdAt:existing.created_at,clientMutationId:reference,duplicate:true,voided:Boolean(existing.voided_at)}};
+    }
+    assertMonetaryNotCancelled('expense',actor.id,reference);
+    db.prepare(`
+      INSERT INTO expenses (id, category, description, amount, vendor, recorded_by, expense_date, is_demo, created_at,client_mutation_id,request_digest,actor_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
+    `).run(record.id,record.category,record.description,record.amount,record.vendor,record.recordedBy,record.expenseDate,record.createdAt,reference,digest,actor.id);
+    writeAuditLog(actor.id,actor.fullName,'EXPENSE_RECORDED','expense',id,'Recorded operating expense: '+record.category+', amount '+record.amount);
+    return {status:201,body:{...record,clientMutationId:reference,duplicate:false,voided:false}};
+  }).immediate();
+  res.setHeader('Cache-Control','no-store');
+  res.status(result.status).json(result.body);
 });
 
 apiRouter.delete(
@@ -1845,16 +2062,30 @@ apiRouter.delete(
   requireAuth,
   requireRole(['admin', 'manager']),
   (req: AuthenticatedRequest, res) => {
-    db.prepare('DELETE FROM expenses WHERE id = ?').run(String(req.params.id));
-    res.json({ ok: true });
+    const id=String(req.params.id), actor=req.authUser!, reason=req.body?.reason;
+    if(typeof reason!=='string'||!reason.trim()||reason.trim().length>500)
+      return res.status(400).json({error:'A void reason of 1–500 characters is required.'});
+    const result=db.transaction(()=>{
+      const expense=db.prepare('SELECT amount,category,voided_at,voided_by,void_reason FROM expenses WHERE id=?').get(id) as {amount:number;category:string;voided_at:string|null;voided_by:string;void_reason:string}|undefined;
+      if(!expense)return {status:404,body:{error:'Expense not found.'}};
+      if(expense.voided_at){
+        if(expense.voided_by===actor.id&&expense.void_reason===reason.trim())return {status:200,body:{ok:true,duplicate:true}};
+        return {status:409,body:{error:'Expense already voided; original record and reason preserved.'}};
+      }
+      db.prepare('UPDATE expenses SET voided_at=?,voided_by=?,void_reason=? WHERE id=?').run(new Date().toISOString(),actor.id,reason.trim(),id);
+      writeAuditLog(actor.id,actor.fullName,'EXPENSE_VOIDED','expense',id,'Voided expense: '+expense.category+', amount '+expense.amount+'; '+reason.trim());
+      return {status:200,body:{ok:true,duplicate:false}};
+    })();
+    res.setHeader('Cache-Control','no-store');
+    res.status(result.status).json(result.body);
   },
 );
 
 // ---------- CASHIER SHIFTS ----------
 
 apiRouter.post('/shifts/start', requireAuth, (req: AuthenticatedRequest, res) => {
-  const openingCash = Number(req.body?.openingCash);
-  if (!Number.isFinite(openingCash) || openingCash < 0) return res.status(400).json({ error: 'Opening cash must be nonnegative.' });
+  const openingCash=req.body?.openingCash;
+  if(!isLedgerMoney(openingCash))return res.status(400).json({error:'Opening cash must be a non-negative numeric amount in centavos.'});
   const openShift = db
     .prepare("SELECT id FROM cashier_shifts WHERE cashier_id = ? AND status = 'open'")
     .get(req.authUser!.id);
@@ -1898,43 +2129,41 @@ apiRouter.post('/shifts/start', requireAuth, (req: AuthenticatedRequest, res) =>
 });
 
 apiRouter.post('/shifts/:id/movement', requireAuth, (req: AuthenticatedRequest, res) => {
-  const id = String(req.params.id);
-  const { type, amount, reason } = req.body || {};
-  const val = Number(amount) || 0;
-  if (!['cash_in', 'cash_out'].includes(type) || !Number.isFinite(val) || val <= 0 || !reason) {
-    return res.status(400).json({ error: 'Valid movement type, positive amount, and reason required.' });
-  }
-  const shift = db.prepare("SELECT * FROM cashier_shifts WHERE id = ? AND status = 'open'").get(id) as
-    | Record<string, unknown>
-    | undefined;
-  if (!shift) return res.status(404).json({ error: 'Open shift not found.' });
-  if (shift.cashier_id !== req.authUser!.id && !['admin','manager'].includes(req.authUser!.role)) return res.status(403).json({ error: 'Cannot manage another cashier’s shift.' });
-
-  const movements = parseJsonSafe<Array<Record<string, unknown>>>(shift.cash_movements_json as string, []);
-  movements.push({
-    id: genId('cm'),
-    type,
-    amount: val,
-    reason: String(reason),
-    timestamp: new Date().toISOString(),
-  });
-  const delta = type === 'cash_in' ? val : -val;
-  const expected = Number(((Number(shift.expected_cash) || 0) + delta).toFixed(2));
-  if (expected < 0) return res.status(409).json({ error: 'Cash withdrawal exceeds expected drawer cash.' });
-
-  db.prepare('UPDATE cashier_shifts SET cash_movements_json = ?, expected_cash = ? WHERE id = ?').run(
-    JSON.stringify(movements),
-    expected,
-    id,
-  );
-  res.json({ id, cashMovements: movements, expectedCash: expected });
+  const id=String(req.params.id);
+  const {type,amount,reason,clientMutationId}=req.body||{};
+  if(!['cash_in','cash_out'].includes(type)||!isLedgerMoney(amount)||amount<=0||typeof reason!=='string'||!reason.trim()||reason.trim().length>500||typeof clientMutationId!=='string'||!clientMutationId.trim()||clientMutationId.length>200)return res.status(400).json({error:'Valid payment reference, movement type, positive centavo amount and reason required.'});
+  const actor=req.authUser!, note=reason.trim();
+  const result=db.transaction(()=>{
+    const fail=(message:string,statusCode=409):never=>{throw Object.assign(new Error(message),{statusCode});};
+    const existing=db.prepare('SELECT * FROM drawer_movement_requests WHERE mutation_id=?').get(clientMutationId) as {actor_id:string;shift_id:string;movement_type:string;amount:number;reason:string;movement_id:string;expected_after:number}|undefined;
+    if(existing){
+      if(existing.actor_id!==actor.id||existing.shift_id!==id||existing.movement_type!==type||existing.amount!==amount||existing.reason!==note)return fail('Cash movement reference belongs to a different adjustment.');
+      return {movementId:existing.movement_id,expectedCash:existing.expected_after,duplicate:true};
+    }
+    assertMonetaryNotCancelled('drawer',actor.id,clientMutationId);
+    const shift=db.prepare("SELECT * FROM cashier_shifts WHERE id=? AND status='open'").get(id) as Record<string,unknown>|undefined;
+    if(!shift)return fail('Open shift not found.',404);
+    if(shift.cashier_id!==actor.id&&!['admin','manager'].includes(actor.role))return fail('Cannot manage another cashier’s shift.',403);
+    if(!isLedgerMoney(shift.expected_cash))return fail('Drawer balance requires manual reconciliation.');
+    const expected=fromCents(cents(shift.expected_cash)+(type==='cash_in'?1:-1)*cents(amount));
+    if(!isLedgerMoney(expected))return fail('Cash movement would exceed supported drawer balance.');
+    const movements=parseJsonSafe<Array<Record<string,unknown>>>(shift.cash_movements_json as string,[]);
+    const movementId=genId('cm'),now=new Date().toISOString();
+    movements.push({id:movementId,type,amount,reason:note,timestamp:now});
+    db.prepare('UPDATE cashier_shifts SET cash_movements_json=?,expected_cash=? WHERE id=?').run(JSON.stringify(movements),expected,id);
+    db.prepare('INSERT INTO drawer_movement_requests(mutation_id,actor_id,shift_id,movement_type,amount,reason,movement_id,expected_after,created_at) VALUES (?,?,?,?,?,?,?,?,?)').run(clientMutationId,actor.id,id,type,amount,note,movementId,expected,now);
+    writeAuditLog(actor.id,actor.fullName,'SHIFT_CASH_MOVEMENT','shift',id,`${type} ${amount}; ${note}; reference ${clientMutationId}`);
+    return {movementId,expectedCash:expected,duplicate:false};
+  }).immediate();
+  res.setHeader('Cache-Control','no-store');
+  res.json({id,clientMutationId,type,amount,reason:note,...result});
 });
 
 apiRouter.post('/shifts/:id/close', requireAuth, (req: AuthenticatedRequest, res) => {
   const id = String(req.params.id);
-  const actualCash = Number(req.body?.actualCash);
+  const actualCash = req.body?.actualCash;
   const reconciliationNote = String(req.body?.reconciliationNote || '');
-  if (!Number.isFinite(actualCash) || actualCash < 0) {
+  if (!isLedgerMoney(actualCash)) {
     return res.status(400).json({ error: 'Actual cash count is required.' });
   }
   const shift = db.prepare("SELECT * FROM cashier_shifts WHERE id = ? AND status = 'open'").get(id) as
@@ -1968,7 +2197,7 @@ apiRouter.post('/shifts/:id/close', requireAuth, (req: AuthenticatedRequest, res
 
 apiRouter.post('/sync/batch', requireAuth, (req: AuthenticatedRequest, res) => {
   const mutations = Array.isArray(req.body?.mutations) ? req.body.mutations : [];
-  const results: Array<{ clientMutationId: string; status: string; error?: string }> = [];
+  const results: Array<{ clientMutationId: string; status: string; error?: string; retryable?: boolean }> = [];
 
   if (mutations.length > 50) return res.status(400).json({error: "Maximum 50 mutations per batch"});
   for (const mut of mutations) {
@@ -1990,12 +2219,13 @@ apiRouter.post('/sync/batch', requireAuth, (req: AuthenticatedRequest, res) => {
           inventoryItemId: string;
           movementType?: StockMovementType;
           quantityDelta?: number;
+          purchaseUnitCost?: number;
           note?: string;
           reference?: string;
           referenceType?: StockMovement['referenceType'];
           occurredAt?: string;
         };
-        const {duplicate} = applyInventoryOnce(adj.inventoryItemId, adj, req.authUser!.id, req.authUser!.fullName, mut.clientMutationId);
+        const {duplicate} = applyInventoryOnce(adj.inventoryItemId, adj, req.authUser!.id, req.authUser!.fullName, mut.clientMutationId, req.authUser!.role);
         results.push({
           clientMutationId: mut.clientMutationId,
           status: duplicate ? 'duplicate' : 'applied',
@@ -2011,7 +2241,8 @@ apiRouter.post('/sync/batch', requireAuth, (req: AuthenticatedRequest, res) => {
       results.push({
         clientMutationId: mut?.clientMutationId || "",
         status: 'error',
-        error: err instanceof Error ? err.message : 'Sync failed',
+        error: isRetryableSyncError(err) ? 'Database temporarily busy; retry pending.' : err instanceof Error ? err.message : 'Sync failed',
+        retryable: isRetryableSyncError(err),
       });
     }
   }
@@ -2062,12 +2293,13 @@ apiRouter.get(
   requireAuth,
   requireRole(['admin']),
   (req: AuthenticatedRequest, res) => {
-    const settingsRow = db.prepare('SELECT value_json FROM app_settings WHERE key = ?').get('app_settings') as
-      | { value_json: string }
-      | undefined;
-    const backup = {
+    const backup = db.transaction(()=>{
+      const settingsRow = db.prepare('SELECT value_json FROM app_settings WHERE key = ?').get('app_settings') as { value_json: string } | undefined;
+      return {
       exportedAt: new Date().toISOString(),
-      schemaVersion: '1.0.0',
+      schemaVersion: '1.2.0',
+      exportKind:'business-data-only',
+      restorable:false,
       exportedBy: req.authUser!.username,
       settings: settingsRow ? parseJsonSafe(settingsRow.value_json, DEFAULT_SETTINGS) : DEFAULT_SETTINGS,
       categories: db.prepare('SELECT * FROM categories').all(),
@@ -2077,16 +2309,24 @@ apiRouter.get(
       transactions: db.prepare('SELECT * FROM transactions').all(),
       print_jobs: db.prepare('SELECT * FROM print_jobs').all(),
       order_conversions: db.prepare('SELECT * FROM order_conversions').all(),
-      expenses: db.prepare('SELECT * FROM expenses').all(),
-    };
+      expenses: db.prepare('SELECT id,category,description,amount,vendor,recorded_by,expense_date,is_demo,created_at,voided_at,voided_by,void_reason FROM expenses').all(),
+      supply_categories:db.prepare('SELECT * FROM supply_categories').all(),
+      stock_movements:db.prepare('SELECT * FROM stock_movements').all(),
+      cashier_shifts:db.prepare('SELECT * FROM cashier_shifts').all(),
+      transaction_reversals:db.prepare('SELECT * FROM transaction_reversals').all(),
+      balance_collections:db.prepare('SELECT * FROM balance_collections').all(),
+      audit_logs:db.prepare('SELECT * FROM audit_logs').all(),
+      };
+    })();
     writeAuditLog(
       req.authUser!.id,
       req.authUser!.fullName,
       'BACKUP_EXPORTED',
       'system',
       'backup',
-      'Exported business configuration and ledger backup',
+      'Exported private business review data (not restorable)',
     );
+    res.setHeader('Cache-Control','no-store');
     res.json(backup);
   },
 );
