@@ -108,6 +108,11 @@ final class NativeBackupSnapshot {
         try(BackupStaging ignored=BackupStaging.acquire(privateDirectory)){}
         catch(IOException ex){throw new IllegalStateException("Unable to clean backup staging",ex);}
     }
+    static void requireRestoreReady(SQLiteDatabase db){
+        if(!db.inTransaction())throw new IllegalStateException("Restore readiness requires a transaction");
+        if(count(db,"SELECT COUNT(*) FROM cashier_shifts WHERE state='OPEN'")!=0||pendingOperations(db)!=0)
+            throw new IllegalStateException("Resolve open shifts and pending requests");
+    }
     private static long pendingOperations(SQLiteDatabase db){
         long total=0;
         for(String table:new String[]{"stock_requests","checkout_requests","credit_checkout_requests","credit_collection_requests","cashier_drawer_requests"})

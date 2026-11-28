@@ -95,7 +95,8 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "native receipt PDF"; verifyReceiptPdf();
             phase = "native encrypted backup snapshot"; verifyNativeBackupSnapshot();
             phase = "native database lifecycle fence"; verifyDatabaseLifecycleFence();
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_RECURRING_UI_PASS\nNATIVE_CUSTOMER_DIRECTORY_PASS\nNATIVE_CUSTOMER_CHECKOUT_PASS\nNATIVE_CREDIT_COLLECTION_API_PASS\nNATIVE_CREDIT_REPORT_PASS\nNATIVE_CREDIT_CHECKOUT_UI_PASS\nNATIVE_CREDIT_COLLECTION_UI_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\nNATIVE_SAVED_QUOTATION_PASS\nNATIVE_QUOTATION_CASH_CONVERSION_PASS\nNATIVE_QUOTATION_CREDIT_CONVERSION_PASS\nNATIVE_QUOTATION_UI_PASS\nNATIVE_PRODUCTION_JOURNAL_PASS\nNATIVE_PRODUCTION_UI_PASS\nNATIVE_PRODUCTION_POLICY_PASS\nNATIVE_QUOTE_PRODUCTION_PASS\nNATIVE_QUOTE_PRODUCTION_UI_PASS\nNATIVE_RECEIPT_PDF_PASS\nNATIVE_RECEIPT_REPRINT_PASS\nNATIVE_BACKUP_SNAPSHOT_PASS\nNATIVE_BACKUP_IMPORT_UI_PASS\nNATIVE_DATABASE_LIFECYCLE_PASS\n");
+            phase = "native pre-restore recovery"; verifyPreRestoreRecovery();
+            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_RECURRING_UI_PASS\nNATIVE_CUSTOMER_DIRECTORY_PASS\nNATIVE_CUSTOMER_CHECKOUT_PASS\nNATIVE_CREDIT_COLLECTION_API_PASS\nNATIVE_CREDIT_REPORT_PASS\nNATIVE_CREDIT_CHECKOUT_UI_PASS\nNATIVE_CREDIT_COLLECTION_UI_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\nNATIVE_SAVED_QUOTATION_PASS\nNATIVE_QUOTATION_CASH_CONVERSION_PASS\nNATIVE_QUOTATION_CREDIT_CONVERSION_PASS\nNATIVE_QUOTATION_UI_PASS\nNATIVE_PRODUCTION_JOURNAL_PASS\nNATIVE_PRODUCTION_UI_PASS\nNATIVE_PRODUCTION_POLICY_PASS\nNATIVE_QUOTE_PRODUCTION_PASS\nNATIVE_QUOTE_PRODUCTION_UI_PASS\nNATIVE_RECEIPT_PDF_PASS\nNATIVE_RECEIPT_REPRINT_PASS\nNATIVE_BACKUP_SNAPSHOT_PASS\nNATIVE_BACKUP_IMPORT_UI_PASS\nNATIVE_DATABASE_LIFECYCLE_PASS\nNATIVE_PRE_RESTORE_RECOVERY_PASS\n");
             result = Activity.RESULT_OK;
         } catch (Throwable error) {
             evidence.putString("stream", failureDetails(phase, error));
@@ -1457,6 +1458,48 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 require(reopened.getReadableDatabase().getVersion()==22,"Database reopen after lifecycle exclusion");
             }
         }finally{context.deleteDatabase(filename);}
+    }
+
+    private void verifyPreRestoreRecovery() throws java.io.IOException{
+        android.content.Context context=getTargetContext();String fixture=stockId(),filename="checkout-fixture-"+fixture+".db";
+        java.nio.file.Path path=context.getDatabasePath(filename).toPath(),recovery=null;
+        char[] ownerPass="Synthetic-Recovery-Owner-01".toCharArray(),staffPass="Synthetic-Recovery-Staff-01".toCharArray(),
+            archivePass="Synthetic-Recovery-Archive-01".toCharArray(),wrong="Synthetic-Recovery-Wrong-01".toCharArray();
+        String owner,staff,shift=stockId();
+        try{
+            try(CatalogStore store=CatalogStore.checkoutFixture(context,fixture)){
+                store.bootstrapDemoFixtureOwner("recovery-owner",ownerPass);owner=store.signInFixture("recovery-owner",ownerPass);
+                store.createFixtureCashier(owner,"recovery-staff",staffPass);staff=store.signInFixture("recovery-staff",staffPass);
+                store.openFixtureShift(owner,shift,0);
+            }
+            try(DatabaseLifecycleLease lease=DatabaseLifecycleLease.open(path,true)){
+                try{NativePreRestoreRecovery.create(context,fixture,lease,staff,staffPass,archivePass);throw new AssertionError("Staff authorized recovery");}
+                catch(IllegalStateException expected){}
+                try{NativePreRestoreRecovery.create(context,fixture,lease,owner,wrong,archivePass);throw new AssertionError("Wrong owner proof accepted");}
+                catch(IllegalStateException expected){}
+                try{NativePreRestoreRecovery.create(context,fixture,lease,owner,ownerPass,archivePass);throw new AssertionError("Open shift recovery accepted");}
+                catch(IllegalStateException expected){}
+            }
+            try(CatalogStore store=CatalogStore.checkoutFixture(context,fixture)){
+                store.closeFixtureShift(owner,shift,0);
+            }
+            try(DatabaseLifecycleLease lease=DatabaseLifecycleLease.open(path,true)){
+                recovery=NativePreRestoreRecovery.create(context,fixture,lease,owner,ownerPass,archivePass);
+                require(java.nio.file.Files.isRegularFile(recovery),"Recovery archive not durable");
+            }
+            try(CatalogStore store=CatalogStore.checkoutFixture(context,fixture)){
+                byte[] archive=java.nio.file.Files.readAllBytes(recovery);
+                try{
+                    NativeBackupSnapshot.Review review=store.reviewEncryptedFixtureBackup(owner,archive,archivePass);
+                    require(review.schema==22&&review.openShifts==0&&review.pendingOperations==0,"Recovery contents invalid");
+                    require(trainingCount(store,"SELECT COUNT(*) FROM cashier_sessions")>=2,"Recovery altered source sessions");
+                }finally{java.util.Arrays.fill(archive,(byte)0);}
+            }
+        }finally{
+            if(recovery!=null)java.nio.file.Files.deleteIfExists(recovery);
+            java.util.Arrays.fill(ownerPass,'\0');java.util.Arrays.fill(staffPass,'\0');java.util.Arrays.fill(archivePass,'\0');java.util.Arrays.fill(wrong,'\0');
+            context.deleteDatabase(filename);
+        }
     }
 
     private void verifyNativeBackupSnapshot() throws java.io.IOException{

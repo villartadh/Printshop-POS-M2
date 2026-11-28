@@ -155,6 +155,11 @@ final class CashierJournal {
     /** Verify the active operator's current credential; denial is returned to commit lockout state.
      * Session authorization is performed by the fixture transaction before this method is reached.
      */
+    static boolean confirmRestoreOwner(SQLiteDatabase db,String token,char[] current,long now){
+        Principal owner=requireSession(db,token,now);
+        CashierSecurity.requireOwner(owner.role);
+        return confirmCredential(db,account(db,"id",owner.id),owner,current,now);
+    }
     private static boolean confirmCredential(SQLiteDatabase db,Account a,Principal actor,char[] current,long now){
         if(a==null||!a.active||a.principal.revision!=actor.revision||now<a.lockedUntil)return false;
         boolean verified=CashierSecurity.verify(current,a.salt,a.hash);
