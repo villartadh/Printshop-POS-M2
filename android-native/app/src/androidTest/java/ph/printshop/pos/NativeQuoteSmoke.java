@@ -1493,6 +1493,20 @@ public final class NativeQuoteSmoke extends Instrumentation {
                     NativeBackupSnapshot.Review review=store.reviewEncryptedFixtureBackup(owner,archive,archivePass);
                     require(review.schema==22&&review.openShifts==0&&review.pendingOperations==0,"Recovery contents invalid");
                     require(trainingCount(store,"SELECT COUNT(*) FROM cashier_sessions")>=2,"Recovery altered source sessions");
+                    android.database.sqlite.SQLiteDatabase live=store.getWritableDatabase();
+                    live.beginTransaction();
+                    try{
+                        NativeBackupSnapshot.reviewForRestore(live,context.getCacheDir(),archive,archivePass,owner);
+                        rejectStock(()->NativeBackupSnapshot.reviewForRestore(live,context.getCacheDir(),archive,archivePass,staff));
+                        live.setTransactionSuccessful();
+                    }finally{live.endTransaction();}
+                    store.createFixtureCashier(owner,"recovery-new-staff",staffPass);
+                    live.beginTransaction();
+                    try{
+                        rejectStock(()->NativeBackupSnapshot.reviewForRestore(live,context.getCacheDir(),archive,archivePass,owner));
+                        live.setTransactionSuccessful();
+                    }finally{live.endTransaction();}
+                    store.reviewEncryptedFixtureBackup(owner,archive,archivePass);
                 }finally{java.util.Arrays.fill(archive,(byte)0);}
             }
         }finally{

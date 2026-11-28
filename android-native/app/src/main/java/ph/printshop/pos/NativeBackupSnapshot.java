@@ -84,6 +84,17 @@ final class NativeBackupSnapshot {
     }
     /** Read-only candidate inspection; never opens candidate in SQLiteOpenHelper or runs migrations. */
     static synchronized Review review(SQLiteDatabase trusted,File privateDirectory,byte[] archive,char[] password){
+        return reviewInternal(trusted,privateDirectory,archive,password,false);
+    }
+    /** Strict restore-only review: no account resurrection, stale credentials or lockout rollback.
+     * Ordinary read-only archive review remains available for historical inspection. */
+    static synchronized Review reviewForRestore(SQLiteDatabase trusted,File privateDirectory,byte[] archive,char[] password,String ownerToken){
+        if(!trusted.inTransaction())throw new IllegalStateException("Restore review requires transaction");
+        CashierSecurity.requireOwner(CashierJournal.requireSession(trusted,ownerToken,System.currentTimeMillis()).role);
+        requireRestoreReady(trusted);
+        return reviewInternal(trusted,privateDirectory,archive,password,true);
+    }
+    private static Review reviewInternal(SQLiteDatabase trusted,File privateDirectory,byte[] archive,char[] password,boolean strictRestore){
         if(!trusted.inTransaction())throw new IllegalStateException("Backup review requires authorized transaction");
         File file=null;BackupStaging staging=null;
         try(BackupEnvelope.Decoded decoded=BackupEnvelope.open(archive,trusted.getVersion(),password)){
@@ -94,12 +105,29 @@ final class NativeBackupSnapshot {
             try(SQLiteDatabase candidate=SQLiteDatabase.openDatabase(file.getPath(),null,SQLiteDatabase.OPEN_READONLY)){
                 if(candidate.getVersion()!=decoded.schema||!schema(trusted).equals(schema(candidate)))throw new IllegalArgumentException("Backup schema does not match this app");
                 validate(candidate);
+                if(strictRestore){
+                    if(count(candidate,"SELECT COUNT(*) FROM cashier_shifts WHERE state='OPEN'")!=0||pendingOperations(candidate)!=0)
+                        throw new IllegalStateException("Archive has unresolved shifts or pending requests");
+                    requireCredentialContinuity(trusted,candidate);
+                }
                 return new Review(decoded.schema,count(candidate,"SELECT COUNT(*) FROM checkout_sales"),
                     count(candidate,"SELECT COUNT(*) FROM checkout_requests WHERE state='PENDING'")+count(candidate,"SELECT COUNT(*) FROM credit_checkout_requests WHERE state='PENDING'"),
                     count(candidate,"SELECT COUNT(*) FROM cashier_shifts WHERE state='OPEN'"),count(candidate,"SELECT COUNT(*) FROM credit_receivable_sources"),pendingOperations(candidate),count(trusted,"SELECT COUNT(*) FROM cashier_shifts WHERE state='OPEN'"),pendingOperations(trusted));
             }
         }catch(IOException|android.database.sqlite.SQLiteException ex){throw new IllegalArgumentException("Backup candidate is not a valid native database",ex);}
         finally{try{if(file!=null)SQLiteDatabase.deleteDatabase(file);}finally{release(staging);}}
+    }
+    private static void requireCredentialContinuity(SQLiteDatabase trusted,SQLiteDatabase candidate){
+        String sql="SELECT id,username,role,salt,password_hash,iterations,revision,active,failures,locked_until,created_ms FROM cashier_accounts ORDER BY id";
+        try(Cursor current=trusted.rawQuery(sql,null);Cursor archived=candidate.rawQuery(sql,null)){
+            while(current.moveToNext()){
+                if(!archived.moveToNext())throw new IllegalStateException("Archive account security state differs");
+                for(int i=0;i<current.getColumnCount();i++)
+                    if(!java.util.Objects.equals(current.getString(i),archived.getString(i)))
+                        throw new IllegalStateException("Archive account security state differs");
+            }
+            if(archived.moveToNext())throw new IllegalStateException("Archive account security state differs");
+        }
     }
     private static void release(BackupStaging staging){
         if(staging!=null)try{staging.close();}catch(IOException ex){throw new IllegalStateException("Unable to release backup staging",ex);}

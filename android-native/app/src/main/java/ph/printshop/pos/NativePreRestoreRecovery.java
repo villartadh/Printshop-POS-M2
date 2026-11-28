@@ -16,13 +16,16 @@ final class NativePreRestoreRecovery {
         Path live=context.getDatabasePath("checkout-fixture-"+fixtureId+".db").toPath();
         lease.requireExclusive(live);
         if(!Files.isRegularFile(live,LinkOption.NOFOLLOW_LINKS))throw new IOException("Training database missing");
-        for(String suffix:new String[]{"-wal","-shm","-journal",".restore-pending",".restore-previous",".restore-candidate"})
+        for(String suffix:new String[]{".restore-pending",".restore-previous",".restore-candidate"})
             if(Files.exists(live.resolveSibling(live.getFileName()+suffix),LinkOption.NOFOLLOW_LINKS))
-                throw new IOException("Database has unresolved recovery or writer state");
+                throw new IOException("Database has unresolved restore state");
         CashierSecurity.validatePassword(archivePassword);
         if(Arrays.equals(currentPassword,archivePassword))throw new IllegalArgumentException("Use an independent archive passphrase");
         byte[] archive=null;
         try{
+            // SQLite itself recovers normal journal/WAL state under this exclusive lease.
+            // This is a transactional snapshot, NOT a file replacement; RestoreJournal
+            // independently refuses replacement while any SQLite sidecar remains.
             try(SQLiteDatabase db=SQLiteDatabase.openDatabase(live.toString(),null,SQLiteDatabase.OPEN_READWRITE)){
                 if(db.getVersion()!=22)throw new IllegalStateException("Unsupported current schema");
                 boolean confirmed;
