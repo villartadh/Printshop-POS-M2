@@ -632,3 +632,6 @@ Exact next: implement owner-only definition CRUD/archival (new revision, explici
 
 ## 2026-11-28 — bridge ambiguous ref reconciliation prepared
 - #19 bd5b1202b8ada5f9dc83f8ef3e20749001e5d6f1 software 46127818111 passed; native 46127818119 and bridge 46127818096 observed in progress. Added pure exact ref readback classifier for ambiguous writes: exact candidate, unchanged parent requiring recheck, changed head requiring investigation, unavailable observation. No automatic retry, lock takeover or fencing claim. Synthetic remote CAS pilot branch is not a production lock and must never merge. Local suite required before publishing; attach only after all three exact parent gates. Hourly automation remains sole scheduled writer.
+
+## 2026-11-28 — strict bridge artifact validation prepared
+- Added bounded checkpoint JSON schema/identity/decision/key validation, mandatory hosted validation before artifact upload. Reject duplicate fields, wrong SHA/repository, invalid gate or run identity, and inconsistent hash or decision. 33 local tests passed; integrity is not authentication or a live lock. Successor of prepared recovery commit 53150116204ea1bb951cca53403fd19ee1658dd9; never attach before its fresh exact three gates pass. No second writer or protected main change.

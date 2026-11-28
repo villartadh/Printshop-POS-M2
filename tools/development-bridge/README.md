@@ -8,3 +8,6 @@ The pure claim policy permits one active worker for the entire repository, monot
 
 ## Ambiguous ref updates
 The reconciliation classifier accepts only exact Git object identities from an independently refreshed ref. An exact candidate observation confirms only that ref value, not ownership, ancestry, fencing or CI. An unchanged parent requires rechecking before any new write; a different head requires investigation; unavailable readback remains unverified. Never blindly retry or force-update. Synthetic remote CAS pilot evidence is recorded in issue #14; the pilot branch is not a live lock and must never be merged.
+
+## Checkpoint artifact validation
+Validate bounded UTF-8 JSON, the exact repository/head SHA, expected gate set, run identities, derived decision, and recomputed event key before artifact publication. Duplicate fields and malformed or inconsistent records are rejected. A valid checksum is not authentication; independently retrieve current GitHub run metadata and compare before consuming an event. No artifact alone permits a source write.
