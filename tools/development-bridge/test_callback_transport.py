@@ -114,3 +114,9 @@ class CallbackTransportTests(unittest.TestCase):
         with self.assertRaises(TimeoutError):
             self.exchange(drip,deadline=0.35)
         self.assertLess(time.monotonic()-start,2)
+
+    def test_truncated_response_refused(self):
+        with self.assertRaises((ValueError, OSError)) as caught:
+            self.exchange(b"HTTP/1.1 200 OK\r\nContent-Length: 9\r\nConnection: close\r\n\r\n{}")
+        if isinstance(caught.exception, ValueError):
+            self.assertIn("Incomplete", str(caught.exception))

@@ -41,3 +41,6 @@ The callback client now bounds numeric connect time and installs a monotonic dea
 
 ## Bounded DNS observation (synthetic)
 A separate fixed-code Python subprocess obtains numeric system resolver results for a validated fully qualified hostname, with no shell, a bounded result count and timeout. It rejects all unsafe or mixed addresses via destination admission. Tests exercise mocked DNS results and real child-process termination; no public DNS query is required. The system resolver is a host trust dependency, not a DNSSEC guarantee. A future caller must bind this fresh observation to the immediately following pinned TLS connection and enforce a combined deadline; no live callback or event activation is enabled.
+
+## Combined delivery budget (synthetic)
+The isolated orchestration helper derives the DNS and pinned HTTPS budgets from one monotonic deadline and rejects expired or late success. No caller-supplied addresses or cached observations are admitted by this helper. The transport also refuses truncated Content-Length responses; tests accept explicit length rejection or TLS read failure, neither can count as delivery. Tests cover deadline accounting and fail-closed paths, while the existing real synthetic TLS and child-process tests cover the component behavior. Not wired to any live subscription or external callback.

@@ -99,7 +99,10 @@ def post_verified(url, resolved_addresses, body, headers, *, context=None, deadl
             raise ValueError("Redirect forbidden")
         if response.length is not None and response.length > _MAX_RESPONSE:
             raise ValueError("Response too large")
+        expected_length = response.length
         data = response.read(_MAX_RESPONSE + 1)
+        if expected_length is not None and len(data) != expected_length:
+            raise ValueError("Incomplete callback response")
         if len(data) > _MAX_RESPONSE:
             raise ValueError("Response too large")
         if time.monotonic() >= deadline:
