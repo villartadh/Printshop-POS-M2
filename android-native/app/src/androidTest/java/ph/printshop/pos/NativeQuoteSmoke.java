@@ -97,7 +97,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "native database lifecycle fence"; verifyDatabaseLifecycleFence();
             phase = "native pre-restore recovery"; verifyPreRestoreRecovery();
             phase = "native SQLite fixture restoration"; verifyNativeRestoreCoordinator();
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_RECURRING_UI_PASS\nNATIVE_CUSTOMER_DIRECTORY_PASS\nNATIVE_CUSTOMER_CHECKOUT_PASS\nNATIVE_CREDIT_COLLECTION_API_PASS\nNATIVE_CREDIT_REPORT_PASS\nNATIVE_CREDIT_CHECKOUT_UI_PASS\nNATIVE_CREDIT_COLLECTION_UI_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\nNATIVE_SAVED_QUOTATION_PASS\nNATIVE_QUOTATION_CASH_CONVERSION_PASS\nNATIVE_QUOTATION_CREDIT_CONVERSION_PASS\nNATIVE_QUOTATION_UI_PASS\nNATIVE_PRODUCTION_JOURNAL_PASS\nNATIVE_PRODUCTION_UI_PASS\nNATIVE_PRODUCTION_POLICY_PASS\nNATIVE_QUOTE_PRODUCTION_PASS\nNATIVE_QUOTE_PRODUCTION_UI_PASS\nNATIVE_RECEIPT_PDF_PASS\nNATIVE_RECEIPT_REPRINT_PASS\nNATIVE_BACKUP_SNAPSHOT_PASS\nNATIVE_BACKUP_MIGRATION_PASS\nNATIVE_BACKUP_MIGRATION_UI_PASS\nNATIVE_BACKUP_IMPORT_UI_PASS\nNATIVE_DATABASE_LIFECYCLE_PASS\nNATIVE_PRE_RESTORE_RECOVERY_PASS\nNATIVE_SQLITE_RESTORE_PASS\nNATIVE_RESTORE_UI_PASS\nNATIVE_RECOVERY_EXPORT_PASS\n");
+            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_RECURRING_UI_PASS\nNATIVE_CUSTOMER_DIRECTORY_PASS\nNATIVE_CUSTOMER_CHECKOUT_PASS\nNATIVE_CREDIT_COLLECTION_API_PASS\nNATIVE_CREDIT_REPORT_PASS\nNATIVE_CREDIT_CHECKOUT_UI_PASS\nNATIVE_CREDIT_COLLECTION_UI_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\nNATIVE_SAVED_QUOTATION_PASS\nNATIVE_QUOTATION_CASH_CONVERSION_PASS\nNATIVE_QUOTATION_CREDIT_CONVERSION_PASS\nNATIVE_QUOTATION_UI_PASS\nNATIVE_PRODUCTION_JOURNAL_PASS\nNATIVE_PRODUCTION_UI_PASS\nNATIVE_PRODUCTION_POLICY_PASS\nNATIVE_QUOTE_PRODUCTION_PASS\nNATIVE_QUOTE_PRODUCTION_UI_PASS\nNATIVE_RECEIPT_PDF_PASS\nNATIVE_RECEIPT_REPRINT_PASS\nNATIVE_BACKUP_SNAPSHOT_PASS\nNATIVE_BACKUP_MIGRATION_PASS\nNATIVE_BACKUP_MIGRATION_UI_PASS\nNATIVE_BACKUP_IMPORT_UI_PASS\nNATIVE_DATABASE_LIFECYCLE_PASS\nNATIVE_PRE_RESTORE_RECOVERY_PASS\nNATIVE_SQLITE_RESTORE_PASS\nNATIVE_RESTORE_UI_PASS\nNATIVE_RECOVERY_EXPORT_PASS\n"+(android.os.Build.VERSION.SDK_INT>=29?"NATIVE_BACKUP_CONTENT_PROVIDER_PASS\n":""));
             result = Activity.RESULT_OK;
         } catch (Throwable error) {
             evidence.putString("stream", failureDetails(phase, error));
@@ -409,6 +409,75 @@ public final class NativeQuoteSmoke extends Instrumentation {
             spinner.setSelection(position);
         });waitForIdleSync();
     }
+    @android.annotation.TargetApi(29)
+    private void verifyRecoveryContentProvider(Activity activity,String owner,String ownerPass,String fixtureId)
+            throws java.io.IOException,android.content.IntentFilter.MalformedMimeTypeException{
+        android.content.ContentResolver resolver=getTargetContext().getContentResolver();
+        android.content.ContentValues values=new android.content.ContentValues();
+        values.put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME,"synthetic-pos-"+java.util.UUID.randomUUID()+".psposbackup");
+        values.put(android.provider.MediaStore.MediaColumns.MIME_TYPE,"application/octet-stream");
+        values.put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH,android.os.Environment.DIRECTORY_DOWNLOADS+"/PrintshopSyntheticAcceptance");
+        values.put(android.provider.MediaStore.MediaColumns.IS_PENDING,1);
+        android.net.Uri target=resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI,values);
+        require(target!=null&&"content".equals(target.getScheme()),"MediaStore test document unavailable");
+        byte[] expected=null,output=null;
+        char[] secret="Synthetic-UI-Recovery-Archive-01".toCharArray();
+        try{
+            java.nio.file.Path scope=RecoveryArchive.fixtureDirectory(getTargetContext().getFilesDir().toPath(),fixtureId,false);
+            java.util.List<RecoveryArchive.Entry> retained=RecoveryArchive.list(scope);
+            require(!retained.isEmpty(),"content provider recovery missing");
+            expected=RecoveryArchive.read(scope,retained.get(0).name);
+            trainingClick(activity,R.id.cashier_recovery_list);
+            awaitText(activity,"Back to cashier","provider recovery list unavailable");
+            trainingClick(activity,R.id.cashier_recovery_first);
+            trainingField(activity,R.id.cashier_recovery_password,"Synthetic-UI-Recovery-Archive-01");
+            android.content.IntentFilter create=new android.content.IntentFilter(Intent.ACTION_CREATE_DOCUMENT);
+            create.addCategory(Intent.CATEGORY_OPENABLE);create.addDataType("application/octet-stream");
+            ActivityMonitor monitor=addMonitor(create,new ActivityResult(Activity.RESULT_OK,new Intent().setData(target)),true);
+            try{
+                trainingClick(activity,R.id.cashier_recovery_export);
+                long deadline=android.os.SystemClock.elapsedRealtime()+60000;
+                while(android.os.SystemClock.elapsedRealtime()<deadline){
+                    try(java.io.InputStream in=resolver.openInputStream(target)){
+                        output=BackupFileTransfer.read(in);
+                        if(output.length==expected.length)break;
+                        java.util.Arrays.fill(output,(byte)0);output=null;
+                    }catch(java.io.IOException empty){/* asynchronous writer has not finished */}
+                    android.os.SystemClock.sleep(100);
+                }
+                require(monitor.getHits()==1&&output!=null&&java.util.Arrays.equals(expected,output),"content provider export bytes differ");
+            }finally{removeMonitor(monitor);}
+            try(BackupEnvelope.Decoded opened=BackupEnvelope.open(output,22,secret)){
+                require(opened.schema==22,"provider export schema differs");
+            }
+            trainingClick(activity,R.id.cashier_back);
+            awaitText(activity,"No open shift","provider export return failed");
+            trainingClick(activity,R.id.cashier_backup_import);
+            android.content.IntentFilter open=new android.content.IntentFilter(Intent.ACTION_OPEN_DOCUMENT);
+            open.addCategory(Intent.CATEGORY_OPENABLE);open.addDataType("application/octet-stream");
+            ActivityMonitor importMonitor=addMonitor(open,new ActivityResult(Activity.RESULT_OK,new Intent().setData(target)),true);
+            try{
+                trainingClick(activity,R.id.cashier_backup_choose);
+                awaitText(activity,"Training sign in","provider import owner reauthentication missing");
+                require(importMonitor.getHits()==1,"provider import picker omitted");
+            }finally{removeMonitor(importMonitor);}
+            trainingLogin(activity,owner,ownerPass);
+            awaitText(activity,"Validate selected backup","provider archive not selected");
+            trainingClick(activity,R.id.cashier_backup_validate);
+            trainingField(activity,R.id.cashier_backup_password,"Synthetic-UI-Recovery-Archive-01");
+            trainingClick(activity,R.id.cashier_backup_review);
+            awaitText(activity,"Backup validated","provider archive reimport failed",60000);
+            trainingClick(activity,R.id.cashier_back);
+            awaitText(activity,"No open shift","provider review changed training shift");
+            require(!RecoveryArchive.list(scope).isEmpty(),"provider export removed retained original");
+        }finally{
+            if(expected!=null)java.util.Arrays.fill(expected,(byte)0);
+            if(output!=null)java.util.Arrays.fill(output,(byte)0);
+            java.util.Arrays.fill(secret,'\0');
+            resolver.delete(target,null,null); // delete only the synthetic item created above
+        }
+    }
+
     private void verifyOwnerCatalogWorkflow(Activity activity,String fixtureId,String owner,String ownerPass){
         // Earlier UI workflow has completed and its original financial invariants were checked.
         trainingLogin(activity,owner,ownerPass);
@@ -530,6 +599,10 @@ public final class NativeQuoteSmoke extends Instrumentation {
             }finally{java.util.Arrays.fill(expectedRecovery,(byte)0);exported.delete();}
             trainingClick(activity,R.id.cashier_back);
             awaitText(activity,"No open shift","retained export return failed");
+            // Exercise an actual Android content provider (rather than file://), retaining
+            // the intercepted chooser only to make the installed test deterministic.
+            if(android.os.Build.VERSION.SDK_INT>=29)verifyRecoveryContentProvider(activity,owner,ownerPass,fixtureId);
+
         }catch(java.io.IOException|android.content.IntentFilter.MalformedMimeTypeException e){throw new AssertionError("synthetic picker fixture failed",e);}
         finally{java.util.Arrays.fill(ownerSecret,'\0');java.util.Arrays.fill(archiveSecret,'\0');if(archiveFile!=null)archiveFile.delete();if(legacyFile!=null)legacyFile.delete();if(legacyDb!=null)android.database.sqlite.SQLiteDatabase.deleteDatabase(legacyDb);}
         trainingClick(activity,R.id.cashier_backup);
