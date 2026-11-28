@@ -221,4 +221,11 @@
     <item type="id" name="cashier_backup_choose"/>
     <item type="id" name="cashier_backup_validate"/>
     <item type="id" name="cashier_backup_review"/>
+    <item type="id" name="cashier_restore_prepare"/>
+    <item type="id" name="cashier_restore_owner_password"/>
+    <item type="id" name="cashier_restore_source_password"/>
+    <item type="id" name="cashier_restore_recovery_password"/>
+    <item type="id" name="cashier_restore_recovery_repeat"/>
+    <item type="id" name="cashier_restore_consent"/>
+    <item type="id" name="cashier_restore_execute"/>
 </resources>
