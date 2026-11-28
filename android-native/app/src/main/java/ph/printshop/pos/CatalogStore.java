@@ -29,7 +29,13 @@ public final class CatalogStore extends SQLiteOpenHelper {
     }
     private void acquireLifecycle(){
         if(!fixtureCheckoutWrites||lifecycleLease!=null)return;
-        try{lifecycleLease=DatabaseLifecycleLease.open(databasePath,false);}
+        try{
+            lifecycleLease=DatabaseLifecycleLease.open(databasePath,false);
+            if(NativeRestoreCoordinator.hasArtifacts(databasePath)){
+                try{lifecycleLease.close();}finally{lifecycleLease=null;}
+                throw new java.io.IOException("Interrupted restore requires rollback");
+            }
+        }
         catch(java.io.IOException ex){throw new IllegalStateException("Training database is unavailable",ex);}
     }
     @Override public synchronized SQLiteDatabase getWritableDatabase(){
