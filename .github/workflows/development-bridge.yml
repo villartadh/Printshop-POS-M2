@@ -15,6 +15,8 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
+      - name: Install pinned MCP SDK
+        run: python3 -m pip install --disable-pip-version-check -r tools/development-bridge/requirements-mcp.txt
       - name: Test checkpoint contract
         run: python3 -m unittest discover -s tools/development-bridge -p 'test_*.py' -v
       - name: Collect exact PR head gates
