@@ -52,6 +52,19 @@ jobs:
           java -cp /tmp/quote-classes ph.printshop.pos.RestoreJournalTest
           java -cp /tmp/quote-classes ph.printshop.pos.DatabaseLifecycleLeaseTest
           java -cp /tmp/quote-classes ph.printshop.pos.RecoveryArchiveTest
+          javac -d /tmp/quote-classes android-native/app/src/main/java/ph/printshop/pos/SyncBatchPolicy.java android-native/tests/SyncBatchPolicyTest.java
+          java -cp /tmp/quote-classes ph.printshop.pos.SyncBatchPolicyTest
+          javac -d /tmp/quote-classes android-native/app/src/main/java/ph/printshop/pos/SyncOriginPolicy.java android-native/tests/SyncOriginPolicyTest.java
+          java -cp /tmp/quote-classes ph.printshop.pos.SyncOriginPolicyTest
+          javac -cp /tmp/quote-classes -d /tmp/quote-classes android-native/app/src/main/java/ph/printshop/pos/SyncAckDecoder.java android-native/tests/SyncAckDecoderTest.java
+          java -cp /tmp/quote-classes ph.printshop.pos.SyncAckDecoderTest
+          javac -cp /tmp/quote-classes -d /tmp/quote-classes android-native/app/src/main/java/ph/printshop/pos/SyncHttpsTransport.java android-native/tests/SyncHttpsTransportTest.java
+          tls_dir=$(mktemp -d)
+          trap 'rm -rf "$tls_dir"' EXIT
+          keytool -genkeypair -alias synthetic -keyalg RSA -keysize 2048 -validity 2 -dname CN=localhost -ext SAN=dns:localhost -storetype PKCS12 -keystore "$tls_dir/test.p12" -storepass synthetic-test -keypass synthetic-test -noprompt
+          java -Djavax.net.ssl.trustStore="$tls_dir/test.p12" -Djavax.net.ssl.trustStorePassword=synthetic-test -cp /tmp/quote-classes ph.printshop.pos.SyncHttpsTransportTest "$tls_dir/test.p12"
+          javac -cp /tmp/quote-classes -d /tmp/quote-classes android-native/app/src/main/java/ph/printshop/pos/SyncRequestEncoder.java android-native/tests/SyncRequestEncoderTest.java
+          java -cp /tmp/quote-classes ph.printshop.pos.SyncRequestEncoderTest
       - name: Stock request SQLite schema checks
         run: |
           python3 android-native/tests/stock_request_schema_test.py
