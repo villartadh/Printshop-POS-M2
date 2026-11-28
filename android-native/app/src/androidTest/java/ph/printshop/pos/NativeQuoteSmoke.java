@@ -1553,12 +1553,10 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 RestoreJournal journal=new RestoreJournal(live,lease);
                 journal.prepare(decoded.snapshot);journal.replace();
             }finally{java.util.Arrays.fill(recoveryBytes,(byte)0);}
-            try(CatalogStore blocked=CatalogStore.checkoutFixture(context,fixture)){
-                rejectStock(blocked::getReadableDatabase);
-            }
-            NativeRestoreCoordinator.rollbackInterruptedFixture(context,fixture);
+            // A normal helper open must automatically roll back the interrupted replacement.
             try(CatalogStore reopened=CatalogStore.checkoutFixture(context,fixture)){
-                require(reopened.get(earlierId)!=null,"Rollback lost original catalog");
+                require(reopened.get(earlierId)!=null,"Startup rollback lost original catalog");
+                require(!NativeRestoreCoordinator.hasArtifacts(live),"Startup rollback left artifacts");
                 rejectStock(()->reopened.get(laterId));
             }
         }finally{

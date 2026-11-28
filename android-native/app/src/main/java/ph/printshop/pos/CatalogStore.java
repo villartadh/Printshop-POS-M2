@@ -33,7 +33,14 @@ public final class CatalogStore extends SQLiteOpenHelper {
             lifecycleLease=DatabaseLifecycleLease.open(databasePath,false);
             if(NativeRestoreCoordinator.hasArtifacts(databasePath)){
                 try{lifecycleLease.close();}finally{lifecycleLease=null;}
-                throw new java.io.IOException("Interrupted restore requires rollback");
+                try(DatabaseLifecycleLease recovery=DatabaseLifecycleLease.open(databasePath,true)){
+                    if(RestoreJournal.hasArtifacts(databasePath))new RestoreJournal(databasePath,recovery).recover();
+                }
+                lifecycleLease=DatabaseLifecycleLease.open(databasePath,false);
+                if(RestoreJournal.hasArtifacts(databasePath)){
+                    try{lifecycleLease.close();}finally{lifecycleLease=null;}
+                    throw new java.io.IOException("Interrupted restore requires rollback");
+                }
             }
         }
         catch(java.io.IOException ex){throw new IllegalStateException("Training database is unavailable",ex);}

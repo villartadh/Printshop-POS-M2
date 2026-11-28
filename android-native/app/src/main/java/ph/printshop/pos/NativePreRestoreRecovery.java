@@ -16,9 +16,7 @@ final class NativePreRestoreRecovery {
         Path live=context.getDatabasePath("checkout-fixture-"+fixtureId+".db").toPath();
         lease.requireExclusive(live);
         if(!Files.isRegularFile(live,LinkOption.NOFOLLOW_LINKS))throw new IOException("Training database missing");
-        for(String suffix:new String[]{".restore-pending",".restore-previous",".restore-candidate"})
-            if(Files.exists(live.resolveSibling(live.getFileName()+suffix),LinkOption.NOFOLLOW_LINKS))
-                throw new IOException("Database has unresolved restore state");
+        if(RestoreJournal.hasArtifacts(live))throw new IOException("Database has unresolved restore state");
         CashierSecurity.validatePassword(archivePassword);
         if(Arrays.equals(currentPassword,archivePassword))throw new IllegalArgumentException("Use an independent archive passphrase");
         byte[] archive=null;

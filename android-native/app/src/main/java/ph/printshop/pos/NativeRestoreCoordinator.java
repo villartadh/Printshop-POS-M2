@@ -16,9 +16,7 @@ final class NativeRestoreCoordinator {
         return context.getDatabasePath("checkout-fixture-"+fixture+".db").toPath();
     }
     static boolean hasArtifacts(Path live){
-        for(String suffix:new String[]{".restore-pending",".restore-previous",".restore-candidate"})
-            if(Files.exists(live.resolveSibling(live.getFileName()+suffix),LinkOption.NOFOLLOW_LINKS))return true;
-        return false;
+        return RestoreJournal.hasArtifacts(live);
     }
     /** SQLite must checkpoint and switch out of persistent journal mode itself.
      * Never delete journal/WAL/SHM files manually. RestoreJournal rechecks after close. */
