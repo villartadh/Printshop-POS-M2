@@ -38,3 +38,6 @@ The isolated client accepts fresh caller-provided DNS results, validates them, c
 
 ## Absolute callback deadline (synthetic)
 The callback client now bounds numeric connect time and installs a monotonic deadline watchdog on a duplicate of the underlying connection, including TLS handshaking and response reads. A real synthetic TLS drip-feed test confirms that repeated short reads cannot extend the total deadline. The pilot does not yet resolve DNS, authenticate a subscription or deliver externally; DNS resolution must be bounded separately.
+
+## Bounded DNS observation (synthetic)
+A separate fixed-code Python subprocess obtains numeric system resolver results for a validated fully qualified hostname, with no shell, a bounded result count and timeout. It rejects all unsafe or mixed addresses via destination admission. Tests exercise mocked DNS results and real child-process termination; no public DNS query is required. The system resolver is a host trust dependency, not a DNSSEC guarantee. A future caller must bind this fresh observation to the immediately following pinned TLS connection and enforce a combined deadline; no live callback or event activation is enabled.

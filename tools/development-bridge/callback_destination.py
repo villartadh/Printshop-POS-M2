@@ -20,7 +20,7 @@ class Destination:
     addresses: tuple[str, ...]
 
 
-def validate_destination(url, resolved_addresses):
+def parse_callback_url(url):
     if (not isinstance(url, str) or len(url) > 4096
             or not url.isascii() or any(ord(c) <= 32 or ord(c) == 127 for c in url)
             or "\\" in url or "#" in url):
@@ -37,6 +37,11 @@ def validate_destination(url, resolved_addresses):
     # IP literals, single-label names and ambiguous numeric hostnames are rejected.
     if host.split(".")[-1].isdigit():
         raise ValueError("Numeric hostname")
+    return host, (u.path or "/") + ("?" + u.query if u.query else "")
+
+
+def validate_destination(url, resolved_addresses):
+    host, target = parse_callback_url(url)
     if not isinstance(resolved_addresses, (tuple, list)) or not 1 <= len(resolved_addresses) <= _MAX_ADDRESSES:
         raise ValueError("Missing or excessive DNS results")
     addresses = []
@@ -57,5 +62,5 @@ def validate_destination(url, resolved_addresses):
                     or address in ipaddress.ip_network("64:ff9b:1::/48")))):
             raise ValueError("Non-public or unsupported callback address")
         addresses.append(str(address))
-    return Destination(host, 443, (u.path or "/") + ("?" + u.query if u.query else ""),
+    return Destination(host, 443, target,
                        tuple(dict.fromkeys(addresses)))
