@@ -82,6 +82,50 @@ final class NativeBackupSnapshot {
             while(c.moveToNext())result.put(c.getString(0)+":"+c.getString(1),c.getString(2));
         }return result;
     }
+    /** Authenticated, isolated v21 -> v22 conversion. Returns a new encrypted archive;
+     * does not authorize restore, modify the original archive or replace the live database. */
+    static synchronized byte[] migrateV21(SQLiteDatabase trusted,File privateDirectory,byte[] archive,char[] password){
+        if(!trusted.inTransaction()||trusted.getVersion()!=22)throw new IllegalStateException("Migration requires current authorized transaction");
+        File file=null;BackupStaging staging=null;byte[] migrated=null;
+        try(BackupEnvelope.Decoded decoded=BackupEnvelope.open(archive,22,password)){
+            if(decoded.schema!=21)throw new IllegalArgumentException("Only native schema 21 can migrate");
+            Map<String,String> expected;
+            try(SQLiteDatabase reference=SQLiteDatabase.create(null)){
+                CatalogStore.createSchemaThrough21(reference);
+                expected=schema(reference);
+            }
+            staging=BackupStaging.acquire(privateDirectory);
+            file=File.createTempFile("native-backup-review-",".db",staging.directory);
+            try(FileOutputStream out=new FileOutputStream(file)){out.write(decoded.snapshot);out.getFD().sync();}
+            try(SQLiteDatabase candidate=SQLiteDatabase.openDatabase(file.getPath(),null,SQLiteDatabase.OPEN_READONLY)){
+                if(candidate.getVersion()!=21||!expected.equals(schema(candidate)))throw new IllegalArgumentException("Invalid version 21 native schema");
+                validate(candidate);
+            }
+            try(SQLiteDatabase candidate=SQLiteDatabase.openDatabase(file.getPath(),null,SQLiteDatabase.OPEN_READWRITE)){
+                candidate.setForeignKeyConstraintsEnabled(true);
+                candidate.beginTransaction();
+                try{
+                    QuoteProductionJournal.upgrade(candidate);
+                    candidate.setVersion(22);
+                    if(!schema(trusted).equals(schema(candidate)))throw new IllegalArgumentException("Migrated schema differs from current app");
+                    validate(candidate);
+                    candidate.setTransactionSuccessful();
+                }finally{candidate.endTransaction();}
+            }
+            long size=file.length();
+            if(size<1||size>BackupEnvelope.MAX_BYTES)throw new IllegalArgumentException("Migrated archive exceeds supported size");
+            migrated=new byte[(int)size];
+            try(FileInputStream in=new FileInputStream(file)){
+                int pos=0;while(pos<migrated.length){int n=in.read(migrated,pos,migrated.length-pos);if(n<0)throw new IOException("Migration truncated");pos+=n;}
+                if(in.read()!=-1)throw new IOException("Migration changed");
+            }
+            return BackupEnvelope.seal(migrated,22,password);
+        }catch(IOException|android.database.sqlite.SQLiteException ex){throw new IllegalArgumentException("Unable to migrate native backup",ex);}
+        finally{
+            if(migrated!=null)Arrays.fill(migrated,(byte)0);
+            try{if(file!=null)SQLiteDatabase.deleteDatabase(file);}finally{release(staging);}
+        }
+    }
     /** Read-only candidate inspection; never opens candidate in SQLiteOpenHelper or runs migrations. */
     static synchronized Review review(SQLiteDatabase trusted,File privateDirectory,byte[] archive,char[] password){
         return reviewInternal(trusted,privateDirectory,archive,password,false);

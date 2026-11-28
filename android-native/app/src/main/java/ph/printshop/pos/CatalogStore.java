@@ -88,6 +88,10 @@ public final class CatalogStore extends SQLiteOpenHelper {
         db.setForeignKeyConstraintsEnabled(true);
     }
     @Override public void onCreate(SQLiteDatabase db) {
+        createSchemaThrough21(db);
+        QuoteProductionJournal.upgrade(db);
+    }
+    static void createSchemaThrough21(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE catalog (id TEXT PRIMARY KEY NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('SERVICE','MATERIAL')), name TEXT NOT NULL, unit TEXT NOT NULL, centavos INTEGER NOT NULL CHECK(centavos BETWEEN 0 AND 99999999999), revision INTEGER NOT NULL CHECK(revision >= 1), archived INTEGER NOT NULL CHECK(archived IN (0,1)))");
         db.execSQL("CREATE TABLE catalog_history (id TEXT NOT NULL REFERENCES catalog(id), revision INTEGER NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL, unit TEXT NOT NULL, centavos INTEGER NOT NULL, archived INTEGER NOT NULL, action TEXT NOT NULL CHECK(action IN ('CREATE','EDIT','ARCHIVE','RESTORE')), PRIMARY KEY(id,revision))");
         createStockLedger(db);
@@ -110,7 +114,6 @@ public final class CatalogStore extends SQLiteOpenHelper {
         QuotationJournal.upgradeCreditConversion(db);
         ProductionJournal.upgrade(db);
         ProductionPolicy.upgrade(db);
-        QuoteProductionJournal.upgrade(db);
     }
     private static void upgradeCreditSchema(SQLiteDatabase db){
         ReceivableJournal.createCandidate(db); CreditCashJournal.createCandidate(db); CreditCheckoutJournal.createCandidate(db);
@@ -439,6 +442,9 @@ public final class CatalogStore extends SQLiteOpenHelper {
     }
     NativeBackupSnapshot.Review reviewEncryptedFixtureBackup(String token,byte[] archive,char[] password){
         return fixtureTransaction(db->{requireFixtureOwner(db,token);return NativeBackupSnapshot.review(db,backupContext.getCacheDir(),archive,password);});
+    }
+    byte[] migrateEncryptedFixtureBackup(String token,byte[] archive,char[] password){
+        return fixtureTransaction(db->{requireFixtureOwner(db,token);return NativeBackupSnapshot.migrateV21(db,backupContext.getCacheDir(),archive,password);});
     }
     boolean fixtureInitialized(){
         return fixtureTransaction(CashierJournal::initialized);

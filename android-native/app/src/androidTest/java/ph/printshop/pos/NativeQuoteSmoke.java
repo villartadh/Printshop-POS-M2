@@ -97,7 +97,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "native database lifecycle fence"; verifyDatabaseLifecycleFence();
             phase = "native pre-restore recovery"; verifyPreRestoreRecovery();
             phase = "native SQLite fixture restoration"; verifyNativeRestoreCoordinator();
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_RECURRING_UI_PASS\nNATIVE_CUSTOMER_DIRECTORY_PASS\nNATIVE_CUSTOMER_CHECKOUT_PASS\nNATIVE_CREDIT_COLLECTION_API_PASS\nNATIVE_CREDIT_REPORT_PASS\nNATIVE_CREDIT_CHECKOUT_UI_PASS\nNATIVE_CREDIT_COLLECTION_UI_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\nNATIVE_SAVED_QUOTATION_PASS\nNATIVE_QUOTATION_CASH_CONVERSION_PASS\nNATIVE_QUOTATION_CREDIT_CONVERSION_PASS\nNATIVE_QUOTATION_UI_PASS\nNATIVE_PRODUCTION_JOURNAL_PASS\nNATIVE_PRODUCTION_UI_PASS\nNATIVE_PRODUCTION_POLICY_PASS\nNATIVE_QUOTE_PRODUCTION_PASS\nNATIVE_QUOTE_PRODUCTION_UI_PASS\nNATIVE_RECEIPT_PDF_PASS\nNATIVE_RECEIPT_REPRINT_PASS\nNATIVE_BACKUP_SNAPSHOT_PASS\nNATIVE_BACKUP_IMPORT_UI_PASS\nNATIVE_DATABASE_LIFECYCLE_PASS\nNATIVE_PRE_RESTORE_RECOVERY_PASS\nNATIVE_SQLITE_RESTORE_PASS\nNATIVE_RESTORE_UI_PASS\nNATIVE_RECOVERY_EXPORT_PASS\n");
+            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_RECURRING_UI_PASS\nNATIVE_CUSTOMER_DIRECTORY_PASS\nNATIVE_CUSTOMER_CHECKOUT_PASS\nNATIVE_CREDIT_COLLECTION_API_PASS\nNATIVE_CREDIT_REPORT_PASS\nNATIVE_CREDIT_CHECKOUT_UI_PASS\nNATIVE_CREDIT_COLLECTION_UI_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\nNATIVE_SAVED_QUOTATION_PASS\nNATIVE_QUOTATION_CASH_CONVERSION_PASS\nNATIVE_QUOTATION_CREDIT_CONVERSION_PASS\nNATIVE_QUOTATION_UI_PASS\nNATIVE_PRODUCTION_JOURNAL_PASS\nNATIVE_PRODUCTION_UI_PASS\nNATIVE_PRODUCTION_POLICY_PASS\nNATIVE_QUOTE_PRODUCTION_PASS\nNATIVE_QUOTE_PRODUCTION_UI_PASS\nNATIVE_RECEIPT_PDF_PASS\nNATIVE_RECEIPT_REPRINT_PASS\nNATIVE_BACKUP_SNAPSHOT_PASS\nNATIVE_BACKUP_MIGRATION_PASS\nNATIVE_BACKUP_IMPORT_UI_PASS\nNATIVE_DATABASE_LIFECYCLE_PASS\nNATIVE_PRE_RESTORE_RECOVERY_PASS\nNATIVE_SQLITE_RESTORE_PASS\nNATIVE_RESTORE_UI_PASS\nNATIVE_RECOVERY_EXPORT_PASS\n");
             result = Activity.RESULT_OK;
         } catch (Throwable error) {
             evidence.putString("stream", failureDetails(phase, error));
@@ -1657,6 +1657,36 @@ public final class NativeQuoteSmoke extends Instrumentation {
                 try(android.database.Cursor c=candidate.rawQuery("SELECT expected_cash FROM cashier_drawer_current WHERE shift_id=?",new String[]{shift})){
                     require(c.moveToFirst()&&c.getLong(0)==500,"backup cash mismatch");
                 }
+            }
+            // Synthetic predecessor snapshot: remove only the five objects added at schema 22.
+            try(android.database.sqlite.SQLiteDatabase candidate=android.database.sqlite.SQLiteDatabase.openDatabase(decoded.getPath(),null,android.database.sqlite.SQLiteDatabase.OPEN_READWRITE)){
+                candidate.execSQL("DROP VIEW production_quote_current");
+                candidate.execSQL("DROP TABLE production_quote_events");
+                candidate.setVersion(21);
+            }
+            byte[] predecessor=java.nio.file.Files.readAllBytes(decoded.toPath());
+            byte[] oldArchive=BackupEnvelope.seal(predecessor,21,backup);
+            byte[] mislabeled=BackupEnvelope.seal(predecessor,20,backup);
+            java.util.Arrays.fill(predecessor,(byte)0);
+            rejectStock(()->store.migrateEncryptedFixtureBackup(staff,oldArchive,backup));
+            rejectStock(()->store.migrateEncryptedFixtureBackup(owner,mislabeled,backup));
+            rejectStock(()->store.migrateEncryptedFixtureBackup(owner,archive,backup));
+            byte[] migrated=store.migrateEncryptedFixtureBackup(owner,oldArchive,backup);
+            try{
+                NativeBackupSnapshot.Review migratedReview=store.reviewEncryptedFixtureBackup(owner,migrated,backup);
+                require(migratedReview.schema==22&&migratedReview.sales==1&&migratedReview.pendingSales==1&&migratedReview.openShifts==1,"migration changed ledger totals");
+                require(store.expectedFixtureCash(owner,shift)==500,"migration changed live cash");
+                try(BackupEnvelope.Decoded old=BackupEnvelope.open(oldArchive,22,backup)){require(old.schema==21,"original archive changed");}
+                try(android.database.sqlite.SQLiteDatabase candidate=android.database.sqlite.SQLiteDatabase.openDatabase(decoded.getPath(),null,android.database.sqlite.SQLiteDatabase.OPEN_READWRITE)){
+                    candidate.execSQL("CREATE TABLE unexpected_legacy_object (id INTEGER)");
+                }
+                byte[] altered=java.nio.file.Files.readAllBytes(decoded.toPath());
+                byte[] wrongSchema=BackupEnvelope.seal(altered,21,backup);
+                java.util.Arrays.fill(altered,(byte)0);
+                try{rejectStock(()->store.migrateEncryptedFixtureBackup(owner,wrongSchema,backup));}
+                finally{java.util.Arrays.fill(wrongSchema,(byte)0);}
+            }finally{
+                java.util.Arrays.fill(migrated,(byte)0);java.util.Arrays.fill(oldArchive,(byte)0);java.util.Arrays.fill(mislabeled,(byte)0);
             }
             java.util.Arrays.fill(archive,(byte)0);
         }finally{java.util.Arrays.fill(pass,'\0');java.util.Arrays.fill(backup,'\0');java.util.Arrays.fill(staffPass,'\0');android.database.sqlite.SQLiteDatabase.deleteDatabase(decoded);context.deleteDatabase(filename);}
