@@ -56,6 +56,8 @@ jobs:
           java -cp /tmp/quote-classes ph.printshop.pos.SyncBatchPolicyTest
           javac -d /tmp/quote-classes android-native/app/src/main/java/ph/printshop/pos/SyncOriginPolicy.java android-native/tests/SyncOriginPolicyTest.java
           java -cp /tmp/quote-classes ph.printshop.pos.SyncOriginPolicyTest
+          javac -cp /tmp/quote-classes -d /tmp/quote-classes android-native/app/src/main/java/ph/printshop/pos/SyncAckDecoder.java android-native/tests/SyncAckDecoderTest.java
+          java -cp /tmp/quote-classes ph.printshop.pos.SyncAckDecoderTest
       - name: Stock request SQLite schema checks
         run: |
           python3 android-native/tests/stock_request_schema_test.py
