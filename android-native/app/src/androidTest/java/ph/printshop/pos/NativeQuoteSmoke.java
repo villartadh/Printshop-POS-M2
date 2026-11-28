@@ -97,7 +97,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "native database lifecycle fence"; verifyDatabaseLifecycleFence();
             phase = "native pre-restore recovery"; verifyPreRestoreRecovery();
             phase = "native SQLite fixture restoration"; verifyNativeRestoreCoordinator();
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_RECURRING_UI_PASS\nNATIVE_CUSTOMER_DIRECTORY_PASS\nNATIVE_CUSTOMER_CHECKOUT_PASS\nNATIVE_CREDIT_COLLECTION_API_PASS\nNATIVE_CREDIT_REPORT_PASS\nNATIVE_CREDIT_CHECKOUT_UI_PASS\nNATIVE_CREDIT_COLLECTION_UI_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\nNATIVE_SAVED_QUOTATION_PASS\nNATIVE_QUOTATION_CASH_CONVERSION_PASS\nNATIVE_QUOTATION_CREDIT_CONVERSION_PASS\nNATIVE_QUOTATION_UI_PASS\nNATIVE_PRODUCTION_JOURNAL_PASS\nNATIVE_PRODUCTION_UI_PASS\nNATIVE_PRODUCTION_POLICY_PASS\nNATIVE_QUOTE_PRODUCTION_PASS\nNATIVE_QUOTE_PRODUCTION_UI_PASS\nNATIVE_RECEIPT_PDF_PASS\nNATIVE_RECEIPT_REPRINT_PASS\nNATIVE_BACKUP_SNAPSHOT_PASS\nNATIVE_BACKUP_IMPORT_UI_PASS\nNATIVE_DATABASE_LIFECYCLE_PASS\nNATIVE_PRE_RESTORE_RECOVERY_PASS\nNATIVE_SQLITE_RESTORE_PASS\nNATIVE_RESTORE_UI_PASS\n");
+            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_RECURRING_UI_PASS\nNATIVE_CUSTOMER_DIRECTORY_PASS\nNATIVE_CUSTOMER_CHECKOUT_PASS\nNATIVE_CREDIT_COLLECTION_API_PASS\nNATIVE_CREDIT_REPORT_PASS\nNATIVE_CREDIT_CHECKOUT_UI_PASS\nNATIVE_CREDIT_COLLECTION_UI_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\nNATIVE_SAVED_QUOTATION_PASS\nNATIVE_QUOTATION_CASH_CONVERSION_PASS\nNATIVE_QUOTATION_CREDIT_CONVERSION_PASS\nNATIVE_QUOTATION_UI_PASS\nNATIVE_PRODUCTION_JOURNAL_PASS\nNATIVE_PRODUCTION_UI_PASS\nNATIVE_PRODUCTION_POLICY_PASS\nNATIVE_QUOTE_PRODUCTION_PASS\nNATIVE_QUOTE_PRODUCTION_UI_PASS\nNATIVE_RECEIPT_PDF_PASS\nNATIVE_RECEIPT_REPRINT_PASS\nNATIVE_BACKUP_SNAPSHOT_PASS\nNATIVE_BACKUP_IMPORT_UI_PASS\nNATIVE_DATABASE_LIFECYCLE_PASS\nNATIVE_PRE_RESTORE_RECOVERY_PASS\nNATIVE_SQLITE_RESTORE_PASS\nNATIVE_RESTORE_UI_PASS\nNATIVE_RECOVERY_EXPORT_PASS\n");
             result = Activity.RESULT_OK;
         } catch (Throwable error) {
             evidence.putString("stream", failureDetails(phase, error));
@@ -223,7 +223,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             awaitText(first,"No open shift","cashier login failed");
             runOnMainChecked(()->{
                 require(setup.findViewById(R.id.cashier_add_staff)==null,"cashier visible owner-only action");
-                require(setup.findViewById(R.id.cashier_backup_import)==null&&setup.findViewById(R.id.cashier_backup_validate)==null,"cashier visible owner backup review");
+                require(setup.findViewById(R.id.cashier_backup_import)==null&&setup.findViewById(R.id.cashier_backup_validate)==null&&setup.findViewById(R.id.cashier_recovery_list)==null,"cashier visible owner backup review");
                 require(setup.findViewById(R.id.cashier_inventory)==null,"cashier visible owner-only inventory");
                 require(setup.findViewById(R.id.cashier_manage_staff)==null,"cashier visible owner-only staff management");
                 require(setup.findViewById(R.id.cashier_admin_history)==null,"cashier visible owner-only audit");
@@ -457,6 +457,36 @@ public final class NativeQuoteSmoke extends Instrumentation {
             trainingLogin(activity,owner,ownerPass);
             awaitText(activity,"No open shift","fresh login after restore failed");
             runOnMainChecked(()->require(activity.findViewById(R.id.cashier_backup_validate)==null,"selected archive retained after review"));
+            trainingClick(activity,R.id.cashier_recovery_list);
+            awaitText(activity,"Retained encrypted recovery archives","recovery archive screen missing");
+            awaitText(activity,"Back to cashier","recovery list did not finish loading");
+            java.nio.file.Path scope=RecoveryArchive.fixtureDirectory(getTargetContext().getFilesDir().toPath(),fixtureId,false);
+            java.util.List<RecoveryArchive.Entry> retained=RecoveryArchive.list(scope);
+            require(!retained.isEmpty(),"recovery archive absent");
+            byte[] expectedRecovery=RecoveryArchive.read(scope,retained.get(0).name);
+            trainingClick(activity,R.id.cashier_recovery_first);
+            awaitText(activity,"Export retained recovery archive","retained archive confirmation missing");
+            trainingField(activity,R.id.cashier_recovery_password,"Synthetic-UI-Recovery-Archive-01");
+            java.io.File exported=java.io.File.createTempFile("synthetic-recovery-export-",".psbak",getTargetContext().getCacheDir());
+            try{
+                android.content.IntentFilter create=new android.content.IntentFilter(Intent.ACTION_CREATE_DOCUMENT);
+                create.addCategory(Intent.CATEGORY_OPENABLE);create.addDataType("application/octet-stream");
+                ActivityMonitor exportMonitor=addMonitor(create,new ActivityResult(Activity.RESULT_OK,new Intent().setData(android.net.Uri.fromFile(exported))),true);
+                try{
+                    trainingClick(activity,R.id.cashier_recovery_export);
+                    long deadline=android.os.SystemClock.elapsedRealtime()+60000;
+                    while(exported.length()!=expectedRecovery.length&&android.os.SystemClock.elapsedRealtime()<deadline)android.os.SystemClock.sleep(100);
+                    require(exportMonitor.getHits()==1&&exported.length()==expectedRecovery.length,"recovery export picker or output failed");
+                }finally{removeMonitor(exportMonitor);}
+                char[] recoverySecret="Synthetic-UI-Recovery-Archive-01".toCharArray();
+                byte[] output;
+                try(java.io.InputStream in=new java.io.FileInputStream(exported)){output=BackupFileTransfer.read(in);}
+                try(BackupEnvelope.Decoded decoded=BackupEnvelope.open(output,22,recoverySecret)){require(decoded.schema==22&&java.util.Arrays.equals(output,expectedRecovery),"recovery export bytes or schema");}
+                finally{java.util.Arrays.fill(output,(byte)0);java.util.Arrays.fill(recoverySecret,'\0');}
+                require(!RecoveryArchive.list(scope).isEmpty(),"export removed retained original");
+            }finally{java.util.Arrays.fill(expectedRecovery,(byte)0);exported.delete();}
+            trainingClick(activity,R.id.cashier_back);
+            awaitText(activity,"No open shift","retained export return failed");
         }catch(java.io.IOException|android.content.IntentFilter.MalformedMimeTypeException e){throw new AssertionError("synthetic picker fixture failed",e);}
         finally{java.util.Arrays.fill(ownerSecret,'\0');java.util.Arrays.fill(archiveSecret,'\0');if(archiveFile!=null)archiveFile.delete();}
         trainingClick(activity,R.id.cashier_backup);

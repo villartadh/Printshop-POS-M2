@@ -45,7 +45,7 @@ final class NativePreRestoreRecovery {
                 }finally{db.endTransaction();}
             }
             lease.requireExclusive(live);
-            return RecoveryArchive.persist(context.getFilesDir().toPath().resolve("native-restore-recovery"),archive,22,archivePassword);
+            return RecoveryArchive.persist(RecoveryArchive.fixtureDirectory(context.getFilesDir().toPath(),fixtureId,true),archive,22,archivePassword);
         }finally{if(archive!=null)Arrays.fill(archive,(byte)0);}
     }
 }

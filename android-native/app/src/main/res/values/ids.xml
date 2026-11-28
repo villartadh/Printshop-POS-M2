@@ -228,4 +228,8 @@
     <item type="id" name="cashier_restore_recovery_repeat"/>
     <item type="id" name="cashier_restore_consent"/>
     <item type="id" name="cashier_restore_execute"/>
+    <item type="id" name="cashier_recovery_list"/>
+    <item type="id" name="cashier_recovery_first"/>
+    <item type="id" name="cashier_recovery_password"/>
+    <item type="id" name="cashier_recovery_export"/>
 </resources>

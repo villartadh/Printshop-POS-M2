@@ -19,7 +19,18 @@ public final class RecoveryArchiveTest {
             try{RecoveryArchive.persist(directory,archive,23,password);throw new AssertionError("Wrong schema accepted");}catch(java.io.IOException expected){}
             try(var entries=Files.list(directory)){check(entries.count()==2);}
             check(Arrays.equals(Files.readAllBytes(first),archive));check(Arrays.equals(Files.readAllBytes(second),archive));
-            System.out.println("RecoveryArchive: authenticated durable publication, no overwrite and rejection PASS");
+            String fixture=java.util.UUID.randomUUID().toString(),other=java.util.UUID.randomUUID().toString();
+            Path scope=RecoveryArchive.fixtureDirectory(directory,fixture,true),otherScope=RecoveryArchive.fixtureDirectory(directory,other,false);
+            Path scoped=RecoveryArchive.persist(scope,archive,22,password);
+            check(RecoveryArchive.list(scope).size()==1);check(RecoveryArchive.list(otherScope).isEmpty());
+            check(Arrays.equals(RecoveryArchive.read(scope,scoped.getFileName().toString()),archive));
+            try{RecoveryArchive.read(otherScope,scoped.getFileName().toString());throw new AssertionError("Cross-fixture access");}catch(java.io.IOException expected){}
+            try{RecoveryArchive.read(scope,"../"+first.getFileName());throw new AssertionError("Traversal accepted");}catch(java.io.IOException expected){}
+            Path symlink=scope.resolve("recovery-"+java.util.UUID.randomUUID()+".psbak");
+            Files.createSymbolicLink(symlink,first);
+            check(RecoveryArchive.list(scope).size()==1);
+            try{RecoveryArchive.read(scope,symlink.getFileName().toString());throw new AssertionError("Symlink accepted");}catch(java.io.IOException expected){}
+            System.out.println("RecoveryArchive: durable authenticated publication, fixture scoping and safe read PASS");
         }finally{Arrays.fill(password,'\0');Arrays.fill(wrong,'\0');try(var paths=Files.walk(directory)){for(Path p:(Iterable<Path>)paths.sorted(java.util.Comparator.reverseOrder())::iterator)Files.deleteIfExists(p);}}
     }
 }

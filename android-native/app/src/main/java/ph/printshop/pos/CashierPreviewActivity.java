@@ -387,6 +387,7 @@ public final class CashierPreviewActivity extends Activity {
                 button("Discard selected backup",0,()->{pendingBackupImport=null;refreshDashboard();});
             }
             button("Encrypted training backup",R.id.cashier_backup,this::showBackupExport);
+            button("Export retained recovery archives",R.id.cashier_recovery_list,()->showRecoveryArchives(0));
             button("Training sale refunds / voids",R.id.cashier_refund_receipts,()->showRefundReceipts(0));
             button("Refund / void history",R.id.cashier_refund_history,()->showRefundHistory(0));
             button("Training customers",R.id.cashier_customers,()->showCustomers(true,"",0));
@@ -409,6 +410,45 @@ public final class CashierPreviewActivity extends Activity {
     private void clearBackupExport(){
         if(pendingBackupExport!=null)Arrays.fill(pendingBackupExport,(byte)0);
         pendingBackupExport=null;
+    }
+    private void showRecoveryArchives(int offset){
+        mode="recovery-list";screen("Retained encrypted recovery archives","Owner-only training recovery copies, newest first. Export an authenticated copy without deleting the private original.");
+        submit(()->{
+            if(store.fixturePrincipal(session()).role!=CashierSecurity.Role.OWNER)throw new IllegalStateException("Owner authorization required");
+            try{return RecoveryArchive.list(RecoveryArchive.fixtureDirectory(getFilesDir().toPath(),fixtureId,false));}
+            catch(java.io.IOException ex){throw new IllegalStateException("Recovery archives unavailable",ex);}
+        },value->{
+            @SuppressWarnings("unchecked") List<RecoveryArchive.Entry> entries=(List<RecoveryArchive.Entry>)value;
+            if(entries.isEmpty())label("No retained recovery archives for this training fixture.");
+            for(int i=offset;i<Math.min(entries.size(),offset+8);i++){
+                RecoveryArchive.Entry entry=entries.get(i);
+                String when=new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm",java.util.Locale.getDefault()).format(new java.util.Date(entry.modified));
+                button("Export recovery "+when+" · "+entry.name.substring(9,17),i==offset?R.id.cashier_recovery_first:0,()->showRecoveryExport(entry));
+            }
+            if(offset>0)button("Previous recovery archives",0,()->showRecoveryArchives(Math.max(0,offset-8)));
+            if(offset+8<entries.size())button("More recovery archives",0,()->showRecoveryArchives(offset+8));
+            back();
+        });
+    }
+    private void showRecoveryExport(RecoveryArchive.Entry entry){
+        mode="recovery-export";screen("Export retained recovery archive","Enter the archive's independent recovery passphrase. The private original remains unchanged; only verified encrypted bytes are exported.");
+        EditText password=credentialField("Recovery archive passphrase",R.id.cashier_recovery_password);
+        button("Verify and export recovery",R.id.cashier_recovery_export,()->{
+            char[] secret=takePassword(password);
+            boolean queued=submit(()->{
+                byte[] archive=null;
+                try{
+                    String token=session();
+                    if(store.fixturePrincipal(token).role!=CashierSecurity.Role.OWNER)throw new IllegalStateException("Owner authorization required");
+                    archive=RecoveryArchive.read(RecoveryArchive.fixtureDirectory(getFilesDir().toPath(),fixtureId,false),entry.name);
+                    store.reviewEncryptedFixtureBackup(token,archive,secret);
+                    byte[] validated=archive;archive=null;return validated;
+                }catch(java.io.IOException ex){throw new IllegalStateException("Recovery archive unavailable",ex);}
+                finally{Arrays.fill(secret,'\0');if(archive!=null)Arrays.fill(archive,(byte)0);}
+            },v->launchBackupExport((byte[])v));
+            if(!queued)Arrays.fill(secret,'\0');
+        });
+        back();
     }
     private void showBackupExport(){
         clearBackupExport();mode="backup-export";screen("Encrypted backup export","Training data only. Choose a separate backup passphrase and keep it safe. Losing it makes the archive unreadable.");
