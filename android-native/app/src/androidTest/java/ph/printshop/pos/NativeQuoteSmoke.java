@@ -97,7 +97,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             phase = "native database lifecycle fence"; verifyDatabaseLifecycleFence();
             phase = "native pre-restore recovery"; verifyPreRestoreRecovery();
             phase = "native SQLite fixture restoration"; verifyNativeRestoreCoordinator();
-            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_RECURRING_UI_PASS\nNATIVE_CUSTOMER_DIRECTORY_PASS\nNATIVE_CUSTOMER_CHECKOUT_PASS\nNATIVE_CREDIT_COLLECTION_API_PASS\nNATIVE_CREDIT_REPORT_PASS\nNATIVE_CREDIT_CHECKOUT_UI_PASS\nNATIVE_CREDIT_COLLECTION_UI_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\nNATIVE_SAVED_QUOTATION_PASS\nNATIVE_QUOTATION_CASH_CONVERSION_PASS\nNATIVE_QUOTATION_CREDIT_CONVERSION_PASS\nNATIVE_QUOTATION_UI_PASS\nNATIVE_PRODUCTION_JOURNAL_PASS\nNATIVE_PRODUCTION_UI_PASS\nNATIVE_PRODUCTION_POLICY_PASS\nNATIVE_QUOTE_PRODUCTION_PASS\nNATIVE_QUOTE_PRODUCTION_UI_PASS\nNATIVE_RECEIPT_PDF_PASS\nNATIVE_RECEIPT_REPRINT_PASS\nNATIVE_BACKUP_SNAPSHOT_PASS\nNATIVE_BACKUP_MIGRATION_PASS\nNATIVE_BACKUP_IMPORT_UI_PASS\nNATIVE_DATABASE_LIFECYCLE_PASS\nNATIVE_PRE_RESTORE_RECOVERY_PASS\nNATIVE_SQLITE_RESTORE_PASS\nNATIVE_RESTORE_UI_PASS\nNATIVE_RECOVERY_EXPORT_PASS\n");
+            evidence.putString("stream", "NATIVE_QUOTE_SMOKE_PASS\nNATIVE_CATALOG_STORE_PASS\nNATIVE_CATALOG_SCREEN_PASS\nNATIVE_STOCK_LEDGER_PASS\nNATIVE_STOCK_SCREEN_PASS\nNATIVE_STOCK_RECOVERY_PASS\nNATIVE_CHECKOUT_PLAN_PASS\nNATIVE_DURABLE_CHECKOUT_PASS\nNATIVE_CASHIER_SHIFT_PASS\nNATIVE_CASHIER_UI_PASS\nNATIVE_CREDENTIAL_LIFECYCLE_PASS\nNATIVE_ADMIN_AUTH_PASS\nNATIVE_STAFF_DISABLE_PASS\nNATIVE_ADMIN_AUDIT_PASS\nNATIVE_OWNER_CATALOG_UI_PASS\nNATIVE_DRAWER_LEDGER_PASS\nNATIVE_REFUND_UI_PASS\nNATIVE_SALES_REPORT_PASS\nNATIVE_REPORT_CHART_HISTORY_PASS\nNATIVE_RECURRING_EXPENSE_PASS\nNATIVE_RECURRING_UI_PASS\nNATIVE_CUSTOMER_DIRECTORY_PASS\nNATIVE_CUSTOMER_CHECKOUT_PASS\nNATIVE_CREDIT_COLLECTION_API_PASS\nNATIVE_CREDIT_REPORT_PASS\nNATIVE_CREDIT_CHECKOUT_UI_PASS\nNATIVE_CREDIT_COLLECTION_UI_PASS\nNATIVE_MATERIAL_COST_PASS\nNATIVE_RECIPE_SCREEN_PASS\nNATIVE_PRICING_STORE_PASS\nNATIVE_PRICING_SETTINGS_PASS\nNATIVE_ADVANCED_QUOTE_PASS\nNATIVE_SAVED_QUOTATION_PASS\nNATIVE_QUOTATION_CASH_CONVERSION_PASS\nNATIVE_QUOTATION_CREDIT_CONVERSION_PASS\nNATIVE_QUOTATION_UI_PASS\nNATIVE_PRODUCTION_JOURNAL_PASS\nNATIVE_PRODUCTION_UI_PASS\nNATIVE_PRODUCTION_POLICY_PASS\nNATIVE_QUOTE_PRODUCTION_PASS\nNATIVE_QUOTE_PRODUCTION_UI_PASS\nNATIVE_RECEIPT_PDF_PASS\nNATIVE_RECEIPT_REPRINT_PASS\nNATIVE_BACKUP_SNAPSHOT_PASS\nNATIVE_BACKUP_MIGRATION_PASS\nNATIVE_BACKUP_MIGRATION_UI_PASS\nNATIVE_BACKUP_IMPORT_UI_PASS\nNATIVE_DATABASE_LIFECYCLE_PASS\nNATIVE_PRE_RESTORE_RECOVERY_PASS\nNATIVE_SQLITE_RESTORE_PASS\nNATIVE_RESTORE_UI_PASS\nNATIVE_RECOVERY_EXPORT_PASS\n");
             result = Activity.RESULT_OK;
         } catch (Throwable error) {
             evidence.putString("stream", failureDetails(phase, error));
@@ -418,16 +418,59 @@ public final class NativeQuoteSmoke extends Instrumentation {
         runOnMainChecked(()->require(activity.findViewById(R.id.cashier_backup_choose)!=null,"backup picker action missing"));
         // Stub only the external picker result; the real activity, resolver, owner login,
         // archive authentication, SQLite review and returned summary all run installed.
-        java.io.File archiveFile=null;char[] ownerSecret=ownerPass.toCharArray();
+        java.io.File archiveFile=null,legacyFile=null,legacyDb=null;char[] ownerSecret=ownerPass.toCharArray();
         char[] archiveSecret="Synthetic-import-archive-01".toCharArray();
         try{
             archiveFile=java.io.File.createTempFile("synthetic-import-",".psposbackup",getTargetContext().getCacheDir());
+            legacyFile=java.io.File.createTempFile("synthetic-legacy-",".psposbackup",getTargetContext().getCacheDir());
+            legacyDb=java.io.File.createTempFile("synthetic-legacy-",".db",getTargetContext().getCacheDir());
             try(CatalogStore store=CatalogStore.checkoutFixture(getTargetContext(),fixtureId)){
                 String token=store.signInFixture(owner,ownerSecret);
                 byte[] archive=store.encryptedFixtureBackup(token,archiveSecret);
-                try(java.io.FileOutputStream out=new java.io.FileOutputStream(archiveFile)){BackupFileTransfer.write(out,archive);}
+                try(BackupEnvelope.Decoded decoded=BackupEnvelope.open(archive,22,archiveSecret);
+                    java.io.FileOutputStream out=new java.io.FileOutputStream(legacyDb)){out.write(decoded.snapshot);}
                 finally{java.util.Arrays.fill(archive,(byte)0);store.signOutFixture(token);}
             }
+            try(android.database.sqlite.SQLiteDatabase candidate=android.database.sqlite.SQLiteDatabase.openDatabase(legacyDb.getPath(),null,android.database.sqlite.SQLiteDatabase.OPEN_READWRITE)){
+                candidate.execSQL("DROP VIEW production_quote_current");
+                candidate.execSQL("DROP TABLE production_quote_events");
+                candidate.setVersion(21);
+            }
+            byte[] sourceBytes=java.nio.file.Files.readAllBytes(legacyDb.toPath());
+            byte[] old=BackupEnvelope.seal(sourceBytes,21,archiveSecret);
+            java.util.Arrays.fill(sourceBytes,(byte)0);
+            try{
+                try(java.io.FileOutputStream out=new java.io.FileOutputStream(legacyFile)){BackupFileTransfer.write(out,old);}
+                android.content.IntentFilter legacyFilter=new android.content.IntentFilter(Intent.ACTION_OPEN_DOCUMENT);
+                legacyFilter.addCategory(Intent.CATEGORY_OPENABLE);legacyFilter.addDataType("application/octet-stream");
+                ActivityMonitor legacyMonitor=addMonitor(legacyFilter,new ActivityResult(Activity.RESULT_OK,new Intent().setData(android.net.Uri.fromFile(legacyFile))),true);
+                try{
+                    trainingClick(activity,R.id.cashier_backup_choose);
+                    awaitText(activity,"Training sign in","legacy import owner reauthentication missing");
+                    require(legacyMonitor.getHits()==1,"legacy import picker omitted");
+                }finally{removeMonitor(legacyMonitor);}
+                trainingLogin(activity,owner,ownerPass);
+                awaitText(activity,"Validate selected backup","legacy file not selected");
+                trainingClick(activity,R.id.cashier_backup_validate);
+                trainingField(activity,R.id.cashier_backup_password,"Synthetic-import-archive-01");
+                android.content.IntentFilter createLegacy=new android.content.IntentFilter(Intent.ACTION_CREATE_DOCUMENT);
+                createLegacy.addCategory(Intent.CATEGORY_OPENABLE);createLegacy.addDataType("application/octet-stream");
+                ActivityMonitor createMonitor=addMonitor(createLegacy,new ActivityResult(Activity.RESULT_OK,new Intent().setData(android.net.Uri.fromFile(archiveFile))),true);
+                try{
+                    trainingClick(activity,R.id.cashier_backup_migrate);
+                    awaitText(activity,"Older backup converted","legacy conversion failed",60000);
+                    long deadline=android.os.SystemClock.elapsedRealtime()+60000;
+                    while(archiveFile.length()==0&&android.os.SystemClock.elapsedRealtime()<deadline)android.os.SystemClock.sleep(100);
+                    require(createMonitor.getHits()==1&&archiveFile.length()>0,"converted export picker/output missing");
+                }finally{removeMonitor(createMonitor);}
+                byte[] preserved=java.nio.file.Files.readAllBytes(legacyFile.toPath());
+                try{require(java.util.Arrays.equals(old,preserved),"legacy archive overwritten");}
+                finally{java.util.Arrays.fill(preserved,(byte)0);}
+                trainingClick(activity,R.id.cashier_back);
+                awaitText(activity,"No open shift","conversion changed current shift");
+                trainingClick(activity,R.id.cashier_backup_import);
+                awaitText(activity,"Review encrypted backup","converted import screen missing");
+            }finally{java.util.Arrays.fill(old,(byte)0);}
             android.content.IntentFilter filter=new android.content.IntentFilter(Intent.ACTION_OPEN_DOCUMENT);
             filter.addCategory(Intent.CATEGORY_OPENABLE);filter.addDataType("application/octet-stream");
             Intent result=new Intent().setData(android.net.Uri.fromFile(archiveFile));
@@ -488,7 +531,7 @@ public final class NativeQuoteSmoke extends Instrumentation {
             trainingClick(activity,R.id.cashier_back);
             awaitText(activity,"No open shift","retained export return failed");
         }catch(java.io.IOException|android.content.IntentFilter.MalformedMimeTypeException e){throw new AssertionError("synthetic picker fixture failed",e);}
-        finally{java.util.Arrays.fill(ownerSecret,'\0');java.util.Arrays.fill(archiveSecret,'\0');if(archiveFile!=null)archiveFile.delete();}
+        finally{java.util.Arrays.fill(ownerSecret,'\0');java.util.Arrays.fill(archiveSecret,'\0');if(archiveFile!=null)archiveFile.delete();if(legacyFile!=null)legacyFile.delete();if(legacyDb!=null)android.database.sqlite.SQLiteDatabase.deleteDatabase(legacyDb);}
         trainingClick(activity,R.id.cashier_backup);
         awaitText(activity,"Encrypted backup export","owner backup screen missing");
         trainingField(activity,R.id.cashier_backup_password,"Synthetic-export-password-01");

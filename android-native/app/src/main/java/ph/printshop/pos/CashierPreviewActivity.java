@@ -51,6 +51,7 @@ public final class CashierPreviewActivity extends Activity {
     }
     // Only authenticated ciphertext crosses the external document-picker lifecycle.
     private byte[] pendingBackupExport;
+    private android.net.Uri migrationExportSource;
     private LinearLayout page;
     private TextView status;
     private ScrollView scroll;
@@ -151,6 +152,13 @@ public final class CashierPreviewActivity extends Activity {
             case "Use up to three decimal places.":return message;
             case "Enter a printable reason (1–160 characters).":return message;
             case "Owner authorization required":return message;
+            case "Only native schema 21 can migrate":return "Only native schema 21 archives can be converted. Choose Validate for schema 22.";
+            case "Older native schema requires isolated migration":return "Older archive: select it again and use Convert native schema 21 backup if applicable.";
+            case "Backup encryption or authentication failed":return "Backup authentication failed. Select the archive again and check its passphrase.";
+            case "Invalid version 21 native schema":
+            case "Migrated schema differs from current app":
+            case "Unable to migrate native backup":
+            case "Backup file cannot be read":return message;
             case "Original receipt changed or amount is invalid; review again":
             case "Authorized original cash receipt unavailable":
             case "Invalid customer details":return message;
@@ -409,7 +417,7 @@ public final class CashierPreviewActivity extends Activity {
     }
     private void clearBackupExport(){
         if(pendingBackupExport!=null)Arrays.fill(pendingBackupExport,(byte)0);
-        pendingBackupExport=null;
+        pendingBackupExport=null;migrationExportSource=null;
     }
     private void showRecoveryArchives(int offset){
         mode="recovery-list";screen("Retained encrypted recovery archives","Owner-only training recovery copies, newest first. Export an authenticated copy without deleting the private original.");
@@ -463,8 +471,9 @@ public final class CashierPreviewActivity extends Activity {
         });
         back();
     }
-    private void launchBackupExport(byte[] archive){
-        clearBackupExport();pendingBackupExport=archive;
+    private void launchBackupExport(byte[] archive){launchBackupExport(archive,null);}
+    private void launchBackupExport(byte[] archive,android.net.Uri source){
+        clearBackupExport();pendingBackupExport=archive;migrationExportSource=source;
         Intent picker=new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("application/octet-stream");
         picker.putExtra(Intent.EXTRA_TITLE,"printshop-training-"+UUID.randomUUID()+".psposbackup");
         try{startActivityForResult(picker,BACKUP_EXPORT);}
@@ -482,7 +491,7 @@ public final class CashierPreviewActivity extends Activity {
     }
     private void showBackupValidation(){
         if(pendingBackupImport==null){refreshDashboard();return;}
-        mode="backup-validation";screen("Validate selected backup","Enter the separate archive passphrase. No data will be restored or changed.");
+        mode="backup-validation";screen("Validate selected backup","Enter the separate archive passphrase. Validate current archives or convert an older native schema 21 archive to a new encrypted file. No data will be restored or changed.");
         EditText password=credentialField("Backup passphrase",R.id.cashier_backup_password);
         button("Validate read-only backup",R.id.cashier_backup_review,()->{
             android.net.Uri source=pendingBackupImport;
@@ -500,6 +509,31 @@ public final class CashierPreviewActivity extends Activity {
                     archive=null;return reviewed;
                 }finally{Arrays.fill(secret,'\0');if(archive!=null)Arrays.fill(archive,(byte)0);}
             },v->showBackupReview((ReviewedBackup)v));
+            if(!queued)Arrays.fill(secret,'\0');
+        });
+        button("Convert native schema 21 backup",R.id.cashier_backup_migrate,()->{
+            android.net.Uri source=pendingBackupImport;
+            if(source==null){refreshDashboard();return;}
+            char[] secret=takePassword(password);pendingBackupImport=null;
+            boolean queued=submit(()->{
+                byte[] archive=null,migrated=null;
+                try{
+                    String token=session();
+                    if(store.fixturePrincipal(token).role!=CashierSecurity.Role.OWNER)throw new IllegalStateException("Owner authorization required");
+                    try(java.io.InputStream in=getContentResolver().openInputStream(source)){archive=BackupFileTransfer.read(in);}
+                    catch(java.io.IOException e){throw new IllegalArgumentException("Backup file cannot be read",e);}
+                    migrated=store.migrateEncryptedFixtureBackup(token,archive,secret);
+                    byte[] output=migrated;migrated=null;return output;
+                }finally{
+                    Arrays.fill(secret,'\0');
+                    if(archive!=null)Arrays.fill(archive,(byte)0);
+                    if(migrated!=null)Arrays.fill(migrated,(byte)0);
+                }
+            },v->{
+                mode="backup-migrated";
+                screen("Older backup converted","The new schema 22 archive uses the same archive passphrase. Save it as a new file, then import and review it normally. Current training data remains unchanged.");
+                back();launchBackupExport((byte[])v,source);
+            });
             if(!queued)Arrays.fill(secret,'\0');
         });
         button("Discard selected backup",R.id.cashier_back,()->{pendingBackupImport=null;refreshDashboard();});
@@ -575,8 +609,10 @@ public final class CashierPreviewActivity extends Activity {
         }
         if(request!=BACKUP_EXPORT)return;
         byte[] archive=pendingBackupExport;pendingBackupExport=null;
+        android.net.Uri migrationSource=migrationExportSource;migrationExportSource=null;
         if(result!=RESULT_OK||data==null||data.getData()==null||archive==null){if(archive!=null)Arrays.fill(archive,(byte)0);return;}
         android.net.Uri destination=data.getData();
+        if(destination.equals(migrationSource)){Arrays.fill(archive,(byte)0);Toast.makeText(this,"Choose a new file; original archive was not overwritten.",Toast.LENGTH_LONG).show();return;}
         worker.execute(()->{
             boolean saved=false;
             try(java.io.OutputStream out=getContentResolver().openOutputStream(destination,"w")){
