@@ -11,3 +11,6 @@ The reconciliation classifier accepts only exact Git object identities from an i
 
 ## Checkpoint artifact validation
 Validate bounded UTF-8 JSON, the exact repository/head SHA, expected gate set, run identities, derived decision, and recomputed event key before artifact publication. Duplicate fields and malformed or inconsistent records are rejected. A valid checksum is not authentication; independently retrieve current GitHub run metadata and compare before consuming an event. No artifact alone permits a source write.
+
+## Fresh observation admission
+Before treating a stored checkpoint as a candidate, independently retrieve the current branch SHA and fresh exact-SHA workflow metadata. Reject mismatched head or checkpoint, new attempts, conflicting duplicate attempt metadata and missing/unverified bridge gates when applicable. Explicitly derive bridge applicability from PR changed paths; never infer it from artifact content. This read-only policy does not grant ownership or authorize mutations; the caller must verify fresh observations and separately obtain a proven claim. Diagnose failures independently even when a bridge artifact is absent.

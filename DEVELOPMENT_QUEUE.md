@@ -635,3 +635,6 @@ Exact next: implement owner-only definition CRUD/archival (new revision, explici
 
 ## 2026-11-28 — strict bridge artifact validation prepared
 - Added bounded checkpoint JSON schema/identity/decision/key validation, mandatory hosted validation before artifact upload. Reject duplicate fields, wrong SHA/repository, invalid gate or run identity, and inconsistent hash or decision. 33 local tests passed; integrity is not authentication or a live lock. Successor of prepared recovery commit 53150116204ea1bb951cca53403fd19ee1658dd9; never attach before its fresh exact three gates pass. No second writer or protected main change.
+
+## 2026-11-28 — fresh checkpoint admission prepared
+- Added read-only artifact admission policy requiring independent current head, fresh exact run metadata, matching event and explicit bridge applicability; reject changed head/new attempts/conflicting attempt metadata/unverified bridge. 43 local tests passed. No write/lease authority. Successor of prepared validator bb1a25ca77cd92024aff3323ef42956d07acb3bc; attach only after predecessor exact three gates pass. Existing hourly automation remains sole scheduled writer; direct event activation not verified.

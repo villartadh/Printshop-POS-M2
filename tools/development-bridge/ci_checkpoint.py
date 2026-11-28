@@ -25,7 +25,12 @@ def checkpoint(sha, runs):
         if any(type(r.get("id")) is not int or r["id"] <= 0 or
                type(r.get("run_attempt")) is not int or r["run_attempt"] <= 0 for r in candidates):
             raise ValueError("Malformed workflow identity")
-        latest = max(candidates, key=lambda r: (r["id"], r["run_attempt"]))
+        identity = max((r["id"], r["run_attempt"]) for r in candidates)
+        matching = [r for r in candidates if (r["id"], r["run_attempt"]) == identity]
+        if any((r.get("status"), r.get("conclusion")) !=
+               (matching[0].get("status"), matching[0].get("conclusion")) for r in matching):
+            raise ValueError("Conflicting workflow attempt")
+        latest = matching[0]
         state = "pending"
         if latest.get("status") == "completed":
             conclusion = latest.get("conclusion")
