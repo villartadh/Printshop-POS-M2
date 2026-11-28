@@ -21,6 +21,16 @@ public final class BackupFileTransferTest {
         reject(()->BackupFileTransfer.write(out,new byte[0]));
         reject(()->BackupFileTransfer.write(out,new byte[BackupFileTransfer.MAX_ARCHIVE+1]));
         reject(()->BackupFileTransfer.write(new OutputStream(){public void write(int b)throws IOException{throw new IOException("synthetic failure");}},data));
-        System.out.println("BackupFileTransfer: 10 checks PASS");
+        BackupFileTransfer.verify(new ByteArrayInputStream(data),data);
+        byte[] corrupt=data.clone();corrupt[8193]^=1;
+        reject(()->BackupFileTransfer.verify(new ByteArrayInputStream(corrupt),data));
+        reject(()->BackupFileTransfer.verify(new ByteArrayInputStream(Arrays.copyOf(data,data.length-1)),data));
+        reject(()->BackupFileTransfer.verify(new ByteArrayInputStream(Arrays.copyOf(data,data.length+1)),data));
+        reject(()->BackupFileTransfer.verify(null,data));
+        reject(()->BackupFileTransfer.verify(new ByteArrayInputStream(data),new byte[0]));
+        reject(()->BackupFileTransfer.verify(new InputStream(){public int read(){return 0;}public int read(byte[] b,int o,int l){return 0;}},data));
+        reject(()->BackupFileTransfer.verify(new InputStream(){public int read()throws IOException{throw new IOException("provider read failed");}},data));
+        BackupFileTransfer.verify(new ByteArrayInputStream(data){public synchronized int read(byte[] b,int o,int l){return super.read(b,o,Math.min(17,l));}},data);
+        System.out.println("BackupFileTransfer: 19 checks PASS");
     }
 }

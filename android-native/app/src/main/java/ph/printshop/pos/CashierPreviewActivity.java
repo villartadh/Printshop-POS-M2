@@ -615,12 +615,20 @@ public final class CashierPreviewActivity extends Activity {
         if(destination.equals(migrationSource)){Arrays.fill(archive,(byte)0);Toast.makeText(this,"Choose a new file; original archive was not overwritten.",Toast.LENGTH_LONG).show();return;}
         worker.execute(()->{
             boolean saved=false;
-            try(java.io.OutputStream out=getContentResolver().openOutputStream(destination,"w")){
-                BackupFileTransfer.write(out,archive);saved=true;
+            try{
+                try(java.io.OutputStream out=getContentResolver().openOutputStream(destination,"w")){
+                    BackupFileTransfer.write(out,archive);
+                }
+                // Do not claim success until the provider has closed the write and a
+                // separate read returns exactly the authenticated ciphertext.
+                try(java.io.InputStream in=getContentResolver().openInputStream(destination)){
+                    BackupFileTransfer.verify(in,archive);
+                }
+                saved=true;
             }catch(java.io.IOException|RuntimeException e){saved=false;}
             finally{Arrays.fill(archive,(byte)0);}
             final boolean success=saved;
-            runOnUiThread(()->Toast.makeText(this,success?"Encrypted training backup exported.":"Backup export failed. Discard incomplete file.",Toast.LENGTH_LONG).show());
+            runOnUiThread(()->Toast.makeText(this,success?"Encrypted training backup exported and verified.":"Backup export could not be verified. Keep the original and discard the unverified copy.",Toast.LENGTH_LONG).show());
         });
     }
     private static String drawerLabel(ShiftMath.DrawerKind kind){
