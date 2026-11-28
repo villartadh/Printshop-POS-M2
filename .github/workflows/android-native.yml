@@ -63,6 +63,8 @@ jobs:
           trap 'rm -rf "$tls_dir"' EXIT
           keytool -genkeypair -alias synthetic -keyalg RSA -keysize 2048 -validity 2 -dname CN=localhost -ext SAN=dns:localhost -storetype PKCS12 -keystore "$tls_dir/test.p12" -storepass synthetic-test -keypass synthetic-test -noprompt
           java -Djavax.net.ssl.trustStore="$tls_dir/test.p12" -Djavax.net.ssl.trustStorePassword=synthetic-test -cp /tmp/quote-classes ph.printshop.pos.SyncHttpsTransportTest "$tls_dir/test.p12"
+          javac -cp /tmp/quote-classes -d /tmp/quote-classes android-native/app/src/main/java/ph/printshop/pos/SyncRequestEncoder.java android-native/tests/SyncRequestEncoderTest.java
+          java -cp /tmp/quote-classes ph.printshop.pos.SyncRequestEncoderTest
       - name: Stock request SQLite schema checks
         run: |
           python3 android-native/tests/stock_request_schema_test.py
