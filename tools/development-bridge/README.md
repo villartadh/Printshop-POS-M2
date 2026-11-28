@@ -35,3 +35,6 @@ Validate only HTTPS DNS names on port 443 and a bounded, independently resolved 
 
 ## Synthetic pinned HTTPS transport
 The isolated client accepts fresh caller-provided DNS results, validates them, connects directly to a numeric address, and verifies TLS against the original DNS hostname. It transmits the exact signed bytes, rejects redirects and limits response body size. Real TLS tests use an ephemeral self-signed certificate and socket pair with an intercepted dial; no external callback or network address is contacted. Per-operation socket timeouts are not an absolute delivery deadline. Before live use, add a trusted bounded DNS resolver, an absolute response deadline, durable subscriptions/replay protection and host integration. No live event receiver or writer is enabled.
+
+## Absolute callback deadline (synthetic)
+The callback client now bounds numeric connect time and installs a monotonic deadline watchdog on a duplicate of the underlying connection, including TLS handshaking and response reads. A real synthetic TLS drip-feed test confirms that repeated short reads cannot extend the total deadline. The pilot does not yet resolve DNS, authenticate a subscription or deliver externally; DNS resolution must be bounded separately.

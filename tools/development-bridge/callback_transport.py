@@ -7,6 +7,8 @@ import http.client
 import ipaddress
 import socket
 import ssl
+import threading
+import time
 
 from callback_destination import validate_destination
 
@@ -29,21 +31,52 @@ def _dial(address, port, timeout):
 
 
 class _PinnedConnection(http.client.HTTPSConnection):
-    def __init__(self, destination, timeout, context):
+    def __init__(self, destination, timeout, context, deadline):
         super().__init__(destination.hostname, destination.port,
                          timeout=timeout, context=context)
         self.destination = destination
+        self.deadline = deadline
+        self.guard = None
+        self.timer = None
 
     def connect(self):
-        raw = _dial(self.destination.addresses[0], self.destination.port, self.timeout)
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("Callback deadline exceeded")
+        raw = _dial(self.destination.addresses[0], self.destination.port, min(self.timeout, remaining))
         try:
+            remaining = self.deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("Callback deadline exceeded")
+            # The duplicate owns the same underlying connection even when SSL
+            # detaches the raw socket during wrapping. Shutdown wakes blocked I/O.
+            self.guard = raw.dup()
+            def expire():
+                try:
+                    self.guard.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+            self.timer = threading.Timer(remaining, expire)
+            self.timer.daemon = True
+            self.timer.start()
             self.sock = self._context.wrap_socket(raw, server_hostname=self.host)
         except BaseException:
             raw.close()
             raise
 
+    def finish(self):
+        if self.timer is not None:
+            self.timer.cancel()
+            self.timer.join()
+        if self.guard is not None:
+            self.guard.close()
+        self.close()
 
-def post_verified(url, resolved_addresses, body, headers, *, context=None):
+
+def post_verified(url, resolved_addresses, body, headers, *, context=None, deadline_seconds=10):
+    if type(deadline_seconds) not in (int, float) or not 0 < deadline_seconds <= 10:
+        raise ValueError("Invalid callback deadline")
+    deadline = time.monotonic() + deadline_seconds
     destination = validate_destination(url, resolved_addresses)
     if not isinstance(body, bytes) or len(body) > 256 * 1024:
         raise ValueError("Invalid callback body")
@@ -57,7 +90,8 @@ def post_verified(url, resolved_addresses, body, headers, *, context=None):
     context = context or ssl.create_default_context()
     if not context.check_hostname or context.verify_mode != ssl.CERT_REQUIRED:
         raise ValueError("TLS verification required")
-    conn = _PinnedConnection(destination, 5, context)
+    conn = _PinnedConnection(destination, 5, context, deadline)
+    response = None
     try:
         conn.request("POST", destination.target, body=body, headers=headers)
         response = conn.getresponse()
@@ -68,6 +102,14 @@ def post_verified(url, resolved_addresses, body, headers, *, context=None):
         data = response.read(_MAX_RESPONSE + 1)
         if len(data) > _MAX_RESPONSE:
             raise ValueError("Response too large")
+        if time.monotonic() >= deadline:
+            raise TimeoutError("Callback deadline exceeded")
         return response.status, data
+    except (OSError, http.client.HTTPException, ValueError) as exc:
+        if time.monotonic() >= deadline:
+            raise TimeoutError("Callback deadline exceeded") from exc
+        raise
     finally:
-        conn.close()
+        if response is not None:
+            response.close()
+        conn.finish()

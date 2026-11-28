@@ -5,6 +5,7 @@ import ssl
 import subprocess
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -30,7 +31,7 @@ class CallbackTransportTests(unittest.TestCase):
         cls.server.load_cert_chain(cert, key)
         cls.client = ssl.create_default_context(cafile=str(cert))
 
-    def exchange(self, response, host="callback.example"):
+    def exchange(self, response, host="callback.example", deadline=10):
         a,b = socket.socketpair()
         a.settimeout(3)
         b.settimeout(3)
@@ -40,14 +41,23 @@ class CallbackTransportTests(unittest.TestCase):
                 with self.server.wrap_socket(b, server_side=True) as tls:
                     data = b""
                     while b"\r\n\r\n" not in data:
-                        data += tls.recv(4096)
+                        chunk = tls.recv(4096)
+                        if not chunk:
+                            return
+                        data += chunk
                     head, payload = data.split(b"\r\n\r\n",1)
                     length = int(next(x.split(b":",1)[1] for x in head.split(b"\r\n")
                                       if x.lower().startswith(b"content-length:")))
                     while len(payload)<length:
-                        payload += tls.recv(4096)
+                        chunk = tls.recv(4096)
+                        if not chunk:
+                            return
+                        payload += chunk
                     captured.append((head,payload))
-                    tls.sendall(response)
+                    if isinstance(response, bytes):
+                        tls.sendall(response)
+                    else:
+                        response(tls)
             except (OSError, ssl.SSLError):
                 pass
             finally:
@@ -58,9 +68,12 @@ class CallbackTransportTests(unittest.TestCase):
         try:
             with patch("callback_transport._dial", return_value=a) as dial:
                 try:
-                    result=post_verified("https://"+host+"/cb",["8.8.8.8"],body,headers,context=self.client)
+                    result=post_verified("https://"+host+"/cb",["8.8.8.8"],body,headers,context=self.client,deadline_seconds=deadline)
                 finally:
-                    dial.assert_called_once_with("8.8.8.8",443,5)
+                    dial.assert_called_once()
+                    self.assertEqual(dial.call_args.args[:2], ("8.8.8.8",443))
+                    self.assertGreater(dial.call_args.args[2],0)
+                    self.assertLessEqual(dial.call_args.args[2],min(5,deadline))
             return result,captured,body
         finally:
             a.close()
@@ -90,3 +103,14 @@ class CallbackTransportTests(unittest.TestCase):
         with patch("callback_transport._dial") as dial, self.assertRaises(ValueError):
             post_verified("https://callback.example",["127.0.0.1"],b"",{})
         dial.assert_not_called()
+
+    def test_drip_feed_absolute_deadline(self):
+        def drip(tls):
+            tls.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n")
+            for _ in range(100):
+                tls.sendall(b"x")
+                time.sleep(0.04)
+        start = time.monotonic()
+        with self.assertRaises(TimeoutError):
+            self.exchange(drip,deadline=0.35)
+        self.assertLess(time.monotonic()-start,2)
