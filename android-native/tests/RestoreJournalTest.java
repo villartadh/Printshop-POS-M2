@@ -13,17 +13,18 @@ public final class RestoreJournalTest {
         Path dir=Files.createTempDirectory("restore-journal-test");
         try{
             Path live=dir.resolve("fixture.db");Files.write(live,OLD);
-            RestoreJournal journal=new RestoreJournal(live);
+            try(DatabaseLifecycleLease lease=DatabaseLifecycleLease.open(live,true)){
+            RestoreJournal journal=new RestoreJournal(live,lease);
             Path wal=dir.resolve("fixture.db-wal");Files.write(wal,new byte[]{9});
             rejected(()->journal.prepare(NEXT));bytes(live,OLD);Files.delete(wal);
             journal.prepare(NEXT);bytes(live,OLD);
             rejected(()->journal.prepare(NEXT));rejected(journal::accept);
             journal.recover();bytes(live,OLD);
             journal.prepare(NEXT);journal.replace();bytes(live,NEXT);
-            new RestoreJournal(live).recover();bytes(live,OLD);
+            new RestoreJournal(live,lease).recover();bytes(live,OLD);
             journal.prepare(NEXT);journal.replace();journal.accept();
-            new RestoreJournal(live).recover();bytes(live,NEXT);
-            try(var entries=Files.list(dir)){check(entries.count()==1);}
+            new RestoreJournal(live,lease).recover();bytes(live,NEXT);
+            try(var entries=Files.list(dir)){check(entries.count()==2);}
             // Crash before durable marker: old live survives; cleanup is safe.
             Files.write(dir.resolve("fixture.db.restore-previous"),NEXT);
             Files.write(dir.resolve("fixture.db.restore-candidate"),OLD);
@@ -33,6 +34,7 @@ public final class RestoreJournalTest {
             Files.delete(dir.resolve("fixture.db.restore-previous"));
             rejected(journal::recover);check(Files.exists(dir.resolve("fixture.db.restore-pending")));bytes(live,OLD);
             System.out.println("RestoreJournal: stopped-writer replacement and recovery checks PASS");
+            }
         }finally{
             try(var paths=Files.walk(dir)){for(Path p:(Iterable<Path>)paths.sorted(java.util.Comparator.reverseOrder())::iterator)Files.deleteIfExists(p);}
         }

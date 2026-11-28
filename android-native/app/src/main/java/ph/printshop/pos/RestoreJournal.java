@@ -10,7 +10,9 @@ import java.nio.file.*;
  * independent post-reopen acceptance is complete. */
 final class RestoreJournal {
     private final Path live, previous, staged, marker;
-    RestoreJournal(Path live) {
+    private final DatabaseLifecycleLease lease;
+    RestoreJournal(Path live,DatabaseLifecycleLease lease) {
+        this.lease=lease;
         this.live=live.toAbsolutePath();
         previous=sibling(".restore-previous");
         staged=sibling(".restore-candidate");
@@ -31,6 +33,8 @@ final class RestoreJournal {
         if(!Files.isRegularFile(file,LinkOption.NOFOLLOW_LINKS)||Files.size(file)==0)throw new IOException("Missing or unsafe restore file");
     }
     private void requireStopped()throws IOException {
+        if(lease==null)throw new IOException("Exclusive database lifecycle lease required");
+        lease.requireExclusive(live);
         for(String suffix:new String[]{"-wal","-shm","-journal"})
             if(Files.exists(sibling(suffix),LinkOption.NOFOLLOW_LINKS))throw new IOException("Database sidecars remain; stop and checkpoint writers first");
     }

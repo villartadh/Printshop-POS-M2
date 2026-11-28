@@ -12,10 +12,13 @@ import java.util.List;
 public final class CatalogStore extends SQLiteOpenHelper {
     private final boolean fixtureCheckoutWrites;
     private final Context backupContext;
+    private final java.nio.file.Path databasePath;
+    private DatabaseLifecycleLease lifecycleLease;
     public CatalogStore(Context context) { this(context, "preview-catalog.db"); }
     CatalogStore(Context context, String filename) { this(context,filename,false); }
     private CatalogStore(Context context,String filename,boolean fixtureCheckoutWrites) {
         super(context,filename,null,22);this.fixtureCheckoutWrites=fixtureCheckoutWrites;this.backupContext=context.getApplicationContext();
+        this.databasePath=context.getDatabasePath(filename).toPath();
     }
     /** No production/ordinary preview API can record sales or consume stock through checkout.
      * Only a separately identified synthetic fixture database opts in to transaction experiments.
@@ -23,6 +26,28 @@ public final class CatalogStore extends SQLiteOpenHelper {
     static CatalogStore checkoutFixture(Context context,String fixtureId) {
         StockMath.validateRequestId(fixtureId);
         return new CatalogStore(context,"checkout-fixture-"+fixtureId+".db",true);
+    }
+    private void acquireLifecycle(){
+        if(!fixtureCheckoutWrites||lifecycleLease!=null)return;
+        try{lifecycleLease=DatabaseLifecycleLease.open(databasePath,false);}
+        catch(java.io.IOException ex){throw new IllegalStateException("Training database is unavailable",ex);}
+    }
+    @Override public synchronized SQLiteDatabase getWritableDatabase(){
+        acquireLifecycle();
+        return super.getWritableDatabase();
+    }
+    @Override public synchronized SQLiteDatabase getReadableDatabase(){
+        acquireLifecycle();
+        return super.getReadableDatabase();
+    }
+    @Override public synchronized void close(){
+        // Do not release the lease if the underlying close failed.
+        super.close();
+        if(lifecycleLease!=null){
+            try{lifecycleLease.close();}
+            catch(java.io.IOException ex){throw new IllegalStateException("Unable to release database lifecycle",ex);}
+            finally{lifecycleLease=null;}
+        }
     }
     private void requireCheckoutFixture(){
         if(!fixtureCheckoutWrites)throw new IllegalStateException("Checkout recording disabled until native authentication and shift acceptance");
