@@ -29,3 +29,6 @@ The adapter can optionally bind only to 127.0.0.1 using --loopback-http; the rea
 
 ## Offline event callback verification
 The event verification helper creates a single-use 60-second challenge and prepares exact-byte Standard Webhooks HMAC headers. It rejects non-2xx, expired, duplicate-field, oversized, malformed and mismatched responses. The helper is intentionally offline and process-local: it does not implement subscriptions, durable replay protection, credential storage, callback URL validation or DNS-pinned HTTPS delivery. Those are mandatory before live activation. Contract reference: https://developers.openai.com/plugins/build/mcp-events .
+
+## Offline callback destination admission
+Validate only HTTPS DNS names on port 443 and a bounded, independently resolved address set. Reject mixed public/non-public results, IP literals, userinfo, fragments, multicast, private and unsupported IPv6 transition destinations. This is deliberately a strict subset for the pilot; it does not resolve DNS or establish a connection. A future transport must validate each resolution, connect to a validated address directly, preserve hostname verification/SNI, reject redirects, and bound response/time. No live callback delivery is authorized here.
