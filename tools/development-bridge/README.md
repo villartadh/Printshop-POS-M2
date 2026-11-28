@@ -5,3 +5,6 @@ Mandatory workflow IDs are pinned for this repository. Review is not merge appro
 
 ## Claim protocol (local acceptance)
 The pure claim policy permits one active worker for the entire repository, monotonic generation, unique completed event keys and owner/generation-checked completion. No automatic expiry/takeover; a crashed worker requires independently verified recovery before clearing the claim. The isolated bare Git test demonstrates that two competing same-parent ledger commits cannot both fast-forward. Remote ledger initialization, atomic GitHub connector integration, crash reconciliation and fencing of actual source writes remain unverified. Never treat an in-memory proposal or a successful local test as a live shared lock. Do not activate a second writer.
+
+## Ambiguous ref updates
+The reconciliation classifier accepts only exact Git object identities from an independently refreshed ref. An exact candidate observation confirms only that ref value, not ownership, ancestry, fencing or CI. An unchanged parent requires rechecking before any new write; a different head requires investigation; unavailable readback remains unverified. Never blindly retry or force-update. Synthetic remote CAS pilot evidence is recorded in issue #14; the pilot branch is not a live lock and must never be merged.
